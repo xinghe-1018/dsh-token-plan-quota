@@ -703,7 +703,7 @@ function findChip(node) {
   ok('主窗口照常显示（3,620.407 / 10,000 与已用%）', panel.includes('3,620') && panel.includes('63.8%'))
 }
 
-// 点输入框打字不该关掉明细；点别处才关。
+// 明细面板是常驻小窗：乱点哪儿都不关，只有再点徽标（toggle）或 Esc 才关。
 {
   const { api, registered, dom } = await loadBundle('ok')
   const dirStore = makeStore({
@@ -723,16 +723,30 @@ function findChip(node) {
   const chip = findChip(await settle(render))
   chip.props.onClick()
   ok('点开后明细在', JSON.stringify(await settle(render, 3)).includes('额度明细'))
-  const fire = (target) => {
-    for (const handler of dom.listeners.get('mousedown') ?? []) handler({ target })
+  // 面板打开时压根不该注册 mousedown 监听——「点外面就关」这个行为整个被取消，
+  // 而不是靠一张选择器名单去豁免（宿主线上产物里连 data-composer-card 都没有）。
+  check('不注册 mousedown 监听', (dom.listeners.get('mousedown') ?? []).length, 0)
+  const clickEverywhere = () => {
+    for (const list of [dom.listeners.get('mousedown') ?? [], dom.listeners.get('click') ?? [], dom.listeners.get('pointerdown') ?? []]) {
+      for (const handler of list) handler({ target: { closest: () => null, contains: () => false } })
+    }
     return JSON.stringify(render())
   }
-  // closest 按选择器真假返回，等于把"命中了哪条选择器"也断言进来。
-  const hit = want => sel => (sel.includes(want) ? { matched: want } : null)
-  ok('点进 textarea 不关明细', fire({ closest: hit('textarea') }).includes('额度明细'))
-  ok('点输入卡片空白处（data-composer-card）也不关', fire({ closest: hit('data-composer-card') }).includes('额度明细'))
-  ok('点可编辑区同样不关', fire({ closest: hit('contenteditable') }).includes('额度明细'))
-  ok('点真正的别处（对话区/侧栏）才关', !fire({ closest: () => null }).includes('额度明细'))
+  ok('在别处乱点也不关（常驻小窗）', clickEverywhere().includes('额度明细'))
+  ok('继续乱点还是不关', clickEverywhere().includes('额度明细'))
+  const esc = () => {
+    for (const handler of dom.listeners.get('keydown') ?? []) handler({ key: 'Escape' })
+    return JSON.stringify(render())
+  }
+  ok('Esc 关掉', !esc().includes('额度明细'))
+  ok('关掉后再点徽标能重新打开', (() => {
+    findChip(render()).props.onClick()
+    return JSON.stringify(render()).includes('额度明细')
+  })())
+  ok('再点一次徽标关掉（toggle 是主关闭路径）', (() => {
+    findChip(render()).props.onClick()
+    return !JSON.stringify(render()).includes('额度明细')
+  })())
 }
 
 // 实测卡即使被宿主错喂了分母与百分比，也绝不画余量条、绝不报百分比（「不估算」的最后一道闸）。

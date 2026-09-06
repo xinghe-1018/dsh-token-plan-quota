@@ -491,6 +491,7 @@ function findChip(node) {
   ok('panelScope=current：DeepSeek 卡不再出现在面板', !panel.includes('DeepSeek 余额'))
   ok('panelScope=current：面板只列绑定卡，实测用量卡不进面板', panel.includes('Token Plan 实测') && !panel.includes('本实例实测用量'))
   ok('panelScope=current：无隐藏提示灰条', !panel.includes('已隐藏') && !panel.includes('未配置 AK/SK'))
+  ok('面板卡带交错渐入序号（--tpq-i）', panel.includes('--tpq-i'))
 
   dirStore.set({ ...dirStore.snapshot, current: { provider: 'minimax-cn', model: 'MiniMax-M2.5' } })
   flat = JSON.stringify(await settle(render, 2))

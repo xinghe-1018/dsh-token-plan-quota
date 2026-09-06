@@ -71,8 +71,10 @@ DeepSeek 余额；想全看把 `panelScope` 设为 `"all"`（改 `~/.dsh/token-p
 hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（每卡级联 70ms）。
 强制刷新时徽标数值做呼吸动画（纯 opacity，宽度零抖动）；面板点开时 6px 上浮淡入，
 带 1px 内高光边。所有动效尊重 `prefers-reduced-motion`。面板宽度 380px、高度上限 52vh。
-字体不跟宿主默认栈：UI 文字用圆润人文栈（Aptos→Calibri→Corbel，中文落雅黑系），
-「当前模型」的标识串、按供应商吞吐行与 debug 骨架用圆头等宽（Cascadia Mono→Consolas）。
+字体自成一套，不跟宿主默认栈：UI 文字 **Geist Variable + Noto Sans SC**（思源黑体），
+「当前模型」标识串、按供应商吞吐行与 debug 骨架用 **Geist Mono**——三枚可变字体经
+jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入；断网/被墙时静默落系统圆润栈
+（Aptos→Calibri→Corbel，中文落苹方/雅黑），观感降级但功能零影响。
 余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
 强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
 或 `token_plan_quota` 工具（`refresh`/`reset`）。
@@ -83,7 +85,8 @@ hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（
 dsh plugin --profile web add <这个目录的路径>
 ```
 
-装完**重启一次 `dsh web`**（bundle 与客户端入口在启动时组装）。零第三方依赖。
+装完**重启一次 `dsh web`**（bundle 与客户端入口在启动时组装）。代码零第三方依赖；
+运行时唯一的外部资源是上面那三枚 CDN 字体 link，加载失败自动落系统字体栈。
 
 ## 配置
 
@@ -205,5 +208,5 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Key 引用名可在 sources 条目里覆盖（
 
 ```powershell
 node test/host.mjs     # 167 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 67 项：座位注册、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板卡交错渐入序号、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/client.mjs   # 68 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板卡交错渐入序号、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
 ```

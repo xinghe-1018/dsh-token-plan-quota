@@ -356,8 +356,14 @@ async function settle(render, rounds = 4) {
   const ctx = makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), disposers)
   const applyResult = api.apply(ctx)
   check('apply 不返回内容（注册型插件）', applyResult, undefined)
-  ok('样式注入了一次', dom.styles.length === 1)
+  ok('样式注入了一次', dom.styles.filter(node => node.tag === 'style').length === 1)
   ok('样式带上插件标识', dom.styles[0].dataset.plugin === 'dsh-token-plan-quota')
+  check('注入三枚 CDN 字体 link（Geist/Geist Mono/Noto Sans SC）',
+    dom.styles.filter(node => node.tag === 'link' && node.dataset.plugin === 'dsh-token-plan-quota').map(node => node.href), [
+      'https://cdn.jsdelivr.net/npm/@fontsource-variable/geist@5/index.css',
+      'https://cdn.jsdelivr.net/npm/@fontsource-variable/geist-mono@5/index.css',
+      'https://cdn.jsdelivr.net/npm/@fontsource-variable/noto-sans-sc@5/index.css',
+    ])
   check('只注册一个座位（首选成功就不重复）', registered.length, 1)
   check('座位名', registered[0].options.name, 'conversation.input.left')
   check('座位 id', registered[0].options.id, 'token-plan-quota')

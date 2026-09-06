@@ -77,9 +77,11 @@ hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（
 路径、按供应商吞吐行、debug 骨架），中英数混排的行（已用%、周期重置、请求数、
 更新于）一律 UI 栈 + `lining-nums,tabular-nums`，与中文同基线。三枚可变字体经
 jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入，观感降级不影响功能。
-**面板可拖出悬浮**：按住标题栏（grab 手柄）可把明细拖到屏幕任意位置，移动只走
+**面板可拖出悬浮**：面板 portal 到 `document.body`、一律 fixed 视口坐标定位（锚定态
+由 JS 按徽标矩形实时算，绕开宿主工具栏 transform/backdrop-filter 对 fixed 包含块的
+劫持）。按住标题栏（grab 手柄）可把明细拖到屏幕任意位置，移动只走
 `transform`（零重渲染），松手冻结为 fixed 并写进 localStorage——关掉重开、刷新页面
-都记住位置；双击标题栏归位贴回徽标；窗口缩小会自动夹回视口。
+都记住位置；双击标题栏归位贴回徽标；窗口变化自动重算/夹回视口。
 余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
 强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
 或 `token_plan_quota` 工具（`refresh`/`reset`）。

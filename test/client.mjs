@@ -215,6 +215,21 @@ function makeFetch(mode) {
     fetchCalls.push({ url, method: init?.method ?? 'GET' })
     if (mode === 'fail') return { ok: false, status: 500, json: async () => ({ error: 'boom' }) }
     if (mode === 'garbage') return { ok: true, status: 200, json: async () => null }
+    if (mode === 'measured-lies') {
+      // 宿主算错/被改坏：实测卡带上了百分比与分母。前端仍不得画条、不得报百分比（「不估算」的最后一道闸）。
+      const lying = {
+        ...SNAPSHOT.cards.find(card => card.id === 'token-plan-window'),
+        metric: 'credits',
+        unit: 'Credits',
+        total: 10000,
+        remaining: 4000,
+        usedPercent: 60,
+        remainingPercent: 40,
+        meters: [{ key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 10000, remaining: 4000, usedPercent: 60, remainingPercent: 40 }],
+      }
+      const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [lying, ...rest] }) }
+    }
     const emptyCards = mode === 'empty'
       ? SNAPSHOT.cards.filter(card => card.veracity !== 'verified')
       : SNAPSHOT.cards
@@ -248,6 +263,11 @@ function makeFetch(mode) {
         remainingPercent: 65.1,
         expiresAt: Date.now() + 5 * 86_400_000,
         items: [],
+        // 宿主 meters[0] 与顶层 remaining/total 同源；第二条（5 小时窗口）是面板里新增的那行计量。
+        meters: [
+          { key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 10000, remaining: 6510, usedPercent: 34.9, remainingPercent: 65.1, resetAt: Date.now() + 5 * 86_400_000 },
+          { key: 'fiveHour', label: '5 小时窗口', unit: 'Credits', total: 2500, remaining: 2469.3, usedPercent: 1.23, remainingPercent: 98.77, resetAt: Date.now() + 3_000_000 },
+        ],
         extra: { fiveHourTotal: 2500, fiveHourUsedPercent: 1.23 },
         error: null,
         sourceNote: '阿里云百炼控制台网关（Cookie 会话）· tokenplan/personal/api/v2',
@@ -621,9 +641,45 @@ function findChip(node) {
   const chip = findChip(await settle(render, 1))
   chip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
-  ok('面板余量行：剩余 6,510 / 10,000 · 已用 34.9% · 5h窗口', panel.includes('6,510') && panel.includes('10,000') && panel.includes('已用 34.9%') && panel.includes('5h窗口'))
+  ok('面板余量行：剩余 6,510 / 10,000 · 已用 34.9%', panel.includes('6,510') && panel.includes('10,000') && panel.includes('已用 34.9%'))
+  ok('5 小时窗口走独立计量行（tpq-meters），不再挤在摘要尾巴上',
+    panel.includes('tpq-meters') && panel.includes('5 小时窗口') && panel.includes('2,469') && !panel.includes('5h窗口'))
+  {
+    // 精确数 class（"tpq-meters" 容器也含 "tpq-meter" 子串，所以按完整 class 值匹配）。
+    const meterRows = panel.match(/"className":"tpq-meter"/g) ?? []
+    // 一行 = 一个次级窗口；meters[0] 与顶层同源，由标题行＋大条表达，不重复出条。
+    ok('只渲染次级窗口（meters[0] 不重复出条）', meterRows.length === 1)
+  }
   ok('中英数混排灰列走 UI 栈（tpq-aux），等宽只留给标识串', panel.includes('tpq-aux'))
   ok('控制台卡标「官方接口」来源', panel.includes('官方接口') && panel.includes('tokenplan/personal/api/v2'))
+}
+
+// 实测卡即使被宿主错喂了分母与百分比，也绝不画余量条、绝不报百分比（「不估算」的最后一道闸）。
+{
+  const { api, registered } = await loadBundle('measured-lies')
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('无官方源但有实测源 → 徽标照常出现（不再整枚消失）', flat.includes('Token Plan 实测'))
+  ok('实测徽标不画余量条', !flat.includes('tpq-bar'))
+  const chip = findChip(await settle(render, 1))
+  chip.props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('实测卡进面板', panel.includes('Token Plan 实测'))
+  ok('实测卡不出条、不出百分比', !panel.includes('tpq-bar-lg') && !panel.includes('40%') && !panel.includes('60%'))
+  ok('实测卡仍挂「实测」药丸与口径 tooltip', panel.includes('tpq-pill') && panel.includes('官方无 Key 化额度接口'))
 }
 
 // 控制台卡只有错误（Cookie 没配）→ 徽标退回有数的实测窗口卡，不挂错误卡。

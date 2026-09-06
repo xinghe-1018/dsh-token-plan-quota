@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-plan-quota",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换——DeepSeek 官方余额（/user/balance）、千问 Token Plan 实测 7 天窗口（本实例账本，标「实测」）、可选阿里云 BssOpenApi（AK/SK）。含模型可调用工具 token_plan_quota。Token quota chip that follows the active model's provider for the DeepSeek Harness web GUI.",
   "type": "module",
   "main": "lib/index.js",
@@ -29,9 +29,20 @@
     "capabilities": { "provides": ["tool:token_plan_quota"] },
     "compatibility": { "dsh": ">=0.1.0-rc.5", "node": ">=20" },
     "permissions": {
-      "network": ["https://business.aliyuncs.com"]
+      "network": [
+        "https://api.deepseek.com",
+        "https://business.aliyuncs.com",
+        "https://cs-data.qianwenai.com",
+        "https://platform-home.qianwenai.com",
+        "https://cdn.jsdelivr.net"
+      ]
     }
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xinghe-1018/dsh-token-plan-quota.git"
+  },
+  "homepage": "https://github.com/xinghe-1018/dsh-token-plan-quota#readme",
   "files": ["lib", "cordis.patch.yml", "README.md"],
   "scripts": {
     "test": "node test/host.mjs && node test/client.mjs",

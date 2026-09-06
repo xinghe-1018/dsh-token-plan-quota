@@ -17,7 +17,7 @@ const {
   effectiveConfig, normalizeSources,
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
   rpcEnvelopeOk, pickPath, pickFirst, pickString, toNumber, toEpochMs,
-  buildListCard, buildSingleCard, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, mergePages,
+  buildListCard, buildSingleCard, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
   hintFor, formatAmount, formatMoneyText, summarizeText, publicCard,
   querySource, buildStatus, invalidateSources,
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
@@ -293,6 +293,24 @@ check('已用 34.9%（finalize 与网关比例一致）', consoleCard.usedPercen
 check('重置时间取 per1WeekResetTime', consoleCard.expiresAt, weekReset)
 check('5 小时窗口与档位/套餐信息进 extra', [consoleCard.extra.fiveHourTotal, consoleCard.extra.fiveHourUsedPercent, consoleCard.extra.specCode, consoleCard.extra.planRemainingDays, consoleCard.extra.addonTotal], [3000, 1.23, 'standard', 85, 20000])
 check('控制台源打官方真值标签（SOURCE_META → source）', consolePreset.veracity, 'verified')
+
+/* 多计量条：一张卡两个窗口，meters[0] 与顶层同源（前端按此只渲染 meters.slice(1)）。 */
+check('meters 有两条（7 天 + 5 小时）', consoleCard.meters.map(m => m.key), ['weekly', 'fiveHour'])
+check('meters[0] 与顶层 remaining/total 同源', [consoleCard.meters[0].remaining, consoleCard.meters[0].total], [consoleCard.remaining, consoleCard.total])
+check('7 天窗口百分比在 meters[0]', [consoleCard.meters[0].usedPercent, consoleCard.meters[0].remainingPercent], [34.9, 65.1])
+check('5 小时窗口数学：3000×(1−0.0123)', consoleCard.meters[1].remaining, 2963.1)
+check('5 小时窗口百分比与重置时刻', [consoleCard.meters[1].usedPercent, consoleCard.meters[1].remainingPercent], [1.23, 98.77])
+check('meters 各带单位', [...new Set(consoleCard.meters.map(m => m.unit))], ['Credits'])
+// 只有 5 小时额度、没有周额度 → 只出一条计量，且顶层不因缺分母而报错。
+const fiveOnly = finalizeCard(buildConsoleCard(consolePreset, { per5HourPercentage: 0.5, per5HourResetTime: weekReset }, { standard: { five_hour: 100 } }, { specCode: 'standard' }))
+check('只有 5 小时窗口时只出一条计量', fiveOnly.meters.map(m => m.key), ['fiveHour'])
+check('该计量自己算出百分比', [fiveOnly.meters[0].remaining, fiveOnly.meters[0].usedPercent], [50, 50])
+// 「不估算」硬规则：实测卡（estimated）即使误带分母也不出百分比。
+const measuredMeter = finalizeMeter({ key: 'w', total: 1000, remaining: 300 }, false)
+check('实测计量剥掉百分比', [measuredMeter.usedPercent, measuredMeter.remainingPercent, measuredMeter.remaining], [undefined, undefined, 300])
+check('真值计量保留百分比', finalizeMeter({ key: 'w', total: 1000, remaining: 300 }, true).usedPercent, 70)
+check('没有分母就没有百分比（任何档位）', [finalizeMeter({ key: 'w', remaining: 42 }, true).usedPercent, finalizeMeter({ key: 'w', remaining: 42 }, false).usedPercent], [undefined, undefined])
+check('publicCard 透传 meters', publicCard(consoleCard).meters.length, 2)
 
 // 没配 Cookie → NoCredentials 卡（不联网）。
 const noCookie = await querySource(consolePreset, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
@@ -592,7 +610,8 @@ try {
   check('请求打到预设路径', seen[0].url, '/user/balance')
   check('全链路产出 DeepSeek 余额卡', fullCard.remaining, 45.29)
   check('真值标签随卡输出', fullCard.veracity, 'verified')
-  check('DeepSeek 卡带 bindProviders=deepseek', fullCard.bindProviders, ['deepseek'])
+  // 出厂适配器注册的路由 id 是 deepseek-official；别名一起带上，徽标才不靠用户手填。
+  check('DeepSeek 卡带两个路由别名', fullCard.bindProviders, ['deepseek', 'deepseek-official'])
   check('HTTP 源无 AK 也能跑', fullCard.error, null)
 } finally {
   await new Promise(resolve => server.close(resolve))

@@ -23,7 +23,7 @@
   "dshhub": {
     "schemaVersion": 1,
     "displayName": "dsh-token-plan-quota",
-    "summary": "额度徽标跟随当前模型供应商：DeepSeek 官方 /user/balance 真值 + 千问 Token Plan 实测 7 天窗口（本实例账本，明确标注非官方余量）+ 可选阿里云 BssOpenApi（AK/SK）资源包/余额；实测吞吐速度（tokens÷流式活跃秒）按供应商归因，徽标显示 ⚡NN tok/s；幽灵小徽标，点开明细面板看全部源；附带 token_plan_quota 模型工具。",
+    "summary": "额度徽标跟随当前模型供应商：DeepSeek 官方 /user/balance 真值 + 千问 Token Plan 实测 7 天窗口（本实例账本，明确标注非官方余量）+ 可选阿里云 BssOpenApi（AK/SK）资源包/余额；实测吞吐速度（tokens÷流式活跃秒）按供应商归因，徽标以纯文本 NN tok/s 显示；幽灵小徽标，余量渐变条即状态表达（无圆点、无表情符号），点开明细面板看全部源；附带 token_plan_quota 模型工具。",
     "categories": ["费用", "Web UI", "观测"],
     "surfaces": ["host", "web"],
     "capabilities": { "provides": ["tool:token_plan_quota"] },

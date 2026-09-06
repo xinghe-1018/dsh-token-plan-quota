@@ -470,14 +470,15 @@ function findChip(node) {
   const tree = await settle(render)
   let flat = JSON.stringify(tree)
   ok('模型=deepseek → 徽标只挂 DeepSeek 官方卡', flat.includes('DeepSeek 余额') && !flat.includes('Token Plan 实测'))
-  ok('该供应商近 5 分钟无新鲜吞吐 → 徽标不带速度标签', !flat.includes('⚡'))
+  ok('该供应商近 5 分钟无新鲜吞吐 → 徽标不带速度标签', !flat.includes('tpq-speed'))
 
   dirStore.set({ ...dirStore.snapshot, current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' } })
   flat = JSON.stringify(await settle(render, 2))
   ok('模型=token plan → 徽标切到实测窗口卡', flat.includes('Token Plan 实测') && !flat.includes('DeepSeek 余额'))
   ok('窗口卡数值带 tok 与实测角标', flat.includes('1.23M tok') && flat.includes('实测'))
   ok('窗口卡显示剩余天数', flat.includes('剩5天'))
-  ok('窗口徽标带实测吞吐标签（最近单流速度）', flat.includes('⚡42 tok/s'))
+  ok('窗口徽标带实测吞吐标签（最近单流速度，纯文本无图标）', flat.includes('42 tok/s'))
+  ok('徽标无状态圆点、无表情符号', !flat.includes('tpq-dot') && !flat.includes('⚡'))
 
   // 点开 → panelScope=current：只列当前供应商的卡 + 本实例实测，DeepSeek 不再常驻。
   const openChip = findChip(await settle(render, 1))
@@ -485,7 +486,7 @@ function findChip(node) {
   openChip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('面板含当前模型标注', panel.includes('qwen3.8-flash'))
-  ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('⚡28.6k tok/s') && panel.includes('近 5 分'))
+  ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('28.6k tok/s') && panel.includes('近 5 分'))
   ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'))
   ok('panelScope=current：DeepSeek 卡不再出现在面板', !panel.includes('DeepSeek 余额'))
   ok('panelScope=current：面板只列绑定卡，实测用量卡不进面板', panel.includes('Token Plan 实测') && !panel.includes('本实例实测用量'))
@@ -581,7 +582,7 @@ function findChip(node) {
   findChip(tree).props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('无流量时吞吐行仍在', panel.includes('吞吐') && panel.includes('近 5 分'))
-  ok('无流量时不挂速度标签', !panel.includes('⚡'))
+  ok('无流量时不挂速度标签', !panel.includes('tok/s'))
 }
 
 // 控制台余量卡有数 → 徽标优先挂它（官方真值 > 实测），进度条按已用百分比。

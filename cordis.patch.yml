@@ -1,0 +1,20 @@
+# dsh-token-plan-quota bundle patch：在 web profile 上插入一行宿主+浏览器双面插件。
+#
+# 宿主半边（exports "."）：挂 llm/stream 记本地用量账本（月份账 + 供应商 7 天滚动窗口锚点）、
+# 观察 llm/retry、可选地用 AK/SK 签名调阿里云 BssOpenApi，并注册只读路由 /token-plan-quota/*；
+# 浏览器半边（exports "./client"，由 package.json 的 dsh.client 声明）：在输入框工具行渲染
+# **跟随当前模型供应商**的单个额度徽标，点开展全部数据源的明细。
+#
+# 这里只是默认值。日常要调的（数据源、窗口天数、绑定供应商）写在
+# ~/.dsh/token-plan-quota.json —— 宿主每次查询前重读那个文件，改完不用重启。
+- insert:
+    - id: token-plan-quota
+      name: dsh-token-plan-quota
+      config:
+        # deepseek-balance：DeepSeek 官方 /user/balance（真值）。
+        # token-plan-window：千问 Token Plan 实测 7 天窗口（本实例账本，官方无 Key 化额度接口）。
+        sources:
+          - deepseek-balance
+          - token-plan-window
+        refreshMinutes: 10
+        pollSeconds: 10

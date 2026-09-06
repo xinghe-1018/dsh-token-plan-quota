@@ -1,0 +1,7 @@
+# 开发草稿（探测脚本等），不入库
+.scratch/
+# 依赖与产物（本插件零依赖，防万一）
+node_modules/
+package-lock.json
+# 日志
+*.log

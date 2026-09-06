@@ -17,7 +17,7 @@ const {
   effectiveConfig, normalizeSources,
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
   rpcEnvelopeOk, httpEnvelopeOk, parseEnvelope, pickPath, pickFirst, pickString, toNumber, toEpochMs,
-  buildListCard, buildSingleCard, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
+  buildListCard, buildSingleCard, evalDerive, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
   hintFor, formatAmount, formatMoneyText, summarizeText, publicCard,
   querySource, buildStatus, invalidateSources,
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
@@ -93,7 +93,7 @@ check('时间戳秒级 UTC', utcTimestamp(new Date('2026-08-14T02:03:04.567Z')),
 /* ============================================ 2. 官方数据源预设 */
 
 check('默认 sources 是 DeepSeek 官方 + Token Plan 实测窗口', DEFAULTS.sources, ['deepseek-balance', 'token-plan-window'])
-check('预设齐全（新增一家要同步 README 的源表）', Object.keys(PRESETS).sort().join(','), 'account-balance,deepseek-balance,fr-instances,moonshot-balance,resource-package,token-plan-console,token-plan-window')
+check('预设齐全（新增一家要同步 README 的源表）', Object.keys(PRESETS).sort().join(','), 'account-balance,deepseek-balance,fr-instances,moonshot-balance,openrouter-credits,resource-package,token-plan-console,token-plan-window')
 check('未知源被丢弃', effectiveConfig({ sources: ['deepseek-balance', 'bogus'] }, ctxStub).sources.length, 1)
 check('endpoint 去协议与尾斜杠', effectiveConfig({ endpoint: 'https://business.aliyuncs.com/' }, ctxStub).endpoint, 'business.aliyuncs.com')
 check('refreshMinutes 分钟→毫秒', effectiveConfig({ refreshMinutes: 1 }, ctxStub).cacheMs, 60_000)
@@ -409,6 +409,40 @@ check('errorHints 只参与算 hint，不进任何响应', 'errorHints' in publi
 let envelopeThrew = null
 try { parseEnvelope(JSON.stringify({ code: -1, status: false, message: 'invalid_api_key' }), 'moonshot-balance', httpEnvelopeOk) } catch (error) { envelopeThrew = error }
 check('非 0 信封抛错：码是原码，人话里带上源与上游 message', [envelopeThrew?.code, envelopeThrew?.message], ['-1', 'moonshot-balance: -1 invalid_api_key'])
+
+/* ============================================ 5d. derive 派生表达式（OpenRouter：余额＝充值 − 花费） */
+
+const dvals = { totalCredits: 10, totalUsage: 3.25, zero: 0 }
+check('裸引用名', evalDerive('totalCredits', dvals), 10)
+check('一次减法', evalDerive('totalCredits - totalUsage', dvals), 6.75)
+check('一次加法', evalDerive('totalUsage + totalCredits', dvals), 13.25)
+check('数字字面量参与', evalDerive('100 - totalCredits', dvals), 90)
+check('引用 0 是真值不是缺失', evalDerive('totalCredits - zero', dvals), 10)
+check('引用不到就是 undefined（宁缺勿猜）', evalDerive('totalCredits - nope', dvals), undefined)
+check('不做乘除', evalDerive('totalCredits * 2', dvals), undefined)
+check('不做三项连算', evalDerive('a - b - c', dvals), undefined)
+check('不做括号/表达式引擎', evalDerive('(totalCredits - totalUsage) * 2', dvals), undefined)
+check('空算式', evalDerive('', dvals), undefined)
+
+const openrouter = normalizeSources(['openrouter-credits'], ctxStub)[0]
+check('OpenRouter 打真值标签', openrouter.veracity, 'verified')
+check('端点与凭据引用', [openrouter.url, openrouter.bearerRef, openrouter.unit], ['https://openrouter.ai/api/v1/credits', 'OPENROUTER_API_KEY', 'USD'])
+check('差值算式随预设下发', openrouter.derive.remaining, 'totalCredits - totalUsage')
+// 官方文档里这个端点的字段既见过裸顶层也见过 data 信封，两版都要能抽（不猜哪版对）。
+const orDataEnvelope = finalizeCard(buildSingleCard(openrouter, { data: { total_credits: 10, total_usage: 3.25 } }))
+check('data 信封：余额＝10 − 3.25', [orDataEnvelope.remaining, orDataEnvelope.total, orDataEnvelope.used], [6.75, 10, 3.25])
+check('差值也参与百分比', [orDataEnvelope.usedPercent, orDataEnvelope.remainingPercent], [32.5, 67.5])
+const orFlatEnvelope = finalizeCard(buildSingleCard(openrouter, { total_credits: 10, total_usage: 3.25 }))
+check('裸顶层信封同解', [orFlatEnvelope.remaining, orFlatEnvelope.total], [orDataEnvelope.remaining, orDataEnvelope.total])
+const orZeroUsage = finalizeCard(buildSingleCard(openrouter, { data: { total_credits: 25, total_usage: 0 } }))
+check('没花过钱：0 不是缺数据', [orZeroUsage.remaining, orZeroUsage.used, orZeroUsage.usedPercent], [25, 0, 0])
+const orDebt = finalizeCard(buildSingleCard(openrouter, { data: { total_credits: 5, total_usage: 7.5 } }))
+check('花超了原样报负余额（不夹到 0 粉饰）', orDebt.remaining, -2.5)
+check('负余额时已用比例封顶 100%、剩余 0%', [orDebt.usedPercent, orDebt.remainingPercent], [150, 0])
+const orEmpty = finalizeCard(buildSingleCard(openrouter, { data: { foo: 1 } }))
+check('抽不到字段时空因要点名引用名', orEmpty.emptyReason.includes('totalCredits'), true)
+check('抽不到就是没有，不派生出 0', [orEmpty.remaining, orEmpty.total, orEmpty.used], [undefined, undefined, undefined])
+check('OpenRouter 401 提示说清要的是它自己的 Key', hintFor('401', openrouter.errorHints).includes('sk-or-v1'), true)
 
 /* ============================================ 6. 阿里云源抽取（字段名按官方元数据示例构造） */
 

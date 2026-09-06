@@ -111,7 +111,14 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
       在不同家给不同人话），另外 4xx 现在会捞 `error.message` 进卡片（不再只写 `HTTP 401`）。
       **待办**：本机没有 Moonshot Key，`available_balance` 等字段名只有官方文档 + 第三方实现背书；
       真实 Key 的核对归 T1.8（已实测两区端点存在：无效 Key 回 401 `invalid_authentication_error`）。
-- [ ] T1.4 预设：`openrouter-credits`（+ 可选 `/api/v1/key` 作为第二个 meter）
+- [x] T1.4 预设：`openrouter-credits` + **`derive` 落地**（`evalDerive`：只认「一个 `+`/`-`、
+      两侧是引用名或数字」，操作数取不到就整条空——宁缺勿猜；不做乘除/括号/连算，真需要就写专用
+      builder）。余额＝`totalCredits - totalUsage`，两版信封（`data.*` 与裸顶层）都给候选路径。
+      实测两路径存在：无效 Key 回 `401 {"error":{"message":"User not found."}}`（正好是新的 4xx
+      人话提取吃的形状）。**待办**：真实 Key 的字段核对归 T1.8。
+- [ ] T1.4b 一源多请求（`/api/v1/key` 的 key 级 `usage_limit` 与日/周/月花费进同一张卡的第二条
+      meter）。这是**新的架构件**（现在一个 source 一次请求），别为了塞 OpenRouter 的第二条窗口
+      去 hack 一个假 meter；等 GLM 那种"一次请求多窗口"验证完 meters 形状后再做，顺序更稳。
 - [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）
 - [ ] T1.6 通用实测窗口源去千问化：`token-plan-window` 保留，新增可复制的 `window:<provider>` 形状，
       给 OpenAI/Gemini/MiniMax 这类 C 档平台用（**明标「实测」，不冒充官方余量**——口径不变）

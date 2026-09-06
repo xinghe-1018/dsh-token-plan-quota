@@ -113,6 +113,7 @@ dsh plugin --profile web add <这个目录的路径>
 
 装完**重启一次 `dsh web`**（bundle 与客户端入口在启动时组装）。代码零第三方依赖；
 运行时唯一的外部资源是上面那三枚 CDN 字体 link，加载失败自动落系统字体栈。
+**不用配任何东西**——该开哪些源由下面的「零配置自动检测」按你实际在用的供应商路由决定。
 
 ## 配置
 
@@ -121,16 +122,20 @@ dsh plugin --profile web add <这个目录的路径>
 
 ```json
 {
-  "sources": ["deepseek-balance", "token-plan-console", "token-plan-window"],
+  "autoDetect": true,
   "refreshMinutes": 10,
   "pollSeconds": 10,
   "showInstanceWindow": true,
+  "panelScope": "current",
   "debug": false
 }
 ```
 
+`sources` 现在**可以不写**（见上面的「零配置自动检测」）；写了就按写的来，检测只补你没覆盖的路由。
+
 | 键 | 含义 |
 |---|---|
+| `autoDetect` | 默认 `true`：按宿主在用路由自动补齐数据源。`false` 完全回到手写语义（只用 `sources`） |
 | `sources` | 数据源：`deepseek-balance`（官方真值）、`token-plan-window`（千问实测窗口，默认开）、`moonshot-balance`（Moonshot 开放平台官方余额，两区）、`openrouter-credits`（OpenRouter 余额，USD）、`account-balance`、`fr-instances`、`resource-package`（需 AK/SK） |
 | `moonshotRegion` | Moonshot 区：`china-mainland`（默认，`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
 | `showInstanceWindow` | 明细面板是否带「本实例实测用量 + 限流重试观测」块 |
@@ -228,7 +233,36 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与�
 一个家有多个 host/币种时用 `regions`（如 `moonshot-balance`），区由条目 `region` 或全局键
 （`moonshotRegion`）决定，认不出的区退回默认并 warn，不做自动探测。
 
+## 零配置自动检测（装完就开箱可用）
+
+宿主在用的供应商路由就是该开哪些源的**唯一事实来源**，所以你不用写 `sources`，也不用手填
+`providers`（历史上正是这两个字段各写各的导致"卡查得到却看不见"）。检测规则按可信度排序，
+**命中即停**：
+
+| 依据 | 说明 |
+|---|---|
+| `baseURL` 的 host | 最可信——路由实际打到哪。`api.moonshot.cn` → Moonshot 大陆区，`openrouter.ai` → OpenRouter，Token Plan 网关 → 千问…… |
+| 路由 id / 名称关键词 | host 被自建网关反代时兜底（`deepseek-official` 这类出厂 id 就是靠这条认出的） |
+| Key 前缀 | 连 baseURL 都拿不到时的最后线索（`sk-or-` → OpenRouter） |
+| 都没命中 | 给这条路由挂 `window:<provider>` **实测**源：徽标不空，但只报本地 token/次数 |
+
+三条不变量：
+
+- **认不准就不开源**。宁可少一张卡，也不能把别家的余额数字顶在某个模型上——徽标跟着模型走，
+  报错的数比没有数恶劣得多。所以 `kimi`（kimi.com/code 订阅）不会被认成 Kimi 开放平台，
+  `api.moonshot.cn.evil.test` 也不会因为后缀像就命中。
+- **你写过的永远赢**。`sources` 里已经覆盖的路由，检测一概不再追加；`autoDetect: false`
+  就完全回到手写语义。凭据解析不到的源整个不开（不挂一张 NoCredentials 错误卡占地方）。
+- **可解释**。每张自动开出的卡带 `detected: {by, rule, host}`，标题 tooltip 会写
+  「按 api.moonshot.ai 自动识别 · 区 international」；快照里的 `detection` 块
+  （`GET /token-plan-quota/summary`）交代在用路由、开了什么、谁因没凭据被跳过、谁没被认出——
+  排查"这家怎么不显示"只看这一处。Cookie 掉线时千问仍留实测窗口卡，徽标不至于空。
+
+老宿主（没有 `llm` 服务）拿不到路由，检测静默退回配置语义，不抛错；`detection.reason` 里留原因。
+
 ## 徽标如何跟随模型
+
+
 
 浏览器半边订阅两份现成的客户端运行时 store：`sessions.list`（当前会话 id）→
 `modelDirectories.directoryFor(id).store`（宿主报的当前 provider/model）。模型一切换，
@@ -267,6 +301,6 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与�
 ## 开发与验证
 
 ```powershell
-node test/host.mjs     # 247 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、derive 派生（一次加减、宁缺勿猜、两版信封、0 花费、花超报负）、window:<provider> 简写（C 档兜底、显式 providers 优先、口径措辞）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 97 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、USD 显 $ 不套 ¥、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/host.mjs     # 301 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、derive 派生（一次加减、宁缺勿猜、两版信封、0 花费、花超报负）、window:<provider> 简写（C 档兜底、显式 providers 优先、口径措辞）、自动检测纯函数层（host>id>Key 前缀优先级、反代域名不瞎撞、kimi 订阅不冒充开放平台）、自动检测接线（假宿主 llm+settings+credentials：幂等、凭据门控、用户写过的赢、老宿主静默退回、快照 detection 诊断）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
+node test/client.mjs   # 100 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、USD 显 $ 不套 ¥、tooltip 交代识别依据与区、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
 ```

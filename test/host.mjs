@@ -762,6 +762,192 @@ try {
   await new Promise(resolve => serverM.close(resolve))
 }
 
+/* ============================================ 15. 自动检测（纯函数层，不需要任何真 Key） */
+
+const { detectSources, PLATFORM_RULES, hostOf } = await import('../lib/detect.js')
+
+check('hostOf 取裸 host', hostOf('https://api.moonshot.cn/v1/users/me/balance'), 'api.moonshot.cn')
+check('hostOf 去端口与凭据', hostOf('https://u:p@Gateway.Example.com:8443/v1'), 'gateway.example.com')
+check('hostOf 空值不抛', [hostOf(''), hostOf(undefined), hostOf(null)], ['', '', ''])
+
+const one = result => result.sources[0]
+const qwen = detectSources({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen Token Plan' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' } },
+})
+check('千问网关认出两路源（官方余量 + 实测兜底）', qwen.sources.map(s => s.id).sort(), ['token-plan-console', 'token-plan-window'])
+check('按 baseURL 命中（最可信的一条）', one(qwen).detected, { by: 'baseURL', rule: 'qwen-token-plan', host: 'token-plan.cn-beijing.maas.aliyuncs.com' })
+check('绑到实际路由而不是手填别名', qwen.sources.every(s => s.providers.join() === 'qwen-token-plan-cn'), true)
+
+// DeepSeek：出厂路由 id 是 deepseek-official，而旧配置手填的是 'deepseek' —— 漂移的活例。
+const ds = detectSources({ routes: [{ id: 'deepseek-official', name: 'DeepSeek' }], profiles: {} })
+check('出厂路由 id 也能靠关键词认出', ds.sources.map(s => s.id), ['deepseek-balance'])
+check('命中依据记为 routeId（可解释性）', one(ds).detected.by, 'routeId')
+
+const moonCn = detectSources({ routes: [{ id: 'moon', name: 'Moon' }], profiles: { moon: { baseURL: 'https://api.moonshot.cn/v1' } } })
+check('host 直接决定区（省一次配置）', one(moonCn).region, 'china-mainland')
+const moonAi = detectSources({ routes: [{ id: 'moon', name: 'Moon' }], profiles: { moon: { baseURL: 'https://api.moonshot.ai/v1' } } })
+check('国际 host 给国际区', one(moonAi).region, 'international')
+
+const orPrefix = detectSources({ routes: [{ id: 'relay', name: 'Relay' }], profiles: { relay: { keyValue: 'sk-or-v1-abcdef' } } })
+check('拿不到 baseURL 时靠 Key 前缀兜', [one(orPrefix).id, one(orPrefix).detected.by], ['openrouter-credits', 'keyPrefix'])
+// 优先级：id 说自己是 deepseek、host 说自己是 openrouter → 信 host（路由打到哪才算数）。
+const conflict = detectSources({
+  routes: [{ id: 'deepseek-looking-glass', name: 'deepseek' }],
+  profiles: { 'deepseek-looking-glass': { baseURL: 'https://openrouter.ai/api/v1' } },
+})
+check('baseURL 压过 id 关键词', [one(conflict).id, one(conflict).detected.by], ['openrouter-credits', 'baseURL'])
+
+check('凭据缺失 → 这个源整个不开（不挂错误卡占位）', detectSources({
+  routes: [{ id: 'deepseek-official' }], profiles: {}, hasCredential: () => false,
+}).sources.length, 0)
+const partly = detectSources({
+  routes: [{ id: 'ds-a' }, { id: 'ds-b' }],
+  profiles: { 'ds-a': { baseURL: 'https://api.deepseek.com' }, 'ds-b': { baseURL: 'https://api.deepseek.com' } },
+  hasCredential: (preset, route) => route !== 'ds-b',
+})
+check('同一家多条路由：只挂有凭据的那些', one(partly).providers, ['ds-a'])
+ok('没凭据的那条进 skipped 并写明原因', partly.skipped.some(s => s.route === 'ds-b' && s.reason === 'no-credential'))
+
+check('用户已覆盖的路由，检测一概不追加', detectSources({
+  routes: [{ id: 'qwen-token-plan-cn' }], profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x' } },
+  coveredRoutes: ['qwen-token-plan-cn'],
+}).sources.length, 0)
+
+const unknown = detectSources({ routes: [{ id: 'sglang-prod', name: 'SGLang' }], profiles: {} })
+check('认不出的路由挂实测窗口（徽标不空）', unknown.sources.map(s => s.id), ['window:sglang-prod'])
+check('窗口源标 fallback 依据，与规则命中区分开', one(unknown).detected, { by: 'fallback-window', rule: null, host: null })
+check('窗口源绑的就是那条路由', one(unknown).providers, ['sglang-prod'])
+ok('uncovered 列表把没认出的都交出来', unknown.uncovered.join() === 'sglang-prod')
+
+// 反例：认错的数比没有数恶劣。这几条必须"不开"。
+check('kimi 订阅路由不许冒充 Kimi 开放平台（端点不同）', detectSources({ routes: [{ id: 'kimi', name: 'Kimi' }], profiles: {} }).sources.map(s => s.id), ['window:kimi'])
+check('hostOf 不裁域名（反代站保留完整 host）', hostOf('https://api.moonshot.cn.evil.test/v1'), 'api.moonshot.cn.evil.test')
+check('后缀不许反向瞎撞：认不出就走实测窗口', detectSources({
+  routes: [{ id: 'x' }], profiles: { x: { baseURL: 'https://api.moonshot.cn.evil.test/v1' } },
+}).sources[0].id, 'window:x')
+check('自建网关路径里带官方域名不算命中', detectSources({
+  routes: [{ id: 'gw' }], profiles: { gw: { baseURL: 'https://gw.internal/proxy/api.moonshot.cn/v1' } },
+}).sources[0].id, 'window:gw')
+check('规则表里每个 preset 名都真实存在于 PRESETS', PLATFORM_RULES.every(rule => rule.presets.every(preset => PRESETS[preset] !== undefined)), true)
+check('空输入不炸', detectSources({ routes: [], profiles: {} }), { sources: [], skipped: [], uncovered: [] })
+
+/* ============================================ 16. 自动检测接线（假宿主：llm + settings + credentials） */
+
+const { applyAutoDetect, readRouteProfile, credentialRefsFor } = __internals
+
+/** 造一个有 llm/settings/credentials 三个服务的宿主替身。 */
+function fakeHost({ routes, profiles = {}, refs = {} }) {
+  const section = { providers: profiles }
+  return {
+    logger: { warn() {}, info() {}, error() {} },
+    get: name => {
+      if (name === 'llm') {
+        return {
+          listProviders: () => routes,
+          listConfigurableProviders: () => routes.map(route => ({
+            provider: route.id, displayName: route.name ?? route.id,
+            settingsNs: 'llm-pi-ai', settingsPath: ['providers', route.id], declared: true,
+          })),
+        }
+      }
+      if (name === 'settings') return { get: () => section }
+      if (name === 'credentials') return { resolve: async ref => (refs[ref] === undefined ? undefined : { value: refs[ref], source: 'stub' }) }
+      return undefined
+    },
+  }
+}
+
+check('settingsPath 挖到 profile 的 baseURL/apiKeyEnv', readRouteProfile({ get: () => ({ providers: { a: { baseURL: 'https://x/v1', apiKeyEnv: 'A_KEY' } } }) }, { provider: 'a', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'a'] }), { baseURL: 'https://x/v1', apiKeyEnv: 'A_KEY' })
+check('settingsPath 只指到 providers 根时也按路由名再挖一层', readRouteProfile({ get: () => ({ providers: { a: { baseURL: 'https://y/v1' } } }) }, { provider: 'a', settingsNs: 'llm-pi-ai', settingsPath: ['providers'] }).baseURL, 'https://y/v1')
+check('没注册 settings 服务时不抛（老宿主）', readRouteProfile(undefined, { provider: 'a', settingsNs: 'llm-pi-ai', settingsPath: [] }), undefined)
+check('Cookie 型源不认路由 Key（拿套餐 Key 当 Cookie 只会得到误导的错误卡）', credentialRefsFor(PRESETS['token-plan-console'], { apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' }), ['BAILIAN_CONSOLE_COOKIE'])
+check('Bearer 型源优先用路由点名的引用名', credentialRefsFor(PRESETS['moonshot-balance'], { apiKeyEnv: 'MOONSHOT_CN_API_KEY' }), ['MOONSHOT_CN_API_KEY', 'MOONSHOT_API_KEY'])
+
+const hostCfg = () => effectiveConfig({ sources: [], minIntervalMs: 0 }, ctxStub)
+
+// C 档：有路由、没规则命中 → 自动挂实测窗口（这就是本机 minimax-cn 的处境）。
+const gapCfg = hostCfg()
+const gapInfo = await applyAutoDetect(gapCfg, fakeHost({ routes: [{ id: 'minimax-cn', name: 'MiniMax' }], profiles: { 'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1', apiKeyEnv: 'MINIMAX_CN_API_KEY' } }, refs: { MINIMAX_CN_API_KEY: 'k' } }))
+check('认不出的在用路由自动挂实测窗口', gapCfg.sources.map(source => `${source.id}:${(source.providers ?? []).join(',')}`), ['window:minimax-cn:minimax-cn'])
+check('诊断块交代依据与 uncovered', [gapInfo.added[0].by, gapInfo.uncovered], ['fallback-window', ['minimax-cn']])
+check('窗口源不需要凭据也能开（本地账本）', gapInfo.skipped.length, 0)
+const twice = await applyAutoDetect(gapCfg, fakeHost({ routes: [{ id: 'minimax-cn' }] }))
+check('重复跑不叠加同源（幂等）', gapCfg.sources.length, 1)
+check('第二次跑视为已被用户源覆盖，不再追加', twice.added.length, 0)
+
+// A 档：host 命中规则 + 路由点名的凭据在 → 开官方源，区也带上。
+const moonCfg = hostCfg()
+await applyAutoDetect(moonCfg, fakeHost({
+  routes: [{ id: 'kimi-open-cn', name: 'Kimi Open' }],
+  profiles: { 'kimi-open-cn': { baseURL: 'https://api.moonshot.cn/v1', apiKeyEnv: 'MOONSHOT_CN_API_KEY' } },
+  refs: { MOONSHOT_CN_API_KEY: 'sk-cn' },
+}))
+check('按 host 开出 Moonshot 源', moonCfg.sources.map(source => source.id), ['moonshot-balance'])
+check('区由 host 决定', moonCfg.sources[0].region, 'china-mainland')
+check('凭据引用沿用 profile 点名的那个', moonCfg.sources[0].bearerRef, 'MOONSHOT_CN_API_KEY')
+check('识别依据留在源上（卡片可解释）', moonCfg.sources[0].detected.by, 'baseURL')
+
+// 凭据解析不到 → 这个源整个不开，只在诊断里留痕。
+const noKeyCfg = hostCfg()
+const noKeyInfo = await applyAutoDetect(noKeyCfg, fakeHost({
+  routes: [{ id: 'ds', name: 'DeepSeek' }],
+  profiles: { ds: { baseURL: 'https://api.deepseek.com', apiKeyEnv: 'DEEPSEEK_API_KEY' } },
+  refs: {},
+}))
+check('没凭据 → 不开源（不挂错误卡占地方）', noKeyCfg.sources.length, 0)
+check('跳过原因与试过的引用名都记着', [noKeyInfo.skipped[0].reason, noKeyInfo.skipped[0].tried], ['no-credential', ['DEEPSEEK_API_KEY']])
+
+// 用户写过的源：检测不越权。
+const userCfg = effectiveConfig({ sources: [{ id: 'token-plan-window', providers: ['qwen-token-plan-cn'] }], minIntervalMs: 0 }, ctxStub)
+await applyAutoDetect(userCfg, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x', BAILIAN_CONSOLE_COOKIE: 'c' },
+}))
+check('用户已覆盖的路由，检测一个源都不加', userCfg.sources.length, 1)
+check('原本的用户源保持不动', [userCfg.sources[0].id, userCfg.sources[0].detected], ['token-plan-window', undefined])
+
+// 千问这种"一家两路源"：官方余量 + 实测兜底，同时挂上。
+const qwenCfg = hostCfg()
+await applyAutoDetect(qwenCfg, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { BAILIAN_CONSOLE_COOKIE: 'cookie', QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
+}))
+check('千问自动开出官方 + 实测两路', qwenCfg.sources.map(source => source.id).sort(), ['token-plan-console', 'token-plan-window'])
+// Cookie 掉了：官方余量不开，实测窗口还在（徽标不至于空）。
+const qwenNoCookie = hostCfg()
+await applyAutoDetect(qwenNoCookie, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
+}))
+check('Cookie 没配 → 只留实测窗卡', qwenNoCookie.sources.map(source => source.id), ['token-plan-window'])
+
+// autoDetect=false 与老宿主退回。
+const offCfg = effectiveConfig({ sources: ['deepseek-balance'], autoDetect: false }, ctxStub)
+const offInfo = await applyAutoDetect(offCfg, fakeHost({ routes: [{ id: 'minimax-cn' }], profiles: {} }))
+check('autoDetect=false 一切照旧', [offCfg.sources.length, offInfo.enabled, offInfo.reason.startsWith('autoDetect=false')], [1, false, true])
+const legacyCfg = hostCfg()
+const legacyInfo = await applyAutoDetect(legacyCfg, ctxStub)
+check('老宿主（没有 llm 服务）静默退回，不抛', [legacyInfo.enabled, legacyCfg.sources.length], [false, 0])
+ok('退回原因写清是宿主缺服务', String(legacyInfo.reason).includes('llm'))
+
+// 全链路：快照里能看见检测的痕迹（卡片带 detected，config.sources 带 detected）。
+const e2eHost = fakeHost({
+  routes: [{ id: 'minimax-cn', name: 'MiniMax' }],
+  profiles: { 'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1', apiKeyEnv: 'MINIMAX_CN_API_KEY' } },
+  refs: { MINIMAX_CN_API_KEY: 'k' },
+})
+const e2eSnap = await buildStatus(effectiveConfig({ sources: [], showInstanceWindow: false }, e2eHost), e2eHost, { fresh: true })
+check('快照带自动检测出的卡', e2eSnap.cards.map(card => card.id), ['window:minimax-cn'])
+check('卡片带识别依据', e2eSnap.cards[0].detected.by, 'fallback-window')
+check('快照的 detection 块可诊断', [e2eSnap.detection.enabled, e2eSnap.detection.uncovered], [true, ['minimax-cn']])
+check('config 回显也带 detected（排查时能对上）', e2eSnap.config.sources[0].detected.by, 'fallback-window')
+check('detection 里没有密钥字段', JSON.stringify(e2eSnap.detection).includes('sk-'), false)
+resetInstanceState()
+
 console.log(`\n${passed} passed, ${failed} failed`)
 // 不用 process.exit：全局 undici 的回环保活 socket 与 exit 撞车会触发 libuv 断言。
 process.exitCode = failed === 0 ? 0 : 1

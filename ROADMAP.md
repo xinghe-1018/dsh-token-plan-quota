@@ -119,7 +119,11 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 - [ ] T1.4b 一源多请求（`/api/v1/key` 的 key 级 `usage_limit` 与日/周/月花费进同一张卡的第二条
       meter）。这是**新的架构件**（现在一个 source 一次请求），别为了塞 OpenRouter 的第二条窗口
       去 hack 一个假 meter；等 GLM 那种"一次请求多窗口"验证完 meters 形状后再做，顺序更稳。
-- [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）
+- [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）→ **主动推迟**（2026-09-06）：
+      它是唯一还需要**新 builder** 的一家（`data.limits[]` 一次回多窗口，还要 `unitEnum` 3=5h/6=周/1=天
+      与 `percentSemantics` 已用/剩余方向），而本机没有任何可核实的 GLM Key。盲写一份字段映射并在 README
+      里列为"支持"，正好撞进 §5.1 那条**描述必须属实**（评审会拿代码核数）。
+      等 ② 落地、且能真跑一次 `probe` 再做；届时 meters 形状也已被千问卡验证过。
 - [x] T1.6 通用实测窗口源去千问化：**已验证账本本来就是按 provider 分的**（`usageLedger.windows[provider]`
       ＋ `touchWindow` 按各家窗口天数滚窗），所以缺的不是引擎、是写法 → 加内置简写
       **`"window:<provider>"`**（自动展开成 `kind:'window'` + `providers:[<provider>]` + 标签；
@@ -194,26 +198,39 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 
 ### 2.2 语义与开关
 
-- 新配置 `autoDetect: true`（②之后为默认）；
-- **用户手写的 `sources` 永远赢**：显式列了就不追加同名自动源，但自动源仍可补用户没覆盖到的供应商
-  （用 `autoDetect: "fill-gaps" | true | false` 三态说清，默认 `true`）；
-- 每张卡带 `detected: {by:'baseURL'|'id'|'keyPrefix'|'user-config', route:'<provider id>'}`，
-  前端 tooltip 显示"按 `api.moonshot.cn` 自动识别"——**可解释**是这阶段的验收重点；
-- 凭据缺失的源：不显示卡、不报错（`debug: true` 时在诊断里列"跳过了什么、为什么"）；
-- 老宿主兼容：拿不到 `ctx.llm` 或 `ctx.settings` → 退回今天的行为（读 `DEFAULTS.sources`），
-  日志一句 warn，不抛。
+- 新配置 `autoDetect: true`（**已实现即为默认**）；
+- **用户手写的 `sources` 永远赢**：实现语义是「按**路由**判覆盖」——用户配置里的源已经覆盖的
+  路由，检测一概不再追加（比"同名源"更准：一条路由被任意一个源接住就不再重复接）。
+  原计划的 `"fill-gaps" | true | false` 三态**收敛成布尔**：三态里 "fill-gaps" 与 `true` 的实际行为
+  在按路由判覆盖之后已经重合，留着只是多一个要解释的旋钮；
+- 每张卡带 `detected: {by:'baseURL'|'routeId'|'keyPrefix'|'fallback-window', rule, host}`，
+  前端 tooltip 写「按 `api.moonshot.ai` 自动识别 · 区 international」——**可解释**是这阶段的验收重点；
+- 凭据缺失的源：整个不开、不报错、不占位；跳过记录进快照 `detection.skipped`（含试过的引用名）；
+- 老宿主兼容：拿不到 `llm` / `settings` → 静默退回配置语义，不抛；原因留在 `detection.reason`，
+  只有 `debug: true` 时才 additionally 冒一条 notice（否则每次快照都提示一句是噪声）。
 
 ### 2.3 任务清单
 
-- [ ] T2.1 抽 `lib/detect.js`：`detectSources({routes, profiles, secretsPresent, now})` → 纯函数 + 规则表
-- [ ] T2.2 `effectiveConfig()` 接入（含 `ctx.get('settings')` / `ctx.llm` 缺席兜底）
-- [ ] T2.3 订阅 `ctx.on('llm/adapters-updated', …)`（payload-free 事件；插件已在用 `ctx.on('llm/stream')`，
-      L2037 附近）→ 拓扑变化时连同 `invalidateSources()`（L2017）一起清掉推导缓存
-- [ ] T2.4 快照加 `detection` 块（在用路由、命中规则、跳过的源+原因），`debug` 才展开细节
-- [ ] T2.5 前端：卡片 tooltip 显示识别依据；C 档供应商徽标显示「实测」而不是整枚徽标消失
-- [ ] T2.6 配置文档与迁移：`sources` 未写时不再用硬编码默认，改走 autoDetect
-- [ ] T2.7 测试：规则表逐条命中、凭据缺失跳过、手写优先、老宿主退回、拓扑变更后重算
-- [ ] T2.8 README/诊断文案：`GET /token-plan-quota/summary` 的 `detection` 块能一屏回答"为什么这家没显示"
+- [x] T2.1 抽 `lib/detect.js`：**纯函数层**（不打网络、不读文件、不碰 cordis，宿主信息全注入），
+      `detectSources({routes, profiles, coveredRoutes, hasCredential, rules})` → `{sources, skipped, uncovered}`
+      ＋规则表 `PLATFORM_RULES`。凭据探测留在异步侧（`resolveSecret` 是异步的，纯函数不碰）
+- [x] T2.2 `applyAutoDetect(config, ctx)` 接在 `computeStatus` 里（不是 `effectiveConfig`——那里是同步的，
+      而凭据解析是异步的）。`settingsNs + settingsPath` 挖 profile 的 `baseURL`/`apiKeyEnv`；
+      **凭据引用优先用 profile 点名的那个**（`MOONSHOT_CN_API_KEY`），其次才是预设通用名，
+      Cookie 型源不认路由 Key
+- [x] T2.3 拓扑事件 → **不需要了**：检测每次 build 现算（纯本地解析，无缓存可失效），
+      比"缓存 + 订阅 `llm/adapters-updated` 失效"少一类不一致。加测了幂等（重复跑不叠加源）
+- [x] T2.4 快照加 `detection` 块：`{enabled, reason, routes[], added[], skipped[], uncovered[]}`；
+      `routes` 里带解析出的 host（`minimax-cn → api.minimaxi.cn`），跳过项带试过的引用名。
+      默认就把这块发出去（不大，且"为什么没显示"是首要排查问题）；`reason` 才受 `debug` 门控
+- [x] T2.5 前端 tooltip 交代识别依据与区；C 档徽标由 `window:<provider>` 顶上（不再整枚消失）。
+      措辞分开：命中规则写「按 api.moonshot.ai 自动识别」，兜底写「没匹配到官方额度接口，
+      按本实例实测显示」——**不把兜底说成识别成功**
+- [x] T2.6 配置迁移：用户没写 `sources` 且 autoDetect 开着时，**不再套用硬编码的
+      `DEFAULTS.sources`**（那两条正是漂移源头）；`autoDetect: false` 时照旧用它们
+- [x] T2.7 测试：纯函数层 15 组（优先级、区映射、反例不许认错）＋接线层 13 组（假宿主三服务、
+      幂等、凭据门控、用户覆盖优先、Cookie 掉线只留实测、老宿主静默退回、快照带 detected）
+- [ ] T2.8 本机现场验收：把 `~/.dsh/token-plan-quota.json` 里的 `sources` 删掉，核对 §2.4 三条期望
 
 ### 2.4 ②的本机验收基线（把 §0.1 的三个漂移当回归用例）
 

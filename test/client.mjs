@@ -226,6 +226,7 @@ function makeFetch(mode) {
         usedPercent: 60,
         remainingPercent: 40,
         meters: [{ key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 10000, remaining: 4000, usedPercent: 60, remainingPercent: 40 }],
+        detected: { by: 'fallback-window', rule: null, host: null },
       }
       const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [lying, ...rest] }) }
@@ -268,6 +269,8 @@ function makeFetch(mode) {
         extra: { toppedUp: 10.34, granted: 2 },
         veracity: 'verified',
         bindProviders: ['moonshot-ai'],
+        region: 'international',
+        detected: { by: 'baseURL', rule: 'moonshot', host: 'api.moonshot.ai' },
         sourceNote: 'Moonshot 官方 API（Bearer Key）· GET /v1/users/me/balance',
         error: null,
       }
@@ -746,6 +749,8 @@ function findChip(node) {
   const panel = JSON.stringify(await settle(render, 3))
   ok('明细里充值/赠款沿用已有标签键', panel.includes('充值 $10.34') && panel.includes('赠款 $2.00'))
   ok('Moonshot 卡挂「官方」药丸', panel.includes('tpq-pill') && panel.includes('官方'))
+  ok('tooltip 交代识别依据（按哪个 host 认出来的）', panel.includes('按 api.moonshot.ai 自动识别'))
+  ok('tooltip 带上当前区（两区 Key 不互通，不写区就是让人猜）', panel.includes('区 international'))
 }
 
 // 明细面板是常驻小窗：乱点哪儿都不关，只有再点徽标（toggle）或 Esc 才关。
@@ -820,6 +825,8 @@ function findChip(node) {
   ok('实测卡进面板', panel.includes('Token Plan 实测'))
   ok('实测卡不出条、不出百分比', !panel.includes('tpq-bar-lg') && !panel.includes('40%') && !panel.includes('60%'))
   ok('实测卡仍挂「实测」药丸与口径 tooltip', panel.includes('tpq-pill') && panel.includes('官方无 Key 化额度接口'))
+  ok('兜底源在 tooltip 里自报家门（不是"认出来了"，是"没认出来才挂实测"）',
+    panel.includes('没匹配到官方额度接口，按本实例实测显示'))
 }
 
 // 控制台卡只有错误（Cookie 没配）→ 徽标退回有数的实测窗口卡，不挂错误卡。

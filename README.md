@@ -71,6 +71,8 @@ DeepSeek 余额；想全看把 `panelScope` 设为 `"all"`（改 `~/.dsh/token-p
 hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（每卡级联 70ms）。
 强制刷新时徽标数值做呼吸动画（纯 opacity，宽度零抖动）；面板点开时 6px 上浮淡入，
 带 1px 内高光边。所有动效尊重 `prefers-reduced-motion`。面板宽度 380px、高度上限 52vh。
+字体不跟宿主默认栈：UI 文字用圆润人文栈（Aptos→Calibri→Corbel，中文落雅黑系），
+「当前模型」的标识串、按供应商吞吐行与 debug 骨架用圆头等宽（Cascadia Mono→Consolas）。
 余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
 强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
 或 `token_plan_quota` 工具（`refresh`/`reset`）。

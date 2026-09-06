@@ -1,0 +1,312 @@
+# ROADMAP — dsh-token-plan-quota
+
+三阶段：**① 适配更多平台 → ② 零配置自动检测（模型 ↔ 余量源自动绑定）→ ③ 重写 README，开源发布**。
+顺序有依赖：②的匹配规则表要覆盖①新增的平台，③要把①②的成果写成对外文档。
+
+版本计划：① → `0.3.0`，② → `0.4.0`，③ → `1.0.0`（首个对外版本）。
+每阶段收尾都要 `node test/host.mjs && node test/client.mjs` 全绿，且新增用例覆盖新分支。
+
+---
+
+## 0. 现状盘点（v0.2，代码事实）
+
+| 位置 | 现状 | 对后续的影响 |
+|---|---|---|
+| `PRESETS`（`lib/index.js` ~L678） | 6 个预设：`deepseek-balance`、`token-plan-window`、`token-plan-console`、`account-balance`、`fr-instances`、`resource-package` | 新平台＝新预设条目，形状已够用（`kind: single/list/window`） |
+| `normalizeSources()`（L926） | 只认 `sources` 数组里的字符串名或 `{id,...覆盖}`；**没有任何"从宿主供应商列表推导"的路径** | ②的插入点就在这里之后 |
+| `source.providers` | 手填的供应商 id 列表 → `bindProviders` 透传给前端（L1608） | ②要用自动匹配结果填这个字段 |
+| 前端 `lib/client.js` L889-911 | **徽标跟随当前模型 provider 已实现**（`sessions.list` → `modelDirectories`，`bindOf(card).includes(provider)` 精确匹配） | ②基本不用动前端；只做"无绑定源时的兜底显示" |
+| `resolveSecret()`（L961） | 凭据解析链：DSH 凭据服务 → env → `.credentials.yaml` → `.env` | ②的"有凭据才启用"直接复用 |
+| `DEFAULTS.sources`（L41） | 硬编码 `['deepseek-balance','token-plan-window']` | ②落地后改成 `autoDetect: true` 的推导结果 |
+
+### 0.1 已验证的漂移：手填 `providers` 与宿主真实路由不匹配（本机实测）
+
+`GET /token-plan-quota/summary` 与 `~/.dsh/settings.yaml` 对账结果（2026-09-06，本机）：
+
+| 事实 | 来源 |
+|---|---|
+| 本机**在用的供应商路由只有两条**：`qwen-token-plan-cn`、`minimax-cn`（`deepseek-v3.2/v4` 只是 Token Plan 网关上的模型名） | `settings.yaml` → `llm-pi-ai.providers` |
+| 四条凭据引用都在，且命名跟着路由走：`QWEN_TOKEN_PLAN_CN_API_KEY`、`MINIMAX_CN_API_KEY`、`DEEPSEEK_API_KEY`、`BAILIAN_CONSOLE_COOKIE` | `~/.dsh/.credentials.yaml`（只看键名，未取值） |
+| `deepseek-balance` 每 10 分钟真打一次 `api.deepseek.com` 并拿到 `remaining=40.74`，但它的 `bindProviders=['deepseek']` **没有任何在用路由对得上 → 这张卡在徽标和明细面板里都不可见**（`panelScope: current`） | summary 响应 `cards[].bindProviders` |
+| `minimax-cn` 有路由、有 Key，却**没有任何数据源绑定** → 切到 MiniMax 模型时整枚徽标消失（README「已知边界」里那条，实为可改进项） | 同上 |
+
+结论：这不是"某个别名写错"，而是**数据源清单与实际供应商拓扑各写各的、必然漂移**——
+①阶段先临时加别名 `['deepseek','deepseek-official']`（DSH 出厂适配器注册的 id 是
+`deepseek-official`，见 `packages/llm/llm-deepseek/src/index.ts` L81）止住不可见，
+②阶段做完后这类手填整体消失。附带收益：省掉一次**用户根本看不到的**上游请求（每 10 分钟一次）。
+
+### 0.2 其他先修项（开工①之前，一次小提交）
+
+- `package.json` 的 `version` 还是 `0.1.0`，但 git 已提交 `v0.2`；顺手补 `0.2.x` 与 `v0.2` tag。
+- `dshhub.permissions.network` 只声明了 `business.aliyuncs.com`，实际出站主机还有
+  `api.deepseek.com` / `cs-data.qianwenai.com` / `platform-home.qianwenai.com`。声明不全＝对外审查时
+  第一个被抓的问题（③之前补齐，随每个新平台增量维护）。
+
+---
+
+## 1. 阶段①：适配更多平台
+
+### 1.1 端点核实结论（2026-09，全部带出处）
+
+分三档：**A＝同一把 Bearer Key 就能查额度（零配置友好）**；**B＝需要额外凭据形态**（Cookie /
+OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实例实测窗口）。
+
+| 平台 | 档 | 端点 | 鉴权 | 关键字段（**含信封路径**） | 备注 |
+|---|---|---|---|---|---|
+| Moonshot / Kimi 开放平台 | A | `GET https://api.moonshot.ai/v1/users/me/balance`（国际，USD）<br>`GET https://api.moonshot.cn/v1/users/me/balance`（大陆，CNY） | `Authorization: Bearer` + `Accept: application/json` | **信封 `{code, status, data}`：先判 `code==0 && status==true`**，再取 `data.available_balance` / `data.cash_balance` / `data.voucher_balance` | 路径是 `/v1/users/me/balance`，**不是** `/v1/users/balance`（后者只 401 存在、非额度用途）。无窗口概念；`cash_balance` 可为负＝欠款。[官方](https://platform.kimi.ai/docs/api/balance.md) |
+| OpenRouter | A | `GET https://openrouter.ai/api/v1/credits`；补强 `GET /api/v1/key` | Bearer `sk-or-v1-…` | `/credits` → `data.total_credits`、`data.total_usage`（**余额＝差额**）<br>`/key` → `data.limit`、`data.limit_remaining`、`data.usage`、`data.usage_daily/_weekly/_monthly`、`data.limit_reset`(`daily`/`weekly`/`monthly`)、`data.rate_limit.{requests,interval}` | `/api/v1/auth/key` 是 `/key` 的遗留别名；`/api/v1/activity` **要 Management key**（另一种凭据）→ 不做。[官方](https://openrouter.ai/docs/api-reference/limits) |
+| 智谱 z.ai / GLM Coding Plan | A（个人）/ B（团队） | `GET https://api.z.ai/api/monitor/usage/quota/limit`（全球）<br>`GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`（大陆） | Bearer；大陆也接受裸 Key | 信封 `{code:200, success, data.limits[]}`；每条 `limits[i]`：`type`(`TOKENS_LIMIT`/`CREDIT_LIMIT`/`TIME_LIMIT`)、**`unit` 是枚举不是分钟：3=5 小时、6=周、1=天、5=分钟**、`number`、`percentage`、`currentValue`、`remaining`、`nextResetTime`(epoch ms)、`usageDetails[]` | **多计量条**正主：一次响应给 5h/周/日多窗口。**团队模式要 `Bigmodel-Organization` + `Bigmodel-Project` 头 + `?type=2` → 按决策不做**。现金余额另有一家用控制台端点 `GET https://www.bigmodel.cn/api/biz/account/query-customer-account-report` → `data.availableBalance`（**非 open 域、非官方公开 API**，谨慎）。[CodexBar docs/zai.md](https://github.com/steipete/CodexBar/blob/main/docs/zai.md) |
+| Kimi Code（`kimi.com/code` 订阅） | B | `GET https://api.kimi.com/coding/v1/usages` | API Key（`KIMI_CODE_API_KEY`）或 Cookie 或复用 `~/.kimi-code/credentials/kimi-code.json` | 周请求配额、5 小时限流、membership | 与开放平台是**两套不同东西**，别混；Cookie/CLI 凭据形态按决策不做。[docs/kimi.md](https://github.com/steipete/CodexBar/blob/main/docs/kimi.md) |
+| OpenAI | B/C | 普通 `sk-` **无任何余额端点**（`/v1/dashboard/billing/credit_grants` 已弃用，仅遗留 user key 可用：`total_granted`/`total_used`/`total_available`）；`GET /v1/organization/costs?start_time=&end_time=&bucket_width=1d` 要 **Admin key**（普通 key 403） | Bearer（Admin）/ OAuth | `data[].results[].amount.value`＝**花费**（USD），不是剩余额度 | Codex 订阅是 OAuth：`GET https://chatgpt.com/backend-api/wham/usage` + `ChatGPT-Account-Id` 头，token 在 `~/.codex/auth.json` → 按决策不做。普通 Key 场景＝C 档实测窗口 |
+| Google Gemini / AI Studio | C（API Key）/ B（OAuth） | `generativelanguage.googleapis.com` **无额度端点**（仅 429 响应带 `x-ratelimit-*` 头、超额报 `RESOURCE_EXHAUSTED`）；Code Assist 走私有 `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`（`buckets[].{modelId,tokenType,remainingFraction,resetTime}`，`remainingFraction` 是**剩余**比例） | OAuth（`~/.gemini/oauth_creds.json`）＋ project id（`loadCodeAssist`）；刷新还要 gemini-cli bundle 里的 client_id/secret | — | 消费版 Code Assist 已被 Google [停服](https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals)（且"不支持"信号以 **HTTP 200** 返回）。→ 只做实测窗口 |
+| xAI / Grok | B | `GET https://management-api.x.ai/v1/billing/teams/{team_id}/prepaid/balance` | **Management key**（推理 Key 被拒）＋ team id | `total.val` 是**取负的整数分**：余额＝`-Number(val)/100` | 两个额外凭据＋反向单位，性价比极低。[官方](https://docs.x.ai/developers/rest-api-reference/management/billing) |
+| Anthropic | B/C | 普通 `sk-ant-` 无余额端点；`GET /v1/organizations/cost_report` 要 **Admin key**（`x-api-key` + `anthropic-version`），金额字段是**最小单位分、字符串** | Admin key / Claude OAuth（`api.anthropic.com/api/oauth/usage` + `anthropic-beta: oauth-2025-04-20`） | OAuth 侧窗口 `five_hour`/`seven_day*` 的 `utilization` ＝**已用**百分比 | 与 Gemini 的 `remainingFraction`（剩余）**方向相反** |
+| MiniMax | C | 无 Key 化端点（此前实测：常见路径全返回 SPA HTML）；CodexBar 靠控制台页面/Cookie | — | — | 只做实测窗口。[docs/minimax.md](https://github.com/steipete/CodexBar/blob/main/docs/minimax.md) |
+| 阿里云百炼 Coding Plan / Qwen Cloud | A/B | 见 CodexBar `alibaba-coding-plan.md` / `qwen-cloud.md` | AK/SK 或 Cookie | — | 我们已有 Token Plan 控制台契约，可复用同一套 Cookie 机制 |
+| 长尾（SiliconFlow / CommandCode / SCNet / 火山方舟 / stepfun / mimo / longcat / doubao / groq / mistral …） | 视各家 | — | — | — | **不预设**：现有 `kind: http/single + extract` 已允许用户自己在 JSON 里配；`dsh-cost-meter` 已覆盖其中九家，优先做差异化而非重复 |
+
+### 1.1.1 单位与语义陷阱（每接一家先过这张表，接错方向＝仪表反向）
+
+| 陷阱 | 事实 | 我们怎么防 |
+|---|---|---|
+| **百分比方向不一致** | 智谱 `percentage`、Claude `utilization`＝**已用**；Gemini `remainingFraction`＝**剩余** | 预设里强制声明 `percentSemantics: 'used' | 'remaining'`，`buildSingleCard`/`meters` 归一时按声明转，**绝不用启发式猜 0–1 还是 0–100**（`dsh-cost-meter` 的 `gateway-quota-adapters.js` 注释也专门警告过这点） |
+| **金额单位是最小单位分、且是字符串** | Anthropic `amount`、xAI `total.val` | 预设声明 `unitScale: 'cents'`＋`toNumber` 后再除；`remaining` 为负值要能显示（Moonshot 欠款场景） |
+| **枚举当数字** | 智谱 `unit`：3=5 小时、6=周、1=天、5=分钟 | 预设声明 `unitEnum` 映射表，未识别的枚举值**不猜**，落到 `debug` 骨架里 |
+| **信封先判再取** | Moonshot `code==0 && status==true`；智谱 `code:200, success` | 已有 `envelopeOk` 机制（`httpEnvelopeOk` L1353），新家用 `okWhen` 声明，别新写一套 |
+| **数字可能是字符串** | Codex `individual_limit.{limit,used,remaining_percent}` | `toNumber` 已剥逗号/空白，够用；加一条单测锁住 |
+| **探测会产生费用** | xAI 探活会补一条真实对话消息 | **本插件永不做"猜测式探活"**；只用只读端点，`probe` 路由也只打配置好的源 |
+
+### 1.2 阶段①需要先做的 4 个架构改动（否则每加一家都在硬塞）
+
+1. **多计量条卡（P1 关键）**：现在一张卡只有 `remaining/total/usedPercent` 一组标量，第二组塞在
+   `extra.fiveHour*` 里（`buildConsoleCard` L1274）。把卡的形状升级为 `meters: [{key,label,used,total,
+   unit,resetAt}]`，`extra` 保留兼容；前端 `renderCard` 改成遍历 `meters`（千问卡片迁移到同一形状，
+   顺便去掉 `fiveHour*` 特殊字段）。没有这一步，GLM/Kimi Code/OpenRouter 三家都表达不了。
+2. **派生表达式**：OpenRouter 余额＝`total_credits − total_usage`。在 `extract` 之外加
+   `derive: { remaining: 'a-b', used: 'b', total: 'a' }`（只支持加减，不做表达式引擎），
+   在 `buildSingleCard`（L1523）里应用。
+3. **区域/端点变体**：Moonshot（.ai/.cn）、GLM（api.z.ai/open.bigmodel.cn）都要"同一家两个 host"。
+   预设加 `regions: { international: {...}, 'china-mainland': {...} }` + 配置项 `moonshotRegion`
+   /`glmRegion`（默认按 Key 前缀/币种猜一次、错了日志说清楚），**不做自动探测 region**（探测＝多打一次网络）。
+4. **鉴权形态收口**：`auth: 'bearer' | 'ak-sk' | 'cookie' | 'oauth-local-cli'`。①只实现前三种，
+   `oauth-local-cli`（读 `~/.codex/auth.json`、`~/.kimi-code/…`）**明确划到①范围外**：
+   读别的 CLI 的登录态属于 B 类强侵入，开源后要单独一轮评审（含"只读不回传"的边界与 README 警告）。
+
+### 1.3 阶段①任务清单（按可独立提交的顺序）
+
+- [x] T1.0 修 §0.1 的别名止漏 + §0.2 两个元数据问题（`deepseek-official` 别名进预设与前端兜底表；
+      `version` → 0.2.0；`dshhub.permissions.network` 补 `api.deepseek.com`/`cs-data.qianwenai.com`/
+      `platform-home.qianwenai.com`/`cdn.jsdelivr.net`；补 `repository`/`homepage`）
+- [x] T1.1 卡形状升级 `meters[]` + 前端渲染改造 + 千问卡迁移（宿主 `finalizeMeter` 统一派生百分比、
+      **无官方分母即无百分比**；前端 `MeterRows` 只渲染 `meters.slice(1)`、实测卡强制不出条不出百分比、
+      `cardValueText` 对实测卡只报 tokens；host 179 / client 82 全绿）
+- [x] T1.2 `derive` 支持 + 单测 → **改期到 T1.4 一起做**（OpenRouter 的差额计算跟着它才有被测的对象）
+- [ ] T1.3 预设：`moonshot-balance`（含 region）→ 首个新平台，跑通"新增一家"的全流程模板
+- [ ] T1.4 预设：`openrouter-credits`（+ 可选 `/api/v1/key` 作为第二个 meter）
+- [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）
+- [ ] T1.6 通用实测窗口源去千问化：`token-plan-window` 保留，新增可复制的 `window:<provider>` 形状，
+      给 OpenAI/Gemini/MiniMax 这类 C 档平台用（**明标「实测」，不冒充官方余量**——口径不变）
+- [ ] T1.7 `SOURCE_META`/`ERROR_HINTS` 为每家补 veracity 说明与可操作报错
+- [ ] T1.8 手工验收：真实 Key 逐家跑 `GET /token-plan-quota/probe?source=<id>` 核对字段名，
+      把核对结论写回本文件 §1.1（表格即证据链）
+
+### 1.4 生态已有相邻实现：先复用契约，再把差异化说清楚（重要）
+
+`awesome-dsh-plugin.com` 的 **Usage & Billing** 分类下已有 178 个插件，其中两家与本插件定位重叠：
+
+| 邻居 | 它做了什么 | 对①②③的影响 |
+|---|---|---|
+| [`dsh-cost-meter`](https://github.com/Han-1413141/dsh-cost-meter)（MIT，已发 npm，v1.7.10，双语 README + docs/） | **Coding Plan 额度九家**：Anthropic / Z.ai·智谱 / MiniMax / Kimi / OpenRouter / SiliconFlow / CommandCode / SCNet / 火山方舟（含 Ark AK/SK 签名）；外加 90+ 模型价格目录、Plan/API 双轨计费、"每 1% 额度"估算 | ①的端点契约**它已经逐家验证过**（`lib/gateway-quota-adapters.js` 注释写明各家 percent 语义、reset 归一、且**故意不实现会产生计费副作用的 xAI 探活**）→ 照抄契约、注明出处，比我们自己摸快得多；但它是"费用仪表盘"，我们是"只报真值的徽标"，**立场不同：我们不做 Credits 折算与任何估算** |
+| `lycier/dsh-token-monitor`、`Mu-scorpio/token-usage-counter`、`yokesky/dsh-usage-lens` | 请求级 token/成本统计、热图、Header 额度徽标 | 明细面板要与它们明显区分：我们的差异化在**跟随当前模型供应商**＋**千问 Token Plan 控制台真值**（它们没有这条） |
+
+→ 三条行动：①按 MIT 许可引用 `dsh-cost-meter` 的已验证契约并在 `docs/upstream-contracts.md` 署名出处；
+②README 增加"与相邻插件的区别"一节（回答评审必问的"为什么不直接用 dsh-cost-meter"）；
+③把**千问 Token Plan 官方余量（控制台网关）**确立为本插件的第一卖点——这是邻居里没有的能力。
+
+**阶段①不做（已定）**：自动检测、README 重写、以及三类侵入更强的凭据形态——
+**GLM 团队模式（org/project id）、Kimi Code Cookie、Codex/ChatGPT OAuth（读 `~/.codex/auth.json`）**。
+这三类因权限与账号风险不在本插件射程内，**README「不做什么」一节明确写死：需要的人自己按
+「自定义源」章节配 HTTP 端点**，插件不为它们引入任何读本地登录态的代码。
+
+---
+
+## 2. 阶段②：零配置自动检测（"用哪个模型 → 自动看哪份余量"）
+
+**要解决的痛点**：现在用户必须自己写 `sources: [...]` 并且手填每个源的 `providers`，
+且填错一个字母徽标就静默不显示（§0.1 就是活例）。目标是**装完就开箱可用**。
+
+### 2.1 设计
+
+新增 `lib/detect.js`（纯函数，可离线测），在 `effectiveConfig()` 里 `normalizeSources()` **之后**跑：
+
+```
+宿主供应商路由 ──┐
+                 ├─→ 匹配规则表（PLATFORM_RULES）─→ 命中的预设 + 自动填 providers
+profile.baseURL ─┘                                  ↓
+profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源（不报错、不占位）
+                                                  是──→ 启用该源，veracity 保持
+无任何规则命中的在用供应商 ──→ 自动挂一个 window:<provider> 实测源（7 天窗口）
+```
+
+数据来源（宿主已有、无需新 API）：
+
+- `ctx.llm.listProviders()` → `{id,name}` 在用路由；
+- `ctx.llm.listConfigurableProviders()` → `{provider, displayName, settingsNs, settingsPath, declared}`
+  告诉你这家**的配置落在哪个 settings 分节的哪条路径**；
+- `ctx.settings.get(<settingsNs>)` + `settingsPath` → 该路由 profile 的 `baseURL` 与 `apiKeyEnv`
+  （`packages/llm/llm-pi-ai/src/config.ts` L307-335 的 profile 形状；`apiKeyEnv` 带
+  `role('credential-ref')`，正是我们解析凭据要的名字）；
+  本机 `settings.yaml` 已核对：`providers.qwen-token-plan-cn.apiKeyEnv = QWEN_TOKEN_PLAN_CN_API_KEY`、
+  `baseURL = https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`——
+  **凭据引用名由 profile 点名，不用猜 `<PROVIDER>_API_KEY` 约定**。
+- 事件 `llm/adapters-updated`（payload-free）→ 拓扑变了就重算，另配 TTL/惰性重算。
+
+匹配规则（`PLATFORM_RULES`，按优先级）：
+
+1. `baseURL` host 精确匹配（`api.moonshot.cn` → moonshot；`openrouter.ai` → openrouter；
+   `api.z.ai`/`open.bigmodel.cn` → glm；`token-plan.cn-beijing.maas.aliyuncs.com` → 千问 Token Plan）——**最可信**；
+2. 路由 id / displayName 关键词（`moonshot|kimi`、`glm|zhipu|z.ai`、`openrouter`…）；
+3. Key 前缀兜底（`sk-or-v1-`、`sk-sp-`…）；
+4. 都不中 → 实测窗口。
+
+### 2.2 语义与开关
+
+- 新配置 `autoDetect: true`（②之后为默认）；
+- **用户手写的 `sources` 永远赢**：显式列了就不追加同名自动源，但自动源仍可补用户没覆盖到的供应商
+  （用 `autoDetect: "fill-gaps" | true | false` 三态说清，默认 `true`）；
+- 每张卡带 `detected: {by:'baseURL'|'id'|'keyPrefix'|'user-config', route:'<provider id>'}`，
+  前端 tooltip 显示"按 `api.moonshot.cn` 自动识别"——**可解释**是这阶段的验收重点；
+- 凭据缺失的源：不显示卡、不报错（`debug: true` 时在诊断里列"跳过了什么、为什么"）；
+- 老宿主兼容：拿不到 `ctx.llm` 或 `ctx.settings` → 退回今天的行为（读 `DEFAULTS.sources`），
+  日志一句 warn，不抛。
+
+### 2.3 任务清单
+
+- [ ] T2.1 抽 `lib/detect.js`：`detectSources({routes, profiles, secretsPresent, now})` → 纯函数 + 规则表
+- [ ] T2.2 `effectiveConfig()` 接入（含 `ctx.get('settings')` / `ctx.llm` 缺席兜底）
+- [ ] T2.3 订阅 `ctx.on('llm/adapters-updated', …)`（payload-free 事件；插件已在用 `ctx.on('llm/stream')`，
+      L2037 附近）→ 拓扑变化时连同 `invalidateSources()`（L2017）一起清掉推导缓存
+- [ ] T2.4 快照加 `detection` 块（在用路由、命中规则、跳过的源+原因），`debug` 才展开细节
+- [ ] T2.5 前端：卡片 tooltip 显示识别依据；C 档供应商徽标显示「实测」而不是整枚徽标消失
+- [ ] T2.6 配置文档与迁移：`sources` 未写时不再用硬编码默认，改走 autoDetect
+- [ ] T2.7 测试：规则表逐条命中、凭据缺失跳过、手写优先、老宿主退回、拓扑变更后重算
+- [ ] T2.8 README/诊断文案：`GET /token-plan-quota/summary` 的 `detection` 块能一屏回答"为什么这家没显示"
+
+### 2.4 ②的本机验收基线（把 §0.1 的三个漂移当回归用例）
+
+零配置（删掉 `~/.dsh/token-plan-quota.json` 里的 `sources`）之后，在这台实例上应当看到：
+
+| 当前模型 | 期望徽标 | 判定依据 |
+|---|---|---|
+| `qwen3.8-flash`（route `qwen-token-plan-cn`，baseURL `token-plan.cn-beijing.maas.aliyuncs.com`） | Token Plan 余量（有 Cookie 走 `token-plan-console`，无 Cookie 退实测窗口） | baseURL host 命中千问 Token Plan 规则 |
+| `MiniMax-M2.5`（route `minimax-cn`，凭据 `MINIMAX_CN_API_KEY` 在） | **实测** 7 天窗口卡（C 档，官方无端点） | 路由在用 + 有凭据，但无官方端点 → 自动挂 `window:minimax-cn`。**今天这里是整枚徽标消失** |
+| 若日后加 `deepseek-official` 路由 | DeepSeek 官方余额 | 规则命中，且**只有真正有路由时才打 `api.deepseek.com`**——今天是无路由也照打、结果还看不见 |
+
+---
+
+## 3. 阶段③：重写 README ＋ 开源准备
+
+### 3.1 现在阻碍公开的硬问题
+
+| 问题 | 位置 | 处置 |
+|---|---|---|
+| **没有 LICENSE 文件**（`package.json` 写了 MIT） | 仓库根 | 补 `LICENSE`（MIT）+ 版权行 |
+| **测试写死 `C:\test-dsh-home`**，Linux/macOS 直接跑不了 | `test/host.mjs` L48/53/57/174/242 | 换 `join(os.tmpdir(),'dsh-quota-test-<pid>')`，断言别拼反斜杠 |
+| 版本号与 git 历史不一致、无 tag、无 CHANGELOG | `package.json` | 对齐版本 + `CHANGELOG.md`（Keep a Change）+ `v*` tag |
+| README 224 行高密度中文、**无英文版**、无截图、把内部逆向细节与使用手册混在一起 | `README.md` | 见 3.2：整篇 `README.en.md`（社区惯例，`dsh-cost-meter` 就是 `README.md` + `README.en.md`） |
+| **与 `dsh-cost-meter` / `dsh-token-monitor` 定位重叠却未声明**（评审必问"为什么不直接用那个"） | — | README 加「与相邻插件的区别」一节（立场：只报真值、不折算不估算、跟随模型供应商、千问 Token Plan 官方余量）；契约引用处署名出处 |
+| 逆向/Cookie 契约的对外风险未声明（千问控制台网关） | — | 明确 disclaimer：**非官方接口、Cookie 只读本地、可能违反上游服务条款、随时失效**；Cookie 源改成**显式开启才生效**（默认不启用），避开生态里 `dsh-sentinel-scanner`/`dsh-score` 类自动审计把"读本地 Cookie 发往第三方域名"判成凭据外泄 |
+| 权限声明缺主机 | `package.json` `dshhub.permissions.network` | 列全所有出站 host（`dsh-cost-meter` 列了 18 个，对照自查）；新增平台时随 PR 更新（①就补） |
+| 无 CI、无贡献指南 | `.github/` | `ci.yml`：`node 20/22 × ubuntu/windows` 跑两个测试文件；`CONTRIBUTING.md` 写清"如何新增一家"（照 T1.3 模板）；`SECURITY.md` 写凭据处理边界 |
+| `.scratch/` 探测脚本 | 已被 `.gitignore` 忽略 ✅ | 发布前 `git ls-files` 再确认一遍，别把带真实 Key 的输出提交上去 |
+
+### 3.2 README 新结构（对外优先，逆向细节挪走）
+
+1. 一句话＋GIF/截图（徽标跟随模型切换、明细面板悬浮拖拽）
+2. 亮点与**不做什么**（不折算 Credits、不估算官方余量——这是产品立场，放最前面）
+3. 安装（三种写法都给：npm 包名 / `github:user/repo` / 本地目录；`dsh plugin` 是 pnpm 直传到 profile 目录，
+   装完**重启一次 `dsh web`**；本插件无构建步骤，不会撞上 pnpm ≥10 的 `prepare` 脚本白名单，这句要写进去）
+4. 支持的平台表（①结束时生成，A/B/C 三档，附**上游文档链接**与"实测/官方"标记）
+5. **与相邻插件的区别**（`dsh-cost-meter`＝费用仪表盘＋九家 Coding Plan＋估算；`dsh-token-monitor`
+   ＝请求级成本统计；本插件＝**只报真值、跟随当前模型供应商的徽标＋千问 Token Plan 官方余量**）
+6. 零配置说明（②成果：装完就能看到什么、按什么规则识别、怎么关掉）
+7. 配置全表（键 / 类型 / 默认 / 影响）
+8. 凭据与安全（解析顺序、Cookie 边界、**绝不进任何路由响应**、Cookie 源需显式开启）
+9. 吞吐口径（速度 vs 吞吐，缓存读不计分子）
+10. 只读端点与 `token_plan_quota` 工具
+11. 已知边界（把 §0.1、C 档平台、重启后账本、座位退化等收在这一点）
+12. 开发（测试命令、跨平台要求、如何新增一家 → 链到 `docs/adding-a-provider.md`）
+13. 非官方接口免责声明 ＋ **明确列出不支持的三类强侵入形态**（GLM 团队模式 / Kimi Cookie / Codex OAuth，
+    因权限与账号风险不做，需要的人照「自定义源」自己配）
+14. 许可
+
+`README.md`（中）与 `README.en.md`（英）**整篇对齐**，逆向契约表进 `docs/upstream-contracts.md`
+（保留 §1.1 那张证据链，含出处 URL 与实测日期）。
+
+### 3.3 任务清单
+
+- [ ] T3.1 跨平台测试修复（`os.tmpdir()`），CI 上 ubuntu 先跑绿
+- [ ] T3.2 `LICENSE` / `CHANGELOG.md` / 版本对齐 / tag `v1.0.0`
+- [ ] T3.3 `docs/adding-a-provider.md`（把 T1.3 的模板固化成 checklist：预设 → SOURCE_META → ERROR_HINTS → probe 核对 → 表回填）
+- [ ] T3.4 `docs/upstream-contracts.md`（现有逆向细节搬家，逐条带出处 URL 与实测日期）
+- [ ] T3.5 README 重写（3.2 结构）＋ 截图/GIF，**并整篇英文化 `README.en.md`**（`README.md` 顶部互链；
+      界面内文案也要跟上：`lib/client.js` 已有 `COPY.zh`，需要 `COPY.en` + 语言选择，否则英文 README
+      配中文徽标会立刻被 issue 打回——这项工作量不小，排在③的第二优先）
+- [ ] T3.6 `.github/workflows/ci.yml` + `CONTRIBUTING.md` + `SECURITY.md` + issue 模板（含"某家识别不对"必填项）
+- [ ] T3.7 `dshhub` 元数据校对：`summary` 收短、`categories`、`capabilities`、`engines.dsh` 下限按实际依赖验证；
+      `repository`/`homepage` 字段补上（邻居都带，market 抓取要用）
+- [ ] T3.8 发布前自查：`git ls-files`、密钥扫描、README 里每条命令照做一遍、干净目录 `dsh plugin add` 冒烟
+- [ ] T3.9 发布渠道（见 §5）：GitHub 加 `dsh-plugin` topic → npm 发 `dsh-token-plan-quota`
+      → awesome-dsh-plugin.com 提交 → 本地自测 `dsh-sentinel-scanner` / `dsh-score` 类审计不报高危
+
+---
+
+## 4. 决策记录（2026-09-06 已拍板）
+
+| # | 决定 | 落在哪 |
+|---|---|---|
+| 1 | **C 档平台显示"实测"徽标**（不再整枚消失）。配套硬规则写死进实现与文档：实测卡**永不画余量条、永不显示百分比**（无官方分母＝无进度概念），tooltip 首行必须说"官方无额度接口，此为本实例实测" | §2.4、T1.6、T2.5；README「不做什么」一节同步 |
+| 2 | **GLM 团队模式 / Kimi Code Cookie / Codex·ChatGPT OAuth 三类不做**——因权限与账号风险超出本插件射程；**README 显式写死**"需要的人自己按自定义源配" | §1.2 第 4 条、§3.2 第 13 节；不写任何读本地登录态的代码 |
+| 3 | **英文整篇 `README.en.md`**（不是摘要），与中文版逐节对齐 | §3.2、T3.5；顺带要求 `lib/client.js` 的文案上双语（否则英文 README 配中文徽标） |
+| 4 | 走 **DSH 生态的公开渠道**（见 §5），不是往 `deepseek-harness` 主仓提 PR——**主仓不接受外部 PR**，官方认可的插件贡献方式就是"自己发仓库 + 打 `dsh-plugin` topic"（`CONTRIBUTING.md` L13-15） | §5 全节 |
+
+---
+
+## 5. 发布渠道与准入（对应决策 4）
+
+DSH 生态的"插件存放处"是**三层**，本插件三层都要过：
+
+| 层 | 是什么 | 我们要做的 |
+|---|---|---|
+| GitHub topic | 官方 `CONTRIBUTING.md` 认可的发现机制：[topics/dsh-plugin](https://github.com/topics/dsh-plugin) | 给 `xinghe-1018/dsh-token-plan-quota` 加 `dsh-plugin` topic（一行设置） |
+| npm | `dsh plugin add` 是 **pnpm 直传**到 profile 目录（`apps/cli/src/plugin.ts` L120-157），所以发布到 npm 后 `dsh plugin --profile web add dsh-token-plan-quota` 就能装 | **包名 `dsh-token-plan-quota` 当前未被占用**（registry 404，已核）→ `npm publish`；本插件零构建，不会触发 pnpm ≥10 的 `prepare` 白名单拦截（对比：git 安装带构建步骤的插件会撞） |
+| Awesome DSH Plugin | [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com)（3196 条，含 `dsh-market` 一键装） | 提 PR 加**一个文件** `data/plugins/xinghe-1018__dsh-token-plan-quota.yml` |
+
+### 5.1 awesome-dsh-plugin 的硬性准入（已读 `contributing.md` 核对）
+
+- 提交格式（**只有 `description.en` 必填**，`zh` 缺了维护者会补；含 `: ` 的值必须加引号）：
+
+  ```yaml
+  url: https://github.com/xinghe-1018/dsh-token-plan-quota
+  name: xinghe-1018/dsh-token-plan-quota
+  category: usage
+  description:
+    en: Quota badge in the composer toolbar that follows the active model's provider, showing official balances where an API exists and clearly-labelled local measurements elsewhere.
+  ```
+
+- ✅ **已满足**：`package.json` 声明了 `dsh.bundle.patch: ./cordis.patch.yml`（**最常见的被拒原因是只写
+  `dsh.client`**，我们两者都有）；有真实代码；仓库早已满 1 天。
+- ⚠️ **需要注意**：
+  1. **描述必须与代码逐字对得上**（评审会拿代码核数）→ 那句"following the active model's provider"
+     成立（v0.2 已实现），但"showing official balances where an API exists"要等①做完多家再提，
+     否则只有 DeepSeek/千问两家，措辞要收窄；
+  2. **评审第 4 条明说"两个插件做同一件事，先来者留位"** → `dsh-cost-meter`（九家 Coding Plan）已在榜，
+     **不提"与邻居的区别"就直接投稿，大概率被判重复**。§1.4 那节不是可选项，是投稿前置条件；
+  3. 评审第 5 条看"凭据外传"→ 千问 Cookie 走非官方网关这条要在 README 安全节里**主动交代清楚**
+     （只从本地解析、绝不进任何路由响应、Cookie 源需显式开启），别等维护者去代码里翻；
+  4. CI 只查形式（manifest / 仓库年龄 / 格式 / README 可重生成），绿了不等于收。
+
+### 5.2 投稿前顺序建议
+
+①做完（多家）→ ②做完（零配置，卖点成型）→ §1.4 差异化写完 → README 中英双份 → npm 发版 →
+最后提 awesome（拿到 `Install ▾ via dsh-market` 那一行，才算"开源完成"）。

@@ -496,6 +496,7 @@ function findChip(node) {
   const panel = JSON.stringify(await settle(render, 3))
   ok('面板含当前模型标注', panel.includes('qwen3.8-flash'))
   ok('面板标题带拖拽手柄提示（可拖出悬浮）', panel.includes('拖到任意位置悬浮'))
+  ok('面板带右下角缩放手柄', panel.includes('tpq-resize') && panel.includes('拖拽调整面板大小'))
   ok('面板 portal 到 document.body（fixed 视口坐标系成立）', panel.includes('"portalTo":"body"'))
   ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('28.6k tok/s') && panel.includes('近 5 分'))
   ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'))
@@ -646,12 +647,14 @@ function findChip(node) {
   ok('Cookie 未配 → 徽标退回实测卡而非错误卡', flat.includes('Token Plan 实测') && !flat.includes('Token Plan 余量'))
 }
 
-/* 拖拽态 CSS 禁碰 animation-name：none↔tpq-rise 的开关会被浏览器当成新动画重播
+/* 拖拽/缩放态 CSS 禁碰 animation-name：none↔tpq-rise 的开关会被浏览器当成新动画重播
  * （「松手后重播渐入」事故的回归锁）。 */
 {
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  const rule = /\.tpq-panel\[data-dragging\]\{[^}]*\}/.exec(code)
-  ok('拖拽态规则存在且不含 animation 开关', rule !== null && !rule[0].includes('animation'))
+  for (const state of ['dragging', 'resizing']) {
+    const rule = new RegExp(`\\.tpq-panel\\[data-${state}\\]\\{[^}]*\\}`).exec(code)
+    ok(`手势态 data-${state} 规则存在且不含 animation 开关`, rule !== null && !rule[0].includes('animation'))
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

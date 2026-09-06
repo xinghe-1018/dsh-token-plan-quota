@@ -82,6 +82,7 @@ function makeDom() {
   const document = {
     hidden: false,
     documentElement: { lang: 'zh-CN' },
+    body: { tag: 'body' },
     head: {
       appendChild(node) {
         styles.push(node)
@@ -284,17 +285,19 @@ async function loadBundle(fetchMode) {
   // bundle 走 window.__ModuleLoader__.load；navigator 只按形参注入（Node 24 的
   // globalThis.navigator 是只读访问器，不能覆写）。
   const source = code
-  const factoryRunner = new Function('window', 'document', 'navigator', 'fetch', 'setInterval', 'clearInterval', 'require', `${source}; return window.__ModuleLoader__.spec`)
-  const spec = factoryRunner(globalThis.window, dom.document, { language: 'zh-CN' }, globalThis.fetch, globalThis.setInterval, globalThis.clearInterval, (id) => {
+  const fakeReactDOM = {
+    createPortal: (el, container) => ({ ...el, portalTo: container === dom.document.body ? 'body' : 'other' }),
+  }
+  const requireStub = (id) => {
     if (id === 'react') return React
+    if (id === 'react-dom') return fakeReactDOM
     throw new Error(`unexpected require(${id})`)
-  })
+  }
+  const factoryRunner = new Function('window', 'document', 'navigator', 'fetch', 'setInterval', 'clearInterval', 'require', `${source}; return window.__ModuleLoader__.spec`)
+  const spec = factoryRunner(globalThis.window, dom.document, { language: 'zh-CN' }, globalThis.fetch, globalThis.setInterval, globalThis.clearInterval, requireStub)
 
   check('bundle 声明了自己的 id', spec.id, 'dsh-token-plan-quota')
-  const api = spec.factory((id) => {
-    if (id === 'react') return React
-    throw new Error(`unexpected require(${id})`)
-  })
+  const api = spec.factory(requireStub)
   return { spec, api, registered, injected, effects, dom, declaredSlots }
 }
 
@@ -493,6 +496,7 @@ function findChip(node) {
   const panel = JSON.stringify(await settle(render, 3))
   ok('面板含当前模型标注', panel.includes('qwen3.8-flash'))
   ok('面板标题带拖拽手柄提示（可拖出悬浮）', panel.includes('拖到任意位置悬浮'))
+  ok('面板 portal 到 document.body（fixed 视口坐标系成立）', panel.includes('"portalTo":"body"'))
   ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('28.6k tok/s') && panel.includes('近 5 分'))
   ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'))
   ok('panelScope=current：DeepSeek 卡不再出现在面板', !panel.includes('DeepSeek 余额'))

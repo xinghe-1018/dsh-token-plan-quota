@@ -77,11 +77,13 @@ hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（
 路径、按供应商吞吐行、debug 骨架），中英数混排的行（已用%、周期重置、请求数、
 更新于）一律 UI 栈 + `lining-nums,tabular-nums`，与中文同基线。三枚可变字体经
 jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入，观感降级不影响功能。
-**面板可拖出悬浮**：面板 portal 到 `document.body`、一律 fixed 视口坐标定位（锚定态
-由 JS 按徽标矩形实时算，绕开宿主工具栏 transform/backdrop-filter 对 fixed 包含块的
-劫持）。按住标题栏（grab 手柄）可把明细拖到屏幕任意位置，移动只走
-`transform`（零重渲染），松手冻结为 fixed 并写进 localStorage——关掉重开、刷新页面
-都记住位置；双击标题栏归位贴回徽标；窗口变化自动重算/夹回视口。
+**面板可拖出悬浮**：面板经 **react-dom 的 `createPortal`** 挂到 `document.body`、一律
+fixed 视口坐标定位（注意 `createPortal` 在 react-dom 上，不在 react 上；且宿主工具栏
+的 transform/backdrop-filter 会劫持 inline fixed 的包含块，body 下才是视口坐标系）。
+锚定态由 JS 按徽标矩形实时算 left/bottom。按住标题栏（grab 手柄）可把明细拖到屏幕
+任意位置，移动只走 `transform`（零重渲染），松手冻结为 fixed 并写进 localStorage——
+关掉重开、刷新页面都记住位置；双击标题栏归位贴回徽标；窗口变化自动重算/夹回视口。
+老宿主拿不到 react-dom 种子词时退回内联 CSS 锚定，拖拽悬浮自动禁用（不会拖飞）。
 余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
 强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
 或 `token_plan_quota` 工具（`refresh`/`reset`）。
@@ -209,11 +211,12 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Key 引用名可在 sources 条目里覆盖（
 - 控制台做过「额度重置」后，本实例窗口不会自动感知，用 `token_plan_quota` 工具（`reset`）重新起算。
 - 观测计数是本次进程启动以来的；持久事实仍在会话日志里。
 - 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`。
+- 宿主没有 react-dom 种子词（老外壳）时面板退回内联 CSS 锚定，拖拽悬浮禁用。
 - 当前模型供应商没有绑定任何数据源时徽标隐藏（明细从有徽标的模型切过去前先看）。
 
 ## 开发与验证
 
 ```powershell
 node test/host.mjs     # 167 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 70 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板卡交错渐入序号、混排灰列走 UI 栈、面板标题拖拽手柄、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/client.mjs   # 71 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板 portal 到 body、面板卡交错渐入序号、混排灰列走 UI 栈、面板标题拖拽手柄、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
 ```

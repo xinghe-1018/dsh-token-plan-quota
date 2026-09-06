@@ -922,6 +922,31 @@ await applyAutoDetect(userCfg, fakeHost({
 check('用户已覆盖的路由，检测一个源都不加', userCfg.sources.length, 1)
 check('原本的用户源保持不动', [userCfg.sources[0].id, userCfg.sources[0].detected], ['token-plan-window', undefined])
 
+// 回归锁：Cookie 型源绝不能被写成 bearerRef，否则查询先撞 Bearer 门，报
+// "未配置凭据 BAILIAN_CONSOLE_COOKIE（…设同名环境变量）"——Cookie 明明在，却被叫去配 Key。
+const cookieCfg = hostCfg()
+await applyAutoDetect(cookieCfg, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { BAILIAN_CONSOLE_COOKIE: 'cookie', QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
+}))
+const openedConsole = cookieCfg.sources.find(source => source.id === 'token-plan-console')
+check('检测开的 Cookie 源不带 bearerRef', openedConsole.bearerRef, undefined)
+check('Cookie 源仍走 cookieRef', openedConsole.cookieRef, 'BAILIAN_CONSOLE_COOKIE')
+const noCookieCard = await querySource({ ...openedConsole, _cookie: undefined }, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
+ok('Cookie 缺失的提示说的是 Cookie，不是"设同名环境变量"那套 Key 文案',
+  String(noCookieCard.error).includes('Cookie') && !String(noCookieCard.error).includes('设同名环境变量'))
+const stray = await querySource({ id: 'x-console', type: 'http', builder: 'token-plan-console', cookieRef: 'BAILIAN_CONSOLE_COOKIE', bearerRef: 'BAILIAN_CONSOLE_COOKIE', label: 'x', providers: [] }, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
+ok('就算 bearerRef 被误写，Cookie 型源也不该撞 Bearer 门', !String(stray.error).startsWith('未配置凭据'))
+// Bearer 型源不受影响：Moonshot 仍沿用路由点名的引用名。
+const moonCfg2 = hostCfg()
+await applyAutoDetect(moonCfg2, fakeHost({
+  routes: [{ id: 'kimi-cn' }],
+  profiles: { 'kimi-cn': { baseURL: 'https://api.moonshot.cn/v1', apiKeyEnv: 'MOONSHOT_CN_API_KEY' } },
+  refs: { MOONSHOT_CN_API_KEY: 'sk-cn' },
+}))
+check('Bearer 型源照旧沿用路由点名的引用名', moonCfg2.sources[0].bearerRef, 'MOONSHOT_CN_API_KEY')
+
 // 千问这种"一家两路源"：两路都开，实测路带 fallback 标记——**收不收由看得见数据的那层决定**。
 const qwenCfg = hostCfg()
 const qwenInfo = await applyAutoDetect(qwenCfg, fakeHost({

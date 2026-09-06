@@ -120,8 +120,15 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
       meter）。这是**新的架构件**（现在一个 source 一次请求），别为了塞 OpenRouter 的第二条窗口
       去 hack 一个假 meter；等 GLM 那种"一次请求多窗口"验证完 meters 形状后再做，顺序更稳。
 - [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）
-- [ ] T1.6 通用实测窗口源去千问化：`token-plan-window` 保留，新增可复制的 `window:<provider>` 形状，
-      给 OpenAI/Gemini/MiniMax 这类 C 档平台用（**明标「实测」，不冒充官方余量**——口径不变）
+- [x] T1.6 通用实测窗口源去千问化：**已验证账本本来就是按 provider 分的**（`usageLedger.windows[provider]`
+      ＋ `touchWindow` 按各家窗口天数滚窗），所以缺的不是引擎、是写法 → 加内置简写
+      **`"window:<provider>"`**（自动展开成 `kind:'window'` + `providers:[<provider>]` + 标签；
+      `providers`/`windowDays`/`label` 仍可显式覆盖，条目写过的不被简写盖掉）。
+      口径措辞定死：卡上写「未接入可核实的官方额度源」而**不是**「官方没有额度接口」——
+      这条兜底也可能用在"其实有接口、只是用户没配凭据"的家身上，后者那句话我们证明不了。
+      本机已现场生效：给 `minimax-cn` 挂了 `minimax-window`（宿主每次查询前重读 JSON，没重启），
+      卡出来时 `estimated=True / veracity=local / 无 total / 无百分比`，正是决策 1 的形状。
+      ②做完后这条由 detect 自动挂，用户不用写。
 - [ ] T1.7 `SOURCE_META`/`ERROR_HINTS` 为每家补 veracity 说明与可操作报错
 - [ ] T1.8 手工验收：真实 Key 逐家跑 `GET /token-plan-quota/probe?source=<id>` 核对字段名，
       把核对结论写回本文件 §1.1（表格即证据链）

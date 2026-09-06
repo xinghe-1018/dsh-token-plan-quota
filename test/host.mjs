@@ -177,6 +177,28 @@ process.env.DSH_HOME = origHome
 check('清本周期账本把窗口锚点也清零', Object.keys(usageLedger.windows).length, 0)
 resetInstanceState()
 
+/* ============================================ 3c. window:<provider> 简写（C 档兜底写法） */
+
+resetInstanceState()
+const shorthandCfg = effectiveConfig({ sources: ['window:minimax-cn'] }, ctxStub)
+const miniSource = shorthandCfg.sources[0]
+check('简写自动展开成窗口源', [miniSource.kind, miniSource.type, miniSource.providers], ['window', 'local', ['minimax-cn']])
+ok('标签点名是哪个供应商', String(miniSource.label).includes('minimax-cn'))
+ok('口径说明写"未接入可核实的官方额度源"，不写"官方没有接口"这种证明不了的话',
+  String(miniSource.sourceNote).includes('未接入可核实的官方额度源') && !String(miniSource.sourceNote).includes('没有可核实的官方额度接口'))
+recordUsage(shorthandCfg, 'minimax-cn', 'MiniMax-M2.5', { inputTokens: 900, outputTokens: 100 })
+const miniCard = finalizeCard(buildWindowCard(miniSource, shorthandCfg))
+check('实测窗口对任意 provider 同构（token/次数）', [miniCard.tokens, miniCard.calls, miniCard.bindProviders], [1000, 1, ['minimax-cn']])
+check('C 档口径：没分母就没百分比与剩余', [miniCard.total, miniCard.remaining, miniCard.usedPercent, miniCard.remainingPercent], [undefined, undefined, undefined, undefined])
+check('简写卡仍标 local/实测', [miniCard.veracity, miniCard.estimated], ['local', true])
+const multiSource = normalizeSources([{ id: 'window:minimax', providers: ['minimax-cn', 'minimax'], windowDays: 30 }], ctxStub)[0]
+check('条目显式 providers 优先于简写名', multiSource.providers, ['minimax-cn', 'minimax'])
+check('windowDays 可覆盖（对齐别家自己的窗口规则）', multiSource.windowDays, 30)
+const badWarns = []
+check('未知源照样丢弃', normalizeSources(['windowx:nope'], { logger: { warn: e => badWarns.push(String(e.message)) }, get: () => undefined }).length, 0)
+ok('未知源的提示里要告诉用户这条兜底写法', String(badWarns[0]).includes('window:<provider>'))
+resetInstanceState()
+
 /* ============================================ 4. 滑动窗口与重试观测 */
 
 recentCalls.length = 0

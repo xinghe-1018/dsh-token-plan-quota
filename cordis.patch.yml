@@ -5,16 +5,14 @@
 # 浏览器半边（exports "./client"，由 package.json 的 dsh.client 声明）：在输入框工具行渲染
 # **跟随当前模型供应商**的单个额度徽标，点开展全部数据源的明细。
 #
-# 这里只是默认值。日常要调的（数据源、窗口天数、绑定供应商）写在
-# ~/.dsh/token-plan-quota.json —— 宿主每次查询前重读那个文件，改完不用重启。
+# 这里只放真正需要显式声明的东西。**不写 `sources`**：该开哪些源由零配置自动检测按宿主在用的
+# 供应商路由决定（baseURL host > 路由名 > Key 前缀，认不准的挂实测窗口）——一旦在这里写死，
+# 就等于"用户手写过的清单"，检测只补没覆盖到的路由，反而会盖住自动识别的本意。
+# 日常要调的（窗口天数、绑定供应商、强制某几个源）写在 ~/.dsh/token-plan-quota.json
+# —— 宿主每次查询前重读那个文件，改完不用重启。
 - insert:
     - id: token-plan-quota
       name: dsh-token-plan-quota
       config:
-        # deepseek-balance：DeepSeek 官方 /user/balance（真值）。
-        # token-plan-window：千问 Token Plan 实测 7 天窗口（本实例账本，官方无 Key 化额度接口）。
-        sources:
-          - deepseek-balance
-          - token-plan-window
         refreshMinutes: 10
         pollSeconds: 10

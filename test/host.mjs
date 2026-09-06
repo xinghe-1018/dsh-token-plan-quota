@@ -832,6 +832,20 @@ check('自建网关路径里带官方域名不算命中', detectSources({
 check('规则表里每个 preset 名都真实存在于 PRESETS', PLATFORM_RULES.every(rule => rule.presets.every(preset => PRESETS[preset] !== undefined)), true)
 check('空输入不炸', detectSources({ routes: [], profiles: {} }), { sources: [], skipped: [], uncovered: [] })
 
+// 名字像不是一回事：本地代理路由只是名字里带了别家牌子，有 baseURL 就只信 baseURL。
+const proxied = detectSources({
+  routes: [{ id: 'deepseek-modlens', name: 'DeepSeek via Modlens' }],
+  profiles: { 'deepseek-modlens': { baseURL: 'http://127.0.0.1:8787/v1' } },
+})
+check('有 baseURL 时不许按路由名冒充别家（这就是"两个余量窗口"的根因）', proxied.sources.map(s => s.id), ['window:deepseek-modlens'])
+check('被代理的路由落进 uncovered，可诊断', proxied.uncovered, ['deepseek-modlens'])
+check('代理过的 Token Plan 路由也不顶官方卡', detectSources({
+  routes: [{ id: 'modlens-qwen-token-plan-cn' }],
+  profiles: { 'modlens-qwen-token-plan-cn': { baseURL: 'http://127.0.0.1:8787/v1' } },
+}).sources[0].id, 'window:modlens-qwen-token-plan-cn')
+// 完全拿不到 baseURL 时（出厂适配器不写 settings 分节）才降级信路由名——deepseek-official 就是这种。
+check('拿不到 baseURL 才降级用路由名', detectSources({ routes: [{ id: 'deepseek-official' }], profiles: {} }).sources[0].detected.by, 'routeId')
+
 /* ============================================ 16. 自动检测接线（假宿主：llm + settings + credentials） */
 
 const { applyAutoDetect, readRouteProfile, credentialRefsFor } = __internals
@@ -908,14 +922,19 @@ await applyAutoDetect(userCfg, fakeHost({
 check('用户已覆盖的路由，检测一个源都不加', userCfg.sources.length, 1)
 check('原本的用户源保持不动', [userCfg.sources[0].id, userCfg.sources[0].detected], ['token-plan-window', undefined])
 
-// 千问这种"一家两路源"：官方余量 + 实测兜底，同时挂上。
+// 千问这种"一家两路源"：官方余量在场时实测窗口让路（一家只留一张额度卡）。
 const qwenCfg = hostCfg()
-await applyAutoDetect(qwenCfg, fakeHost({
+const qwenInfo = await applyAutoDetect(qwenCfg, fakeHost({
   routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
   profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
   refs: { BAILIAN_CONSOLE_COOKIE: 'cookie', QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
 }))
-check('千问自动开出官方 + 实测两路', qwenCfg.sources.map(source => source.id).sort(), ['token-plan-console', 'token-plan-window'])
+check('官方卡在场 → 实测窗不再叠第二张', qwenCfg.sources.map(source => source.id), ['token-plan-console'])
+ok('实测窗让路的原因记成 covered-by-official', qwenInfo.skipped.some(s => s.preset === 'token-plan-window' && s.reason === 'covered-by-official'))
+check('规则表把实测窗标成兜底', detectSources({
+  routes: [{ id: 'qwen-token-plan-cn' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x' } },
+}).sources.map(s => `${s.id}:${s.fallback === true ? 'fallback' : 'primary'}`).sort(), ['token-plan-console:primary', 'token-plan-window:fallback'])
 // Cookie 掉了：官方余量不开，实测窗口还在（徽标不至于空）。
 const qwenNoCookie = hostCfg()
 await applyAutoDetect(qwenNoCookie, fakeHost({
@@ -933,6 +952,36 @@ const legacyCfg = hostCfg()
 const legacyInfo = await applyAutoDetect(legacyCfg, ctxStub)
 check('老宿主（没有 llm 服务）静默退回，不抛', [legacyInfo.enabled, legacyCfg.sources.length], [false, 0])
 ok('退回原因写清是宿主缺服务', String(legacyInfo.reason).includes('llm'))
+
+// 实测窗卡不需要凭据（它是本地账本），也不该被算成"缺凭据所以不开"。
+const winNoCred = hostCfg()
+const winNoCredInfo = await applyAutoDetect(winNoCred, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
+}))
+check('Cookie 没配时实测窗仍开（它就是凭据缺席的兜底）', winNoCred.sources.map(source => source.id), ['token-plan-window'])
+check('实测源不需要凭据，credentialRef 就是 null', winNoCred.sources[0].detected.credentialRef, null)
+ok('不把"这个源本来就不看凭据"误记成 no-credential',
+  !winNoCredInfo.skipped.some(row => row.preset === 'token-plan-window' && row.reason === 'no-credential'))
+ok('官方余量那路才是真缺凭据，跳过原因写清楚',
+  winNoCredInfo.skipped.some(row => row.preset === 'token-plan-console' && row.reason === 'no-credential'))
+
+// 同名源只能有一张：另一条路由也命中同一预设时，让它让路而不是再开一张卡。
+const dupCfg = effectiveConfig({ sources: [{ id: 'token-plan-console', providers: ['qwen-token-plan-cn'] }], minIntervalMs: 0 }, ctxStub)
+const dupInfo = await applyAutoDetect(dupCfg, fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn' }, { id: 'qwen-second', name: 'qwen-token-plan-cn-2' }],
+  profiles: { 'qwen-second': { apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x', BAILIAN_CONSOLE_COOKIE: 'cookie' },
+}))
+check('检测不许开出第二个同名源（面板两张卡 + 缓存互覆盖就是这么来的）', dupCfg.sources.filter(source => source.id === 'token-plan-console').length, 1)
+ok('让路的原因记进 skipped', dupInfo.skipped.some(s => s.reason === 'id-taken-by-configured'))
+check('用户写的 providers 一个字都不动', dupCfg.sources[0].providers, ['qwen-token-plan-cn'])
+
+// 用户自己在 JSON 里写重名，也要当场说一句（否则症状要等到面板上叠卡才发现）。
+const dupWarns = []
+normalizeSources(['deepseek-balance', 'deepseek-balance'], { logger: { warn: e => dupWarns.push(String(e.message)) }, get: () => undefined })
+ok('重复 id 有 warn 且给出解法（起别名）', dupWarns.length === 1 && dupWarns[0].includes('deepseek-balance-intl'))
 
 // 全链路：快照里能看见检测的痕迹（卡片带 detected，config.sources 带 detected）。
 const e2eHost = fakeHost({

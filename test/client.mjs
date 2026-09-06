@@ -616,6 +616,7 @@ function findChip(node) {
   chip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('面板余量行：剩余 6,510 / 10,000 · 已用 34.9% · 5h窗口', panel.includes('6,510') && panel.includes('10,000') && panel.includes('已用 34.9%') && panel.includes('5h窗口'))
+  ok('中英数混排灰列走 UI 栈（tpq-aux），等宽只留给标识串', panel.includes('tpq-aux'))
   ok('控制台卡标「官方接口」来源', panel.includes('官方接口') && panel.includes('tokenplan/personal/api/v2'))
 }
 

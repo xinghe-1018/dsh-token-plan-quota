@@ -72,9 +72,11 @@ hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（
 强制刷新时徽标数值做呼吸动画（纯 opacity，宽度零抖动）；面板点开时 6px 上浮淡入，
 带 1px 内高光边。所有动效尊重 `prefers-reduced-motion`。面板宽度 380px、高度上限 52vh。
 字体自成一套，不跟宿主默认栈：UI 文字 **Geist Variable + Noto Sans SC**（思源黑体），
-「当前模型」标识串、按供应商吞吐行与 debug 骨架用 **Geist Mono**——三枚可变字体经
-jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入；断网/被墙时静默落系统圆润栈
-（Aptos→Calibri→Corbel，中文落苹方/雅黑），观感降级但功能零影响。
+断网/被墙时静默落 **Aptos→Segoe UI** 系统栈（刻意避开 Calibri/Corbel——它们默认
+旧式数字，`15:17:30` 会忽上忽下）；等宽 **Geist Mono** 只留给纯标识串（「当前模型」
+路径、按供应商吞吐行、debug 骨架），中英数混排的行（已用%、周期重置、请求数、
+更新于）一律 UI 栈 + `lining-nums,tabular-nums`，与中文同基线。三枚可变字体经
+jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入，观感降级不影响功能。
 余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
 强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
 或 `token_plan_quota` 工具（`refresh`/`reset`）。
@@ -208,5 +210,5 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Key 引用名可在 sources 条目里覆盖（
 
 ```powershell
 node test/host.mjs     # 167 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 68 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板卡交错渐入序号、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/client.mjs   # 69 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、面板卡交错渐入序号、混排灰列走 UI 栈、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
 ```

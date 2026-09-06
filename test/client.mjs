@@ -646,5 +646,13 @@ function findChip(node) {
   ok('Cookie 未配 → 徽标退回实测卡而非错误卡', flat.includes('Token Plan 实测') && !flat.includes('Token Plan 余量'))
 }
 
+/* 拖拽态 CSS 禁碰 animation-name：none↔tpq-rise 的开关会被浏览器当成新动画重播
+ * （「松手后重播渐入」事故的回归锁）。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const rule = /\.tpq-panel\[data-dragging\]\{[^}]*\}/.exec(code)
+  ok('拖拽态规则存在且不含 animation 开关', rule !== null && !rule[0].includes('animation'))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

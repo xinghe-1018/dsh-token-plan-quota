@@ -74,6 +74,7 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 | **枚举当数字** | 智谱 `unit`：3=5 小时、6=周、1=天、5=分钟 | 预设声明 `unitEnum` 映射表，未识别的枚举值**不猜**，落到 `debug` 骨架里 |
 | **信封先判再取** | Moonshot `code==0 && status==true`；智谱 `code:200, success` | 已有 `envelopeOk` 机制（`httpEnvelopeOk` L1353），新家用 `okWhen` 声明，别新写一套 |
 | **数字可能是字符串** | Codex `individual_limit.{limit,used,remaining_percent}` | `toNumber` 已剥逗号/空白，够用；加一条单测锁住 |
+| **配置 ≠ 额度** | 千问 `quota-config` 给每个档位都躺着 `five_hour` 上限（个人版 standard＝3000），但 `usage` 只回 `per1Week*`——**这个套餐根本没有 5 小时窗口**。拿配置去拼一行「额度上限 3,000」就是把噪声当额度（2026-09-06 用户实拍打回） | **一条计量只在该窗口真回了读数时才存在**；档位配了却无读数只记 `extra.fiveHourConfiguredNoReading` 供 debug，前端再把"没有任何可说数字"的次级计量整行丢弃。接 GLM 多窗口家时同规则：`limits[]` 里没出现的 type/unit 组合不出条 |
 | **探测会产生费用** | xAI 探活会补一条真实对话消息 | **本插件永不做"猜测式探活"**；只用只读端点，`probe` 路由也只打配置好的源 |
 
 ### 1.2 阶段①需要先做的 4 个架构改动（否则每加一家都在硬塞）

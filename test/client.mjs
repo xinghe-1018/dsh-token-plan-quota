@@ -230,6 +230,31 @@ function makeFetch(mode) {
       const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [lying, ...rest] }) }
     }
+    if (mode === 'meter-cap-only') {
+      // 档位配了 5 小时上限、这个套餐却没回读数：次级计量没有可说的数，整行都不该出现。
+      const capOnly = {
+        ...SNAPSHOT.cards.find(card => card.id === 'token-plan-window'),
+        id: 'token-plan-console',
+        label: 'Token Plan 余量',
+        metric: 'credits',
+        unit: 'Credits',
+        estimated: undefined,
+        veracity: 'verified',
+        remaining: 3620.407,
+        total: 10000,
+        usedPercent: 63.796,
+        remainingPercent: 36.204,
+        meters: [
+          { key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 10000, remaining: 3620.407, usedPercent: 63.796, remainingPercent: 36.204 },
+          { key: 'fiveHour', label: '5 小时窗口', unit: 'Credits', total: 3000 },
+        ],
+        items: [],
+        error: null,
+        sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
+      }
+      const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [capOnly, ...rest] }) }
+    }
     const emptyCards = mode === 'empty'
       ? SNAPSHOT.cards.filter(card => card.veracity !== 'verified')
       : SNAPSHOT.cards
@@ -652,6 +677,62 @@ function findChip(node) {
   }
   ok('中英数混排灰列走 UI 栈（tpq-aux），等宽只留给标识串', panel.includes('tpq-aux'))
   ok('控制台卡标「官方接口」来源', panel.includes('官方接口') && panel.includes('tokenplan/personal/api/v2'))
+}
+
+// 只有上限、没有读数的次级窗口整行不出现（档位配置 ≠ 这个账号的额度）。
+{
+  const { api, registered } = await loadBundle('meter-cap-only')
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const chip = findChip(await settle(render))
+  chip.props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('没读数的 5 小时窗口不出幽灵行', !panel.includes('5 小时窗口') && !panel.includes('tpq-meter'))
+  ok('主窗口照常显示（3,620.407 / 10,000 与已用%）', panel.includes('3,620') && panel.includes('63.8%'))
+}
+
+// 点输入框打字不该关掉明细；点别处才关。
+{
+  const { api, registered, dom } = await loadBundle('ok')
+  const dirStore = makeStore({
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const chip = findChip(await settle(render))
+  chip.props.onClick()
+  ok('点开后明细在', JSON.stringify(await settle(render, 3)).includes('额度明细'))
+  const fire = (target) => {
+    for (const handler of dom.listeners.get('mousedown') ?? []) handler({ target })
+    return JSON.stringify(render())
+  }
+  // closest 按选择器真假返回，等于把"命中了哪条选择器"也断言进来。
+  const hit = want => sel => (sel.includes(want) ? { matched: want } : null)
+  ok('点进 textarea 不关明细', fire({ closest: hit('textarea') }).includes('额度明细'))
+  ok('点输入卡片空白处（data-composer-card）也不关', fire({ closest: hit('data-composer-card') }).includes('额度明细'))
+  ok('点可编辑区同样不关', fire({ closest: hit('contenteditable') }).includes('额度明细'))
+  ok('点真正的别处（对话区/侧栏）才关', !fire({ closest: () => null }).includes('额度明细'))
 }
 
 // 实测卡即使被宿主错喂了分母与百分比，也绝不画余量条、绝不报百分比（「不估算」的最后一道闸）。

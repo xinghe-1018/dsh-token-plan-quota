@@ -305,6 +305,25 @@ check('meters 各带单位', [...new Set(consoleCard.meters.map(m => m.unit))], 
 const fiveOnly = finalizeCard(buildConsoleCard(consolePreset, { per5HourPercentage: 0.5, per5HourResetTime: weekReset }, { standard: { five_hour: 100 } }, { specCode: 'standard' }))
 check('只有 5 小时窗口时只出一条计量', fiveOnly.meters.map(m => m.key), ['fiveHour'])
 check('该计量自己算出百分比', [fiveOnly.meters[0].remaining, fiveOnly.meters[0].usedPercent], [50, 50])
+// 「档位配了 5 小时上限，但这个套餐没回 5 小时读数」——真实账号形态（2026-09-06 实测
+// usage.keys 只有 per1WeekResetTime/per1WeekPercentage，而 quota-config.standard.five_hour=3000）。
+// 这条窗口必须**根本不存在**，不能渲染成一行「额度上限 3,000」的配置噪声。
+const weekOnly = finalizeCard(buildConsoleCard(consolePreset, {
+  per1WeekPercentage: 0.637959301, per1WeekResetTime: weekReset,
+}, { standard: { weekly: 10000, five_hour: 3000 } }, { specCode: 'standard' }))
+check('没有 5 小时读数 → 只有一条计量', weekOnly.meters.map(m => m.key), ['weekly'])
+check('没有 5 小时读数 → extra 也不留 5 小时字段', [weekOnly.extra.fiveHourTotal, weekOnly.extra.fiveHourUsedPercent], [undefined, undefined])
+check('档位配了却无读数，收成诊断字段', weekOnly.extra.fiveHourConfiguredNoReading, true)
+check('顶层仍是 7 天窗口', [weekOnly.total, weekOnly.remaining], [10000, 3620.407])
+// 反过来：只有 5 小时窗口的套餐，它升为主计量（徽标不能因为"没有 7 天"而空着）。
+const fiveOnlyPrimary = finalizeCard(buildConsoleCard(consolePreset, {
+  per5HourPercentage: 0.25, per5HourResetTime: weekReset,
+}, { standard: { five_hour: 200 } }, { specCode: 'standard' }))
+check('只有 5 小时窗口时它升为主计量', [fiveOnlyPrimary.meters.length, fiveOnlyPrimary.total, fiveOnlyPrimary.remaining], [1, 200, 150])
+check('主计量决定顶层重置时刻', fiveOnlyPrimary.expiresAt, weekReset)
+// 窗口一个都没有 → 明确空因，不出幽灵行。
+const noWindows = finalizeCard(buildConsoleCard(consolePreset, {}, {}, {}))
+check('没有任何窗口 → 无计量并给空因', [noWindows.meters.length, typeof noWindows.emptyReason], [0, 'string'])
 // 「不估算」硬规则：实测卡（estimated）即使误带分母也不出百分比。
 const measuredMeter = finalizeMeter({ key: 'w', total: 1000, remaining: 300 }, false)
 check('实测计量剥掉百分比', [measuredMeter.usedPercent, measuredMeter.remainingPercent, measuredMeter.remaining], [undefined, undefined, 300])

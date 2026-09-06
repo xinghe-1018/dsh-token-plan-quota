@@ -309,6 +309,7 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 | 2 | **GLM 团队模式 / Kimi Code Cookie / Codex·ChatGPT OAuth 三类不做**——因权限与账号风险超出本插件射程；**README 显式写死**"需要的人自己按自定义源配" | §1.2 第 4 条、§3.2 第 13 节；不写任何读本地登录态的代码 |
 | 3 | **英文整篇 `README.en.md`**（不是摘要），与中文版逐节对齐 | §3.2、T3.5；顺带要求 `lib/client.js` 的文案上双语（否则英文 README 配中文徽标） |
 | 4 | 走 **DSH 生态的公开渠道**（见 §5），不是往 `deepseek-harness` 主仓提 PR——**主仓不接受外部 PR**，官方认可的插件贡献方式就是"自己发仓库 + 打 `dsh-plugin` topic"（`CONTRIBUTING.md` L13-15） | §5 全节 |
+| 5 | **一家只展示一张额度卡，但收合放在显示层**（2026-09-06 实机纠正）：官方卡**有数字**时才收起自动检测挂的实测兜底卡；官方卡是错误卡/没数字时兜底必须回来。原方案在规划期砍兜底，Cookie 一过期徽标直接空白——**规划期看不见数据，就不该在那儿决定显示**。用户手写的实测源没有 `detected.fallback` 标记，永不代藏 | `detect.js` `fallbackPresets` ＋ `client.js dropShadowedMeasured`（含"不许自己 shade 自己"）＋ `summarizeText` 同规则 |
 
 ---
 

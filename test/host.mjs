@@ -922,15 +922,28 @@ await applyAutoDetect(userCfg, fakeHost({
 check('用户已覆盖的路由，检测一个源都不加', userCfg.sources.length, 1)
 check('原本的用户源保持不动', [userCfg.sources[0].id, userCfg.sources[0].detected], ['token-plan-window', undefined])
 
-// 千问这种"一家两路源"：官方余量在场时实测窗口让路（一家只留一张额度卡）。
+// 千问这种"一家两路源"：两路都开，实测路带 fallback 标记——**收不收由看得见数据的那层决定**。
 const qwenCfg = hostCfg()
 const qwenInfo = await applyAutoDetect(qwenCfg, fakeHost({
   routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
   profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
   refs: { BAILIAN_CONSOLE_COOKIE: 'cookie', QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x' },
 }))
-check('官方卡在场 → 实测窗不再叠第二张', qwenCfg.sources.map(source => source.id), ['token-plan-console'])
-ok('实测窗让路的原因记成 covered-by-official', qwenInfo.skipped.some(s => s.preset === 'token-plan-window' && s.reason === 'covered-by-official'))
+check('两路源都开（不在规划期砍兜底）', qwenCfg.sources.map(source => source.id).sort(), ['token-plan-console', 'token-plan-window'])
+check('实测窗带 fallback 标记，官方源不带', qwenCfg.sources.map(source => `${source.id}=${source.detected?.fallback === true ? 'fallback' : 'primary'}`).sort(), ['token-plan-console=primary', 'token-plan-window=fallback'])
+check('不再有"规划期就断定官方有数"的跳过', qwenInfo.skipped.length, 0)
+// 同一规则在工具摘要里也要成立：模型读到的文本不能和面板看到的两样。
+const qwenOfficialCard = { id: 'token-plan-console', label: 'Token Plan 余量', veracity: 'verified', metric: 'credits', unit: 'Credits', remaining: 2661, total: 10000, usedPercent: 73.4, bindProviders: ['qwen-token-plan-cn'] }
+const qwenMeasuredCard = { id: 'token-plan-window', label: 'Token Plan 实测', estimated: true, veracity: 'local', metric: 'count', tokens: 1234567, calls: 42, windowDays: 7, bindProviders: ['qwen-token-plan-cn'], detected: { fallback: true } }
+check('官方有数 → 摘要不重复报实测行', summarizeText({ generatedAt: Date.now(), refreshMinutes: 10, notices: [], cards: [qwenOfficialCard, qwenMeasuredCard] }).includes('本实例实测，非官方余量'), false)
+check('官方变错误卡（Cookie 过期）→ 实测行必须回来', summarizeText({
+  generatedAt: Date.now(), refreshMinutes: 10, notices: [],
+  cards: [{ ...qwenOfficialCard, remaining: undefined, total: undefined, usedPercent: undefined, error: '未配置凭据', errorCode: 'NoCredentials' }, qwenMeasuredCard],
+}).includes('本实例实测，非官方余量'), true)
+check('用户手写的实测源（没有 fallback 标记）永远照报', summarizeText({
+  generatedAt: Date.now(), refreshMinutes: 10, notices: [],
+  cards: [qwenOfficialCard, { ...qwenMeasuredCard, detected: undefined }],
+}).includes('本实例实测，非官方余量'), true)
 check('规则表把实测窗标成兜底', detectSources({
   routes: [{ id: 'qwen-token-plan-cn' }],
   profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/x' } },

@@ -193,6 +193,8 @@ const SNAPSHOT = {
       calls: 42,
       items: [{ name: 'qwen3.8-flash', provider: 'qwen-token-plan-cn', tokens: 1_234_567, calls: 42 }],
       sourceNote: '本实例实测：千问 Token Plan 官方无 Key 化额度接口（Credits 余量仅控制台可见）。',
+      // 自动检测挂的兜底卡（有官方真值时该收起；用户手写的实测源没有这个标记）
+      detected: { by: 'baseURL', rule: 'qwen-token-plan', host: 'token-plan.cn-beijing.maas.aliyuncs.com', fallback: true, credentialRef: null },
       error: null,
     },
     {
@@ -699,6 +701,7 @@ function findChip(node) {
   }
   ok('中英数混排灰列走 UI 栈（tpq-aux），等宽只留给标识串', panel.includes('tpq-aux'))
   ok('控制台卡标「官方接口」来源', panel.includes('官方接口') && panel.includes('tokenplan/personal/api/v2'))
+  ok('官方卡有数 → 自动挂的实测兜底卡收起（一家一张额度卡）', !panel.includes('Token Plan 实测'))
 }
 
 // 只有上限、没有读数的次级窗口整行不出现（档位配置 ≠ 这个账号的额度）。
@@ -848,6 +851,14 @@ function findChip(node) {
     return component()
   }))
   ok('Cookie 未配 → 徽标退回实测卡而非错误卡', flat.includes('Token Plan 实测') && !flat.includes('Token Plan 余量'))
+  // 兜底收合看的是「有没有数」，不是「源有没有开」：官方卡成了错误卡时实测卡必须在，
+  // 否则 Cookie 一过期徽标直接变空白（这条就是那次实机回归的锁）。
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  findChip(await settle(render, 1)).props.onClick()
+  ok('官方卡没数 → 实测兜底卡回到面板', JSON.stringify(await settle(render, 3)).includes('Token Plan 实测'))
 }
 
 /* 拖拽/缩放态 CSS 禁碰 animation-name：none↔tpq-rise 的开关会被浏览器当成新动画重播

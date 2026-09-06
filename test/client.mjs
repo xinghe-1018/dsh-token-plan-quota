@@ -492,6 +492,7 @@ function findChip(node) {
   openChip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('面板含当前模型标注', panel.includes('qwen3.8-flash'))
+  ok('面板标题带拖拽手柄提示（可拖出悬浮）', panel.includes('拖到任意位置悬浮'))
   ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('28.6k tok/s') && panel.includes('近 5 分'))
   ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'))
   ok('panelScope=current：DeepSeek 卡不再出现在面板', !panel.includes('DeepSeek 余额'))

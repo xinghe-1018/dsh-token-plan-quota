@@ -255,6 +255,25 @@ function makeFetch(mode) {
       const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [capOnly, ...rest] }) }
     }
+    if (mode === 'moonshot-usd') {
+      // 国际区 Moonshot：端点不回币种字段，unit 由区静态给出——前端必须显 $，不能套 ¥。
+      const moonshot = {
+        id: 'moonshot-balance',
+        label: 'Moonshot 余额',
+        metric: 'money',
+        unit: 'USD',
+        region: 'international',
+        remaining: 12.34,
+        items: [],
+        extra: { toppedUp: 10.34, granted: 2 },
+        veracity: 'verified',
+        bindProviders: ['moonshot-ai'],
+        sourceNote: 'Moonshot 官方 API（Bearer Key）· GET /v1/users/me/balance',
+        error: null,
+      }
+      const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [moonshot, ...rest] }) }
+    }
     const emptyCards = mode === 'empty'
       ? SNAPSHOT.cards.filter(card => card.veracity !== 'verified')
       : SNAPSHOT.cards
@@ -701,6 +720,32 @@ function findChip(node) {
   const panel = JSON.stringify(await settle(render, 3))
   ok('没读数的 5 小时窗口不出幽灵行', !panel.includes('5 小时窗口') && !panel.includes('tpq-meter'))
   ok('主窗口照常显示（3,620.407 / 10,000 与已用%）', panel.includes('3,620') && panel.includes('63.8%'))
+}
+
+// 国际区 Moonshot：端点不回币种，unit 由区静态给 → 前端必须显 $，不能一律套 ¥。
+{
+  const { api, registered } = await loadBundle('moonshot-usd')
+  const dirStore = makeStore({
+    current: { provider: 'moonshot-ai', model: 'kimi-k2' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('徽标按 USD 显 $（而不是 ¥12.34）', flat.includes('$12.34') && !flat.includes('¥12.34'))
+  const chip = findChip(await settle(render, 1))
+  chip.props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('明细里充值/赠款沿用已有标签键', panel.includes('充值 $10.34') && panel.includes('赠款 $2.00'))
+  ok('Moonshot 卡挂「官方」药丸', panel.includes('tpq-pill') && panel.includes('官方'))
 }
 
 // 明细面板是常驻小窗：乱点哪儿都不关，只有再点徽标（toggle）或 Esc 才关。

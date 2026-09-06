@@ -16,7 +16,7 @@ const {
   DEFAULTS, PRESETS,
   effectiveConfig, normalizeSources,
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
-  rpcEnvelopeOk, pickPath, pickFirst, pickString, toNumber, toEpochMs,
+  rpcEnvelopeOk, httpEnvelopeOk, parseEnvelope, pickPath, pickFirst, pickString, toNumber, toEpochMs,
   buildListCard, buildSingleCard, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
   hintFor, formatAmount, formatMoneyText, summarizeText, publicCard,
   querySource, buildStatus, invalidateSources,
@@ -93,7 +93,7 @@ check('时间戳秒级 UTC', utcTimestamp(new Date('2026-08-14T02:03:04.567Z')),
 /* ============================================ 2. 官方数据源预设 */
 
 check('默认 sources 是 DeepSeek 官方 + Token Plan 实测窗口', DEFAULTS.sources, ['deepseek-balance', 'token-plan-window'])
-check('预设齐全', Object.keys(PRESETS).sort().join(','), 'account-balance,deepseek-balance,fr-instances,resource-package,token-plan-console,token-plan-window')
+check('预设齐全（新增一家要同步 README 的源表）', Object.keys(PRESETS).sort().join(','), 'account-balance,deepseek-balance,fr-instances,moonshot-balance,resource-package,token-plan-console,token-plan-window')
 check('未知源被丢弃', effectiveConfig({ sources: ['deepseek-balance', 'bogus'] }, ctxStub).sources.length, 1)
 check('endpoint 去协议与尾斜杠', effectiveConfig({ endpoint: 'https://business.aliyuncs.com/' }, ctxStub).endpoint, 'business.aliyuncs.com')
 check('refreshMinutes 分钟→毫秒', effectiveConfig({ refreshMinutes: 1 }, ctxStub).cacheMs, 60_000)
@@ -374,6 +374,42 @@ try {
   await new Promise(resolve => serverB.close(resolve))
 }
 
+/* ============================================ 5c. Moonshot（多区 + 静态币种 + 源级 hint）——新增一家的模板 */
+
+const moonshotDefault = normalizeSources(['moonshot-balance'], ctxStub)[0]
+check('默认区＝大陆', moonshotDefault.region, 'china-mainland')
+check('区决定 host', moonshotDefault.url, 'https://api.moonshot.cn/v1/users/me/balance')
+check('区决定币种（这个端点不回 currency 字段，不能从响应里 pick）', moonshotDefault.unit, 'CNY')
+check('Moonshot 打真值标签', moonshotDefault.veracity, 'verified')
+check('绑定常见路由名（②做完后由自动识别取代）', moonshotDefault.providers, ['moonshot', 'moonshot-cn', 'moonshot-ai'])
+
+const moonshotIntl = normalizeSources(['moonshot-balance'], ctxStub, { moonshotRegion: 'international' })[0]
+check('全局配置键切区', [moonshotIntl.region, moonshotIntl.url, moonshotIntl.unit], ['international', 'https://api.moonshot.ai/v1/users/me/balance', 'USD'])
+check('条目显式 region 优先于全局键', normalizeSources([{ id: 'moonshot-balance', region: 'china-mainland' }], ctxStub, { moonshotRegion: 'international' })[0].region, 'china-mainland')
+check('用户自己写过的 url 不被区覆盖', normalizeSources([{ id: 'moonshot-balance', url: 'https://proxy.local/me/balance' }], ctxStub)[0].url, 'https://proxy.local/me/balance')
+const regionWarns = []
+check('认不出的区退回默认值而不是静默', normalizeSources(['moonshot-balance'], { logger: { warn: e => regionWarns.push(String(e.message)) }, get: () => undefined }, { moonshotRegion: 'eu-west' })[0].region, 'china-mainland')
+ok('认不出的区必须 warn 并列出可选值', regionWarns.length === 1 && regionWarns[0].includes('eu-west') && regionWarns[0].includes('international'))
+
+const moonshotPayload = { code: 0, status: true, data: { available_balance: 12.34, cash_balance: 10.34, voucher_balance: 2 } }
+check('Moonshot 信封：code:0 即成功', httpEnvelopeOk(moonshotPayload), undefined)
+const moonshotCard = finalizeCard(buildSingleCard(moonshotIntl, moonshotPayload))
+check('available_balance → 余额', moonshotCard.remaining, 12.34)
+check('cash/voucher 复用充值/赠款两键（前端标签本来就对得上，不新开特例）', [moonshotCard.extra.toppedUp, moonshotCard.extra.granted], [10.34, 2])
+check('币种跟区，卡片自己带', moonshotCard.unit, 'USD')
+check('region 随卡下发（要能说清现在打的哪个区）', publicCard(moonshotCard).region, 'international')
+check('余额类卡不出百分比（没有分母）', [moonshotCard.usedPercent, moonshotCard.remainingPercent], [undefined, undefined])
+const moonshotZero = finalizeCard(buildSingleCard(moonshotIntl, { code: 0, status: true, data: { available_balance: 0, cash_balance: -3.5, voucher_balance: 0 } }))
+check('0 余额是真值，不是"没数据"', [moonshotZero.remaining, moonshotZero.emptyReason], [0, undefined])
+check('欠款原样带出（不取绝对值粉饰）', moonshotZero.extra.toppedUp, -3.5)
+check('401 走源级提示，指向"切区"这个真原因', hintFor('401', moonshotIntl.errorHints).includes('moonshotRegion'), true)
+ok('源级提示不污染别家（DeepSeek 拿不到 Moonshot 的切区文案）', !String(hintFor('401', PRESETS['deepseek-balance'].errorHints) ?? '').includes('moonshotRegion'))
+check('errorHints 只参与算 hint，不进任何响应', 'errorHints' in publicCard({ id: 'x', errorHints: { 401: 'secret-shape' } }), false)
+// 非 0 信封不能静默成"无数据"：parseEnvelope 要抛成带码的 SourceError，卡片才有 401/切区提示。
+let envelopeThrew = null
+try { parseEnvelope(JSON.stringify({ code: -1, status: false, message: 'invalid_api_key' }), 'moonshot-balance', httpEnvelopeOk) } catch (error) { envelopeThrew = error }
+check('非 0 信封抛错：码是原码，人话里带上源与上游 message', [envelopeThrew?.code, envelopeThrew?.message], ['-1', 'moonshot-balance: -1 invalid_api_key'])
+
 /* ============================================ 6. 阿里云源抽取（字段名按官方元数据示例构造） */
 
 const frSample = {
@@ -634,6 +670,40 @@ try {
   check('HTTP 源无 AK 也能跑', fullCard.error, null)
 } finally {
   await new Promise(resolve => server.close(resolve))
+}
+
+/* ============================================ 14. HTTP 4xx 的人话 + 源级提示（Moonshot 形态） */
+
+const seenM = []
+const serverM = createServer((req, res) => {
+  req.on('data', () => {})
+  req.on('end', () => {
+    seenM.push({ url: req.url, authorization: req.headers.authorization ?? null })
+    if (req.url === '/ok') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ code: 0, status: true, data: { available_balance: 8.5, cash_balance: 8.5, voucher_balance: 0 } }))
+      return
+    }
+    res.writeHead(401, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'Invalid Authentication', type: 'invalid_authentication_error' } }))
+  })
+})
+await new Promise(resolve => serverM.listen(0, '127.0.0.1', resolve))
+const portM = serverM.address().port
+try {
+  const httpConfig = effectiveConfig({ timeoutMs: 5000, minIntervalMs: 0 }, ctxStub)
+  const moonshotLive = normalizeSources(['moonshot-balance'], ctxStub, { moonshotRegion: 'international' })[0]
+  const okCard = await querySource({ ...moonshotLive, url: `http://127.0.0.1:${portM}/ok`, _bearer: 'sk-m' }, httpConfig, { configured: false })
+  check('Moonshot 全链路产出余额卡', [okCard.remaining, okCard.unit, okCard.region], [8.5, 'USD', 'international'])
+  check('Bearer 真的发出去了', seenM[0].authorization, 'Bearer sk-m')
+  const denied = await querySource({ ...moonshotLive, url: `http://127.0.0.1:${portM}/denied`, _bearer: 'sk-m' }, httpConfig, { configured: false })
+  check('4xx 卡片捞上游人话，不只报状态码', denied.error, 'moonshot-balance: 401 HTTP 401 · Invalid Authentication')
+  check('错误码原样保留', denied.errorCode, '401')
+  ok('提示指向"切区"这个真原因（源级 errorHints）', String(denied.hint).includes('moonshotRegion'))
+  check('错误卡也带区（否则用户不知道刚才打的是哪个 host）', denied.region, 'international')
+  check('errorHints 只参与算提示，不进响应', 'errorHints' in publicCard(denied), false)
+} finally {
+  await new Promise(resolve => serverM.close(resolve))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

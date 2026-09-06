@@ -31,6 +31,8 @@
     "permissions": {
       "network": [
         "https://api.deepseek.com",
+        "https://api.moonshot.cn",
+        "https://api.moonshot.ai",
         "https://business.aliyuncs.com",
         "https://cs-data.qianwenai.com",
         "https://platform-home.qianwenai.com",

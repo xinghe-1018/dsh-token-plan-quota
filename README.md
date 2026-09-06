@@ -20,7 +20,8 @@ Token Plan 模型显示实测 7 天窗口，切到没有额度源的供应商（
 |---|---|---|---|
 | DeepSeek | ✅ `GET https://api.deepseek.com/user/balance`（Bearer Key） | 余额/赠款/充值（真值） | 官方文档；真实 Key 实测返回 `balance_infos` |
 | 阿里云费用中心 | ✅ BssOpenApi + AK/SK（需 AliyunBSSReadOnlyAccess） | 账户余额 / 资源包余量（真值） | 官方 OpenAPI 元数据逐字段核对 |
-| 千问 Token Plan | ⚠️ 无 Key 化接口；**控制台网关可用**（Cookie 会话） | `token-plan-console` 官方余量卡（65% + 进度条 + 5h/7d 双窗口）；Cookie 没配时自动退回 `token-plan-window` 实测卡 | 套餐 Key 实测网关候选路径全部 404、无额度头；订阅页数据来自千问AI平台数据网关 `cs-data.qianwenai.com`（`BroadScopeAspnGateway` · `tokenplan/personal/api/v2` 的 usage/subscription/quota-config），契约按其前端包逆向 + 真实账号实测验证 |
+| 千问 Token Plan | ⚠️ 无 Key 化接口；**控制台网关可用**（Cookie 会话） | `token-plan-console` 官方余量卡（已用% + 进度条；**窗口按套餐真回读数的那些来**——个人版 standard 只有 7 天窗口，不会冒出 5 小时行）；Cookie 没配时自动退回 `token-plan-window` 实测卡 | 套餐 Key 实测网关候选路径全部 404、无额度头；订阅页数据来自千问AI平台数据网关 `cs-data.qianwenai.com`（`BroadScopeAspnGateway` · `tokenplan/personal/api/v2` 的 usage/subscription/quota-config），契约按其前端包逆向 + 真实账号实测验证 |
+| Moonshot / Kimi 开放平台 | ✅ `GET https://api.moonshot.cn/v1/users/me/balance`（大陆，CNY）<br>`GET https://api.moonshot.ai/v1/users/me/balance`（国际，USD） | 余额 + 充值 + 赠款（真值） | 官方文档；两区端点均实测存在（无效 Key 回 `401 {"error":{"message":"Invalid Authentication"}}`）。**两区 Key 不互通**，用 `moonshotRegion` 选区 |
 | MiniMax | ❌ 无 | 不显示（明细里看本实例实测用量） | 官方文档未提供；实测常见路径全部返回 SPA HTML |
 
 **「不估算」仍是硬约束**：没有 Credits 折算、没有抵扣率。`token-plan-console` 报的是
@@ -128,7 +129,8 @@ dsh plugin --profile web add <这个目录的路径>
 
 | 键 | 含义 |
 |---|---|
-| `sources` | 数据源：`deepseek-balance`（官方真值）、`token-plan-window`（千问实测窗口，默认开）、`account-balance`、`fr-instances`、`resource-package`（需 AK/SK） |
+| `sources` | 数据源：`deepseek-balance`（官方真值）、`token-plan-window`（千问实测窗口，默认开）、`moonshot-balance`（Moonshot 开放平台官方余额，两区）、`account-balance`、`fr-instances`、`resource-package`（需 AK/SK） |
+| `moonshotRegion` | Moonshot 区：`china-mainland`（默认，`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
 | `showInstanceWindow` | 明细面板是否带「本实例实测用量 + 限流重试观测」块 |
 | `panelScope` | 明细面板范围：`current`（默认，只列当前模型供应商的卡 + 本实例实测，DeepSeek 卡不再常驻）/ `all`（全部数据源） |
 | `pollSeconds` | 前端轮询秒数（吞吐/实测每次实时重算；调小让徽标速度更跟手） |
@@ -165,7 +167,8 @@ dsh plugin --profile web add <这个目录的路径>
 ### 凭据
 
 密钥按顺序解析：DSH 凭据服务 → 环境变量 → `~/.dsh/.credentials.yaml` → `~/.dsh/.env`。
-DeepSeek 用 `DEEPSEEK_API_KEY`；Key 引用名可在 sources 条目里覆盖（`bearerRef`）。
+DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与区配对**：大陆区要的是
+`api.moonshot.cn` 签发的 Key，国际区要 `api.moonshot.ai` 的，两者不互通）；Key 引用名可在 sources 条目里覆盖（`bearerRef`）。
 阿里云源另需 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
 每次查询重新解析，换 Key 不用重启。
 
@@ -231,6 +234,6 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Key 引用名可在 sources 条目里覆盖（
 ## 开发与验证
 
 ```powershell
-node test/host.mjs     # 186 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 93 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/host.mjs     # 215 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
+node test/client.mjs   # 97 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、USD 显 $ 不套 ¥、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
 ```

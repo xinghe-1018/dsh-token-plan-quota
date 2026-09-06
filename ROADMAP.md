@@ -103,7 +103,14 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
       **无官方分母即无百分比**；前端 `MeterRows` 只渲染 `meters.slice(1)`、实测卡强制不出条不出百分比、
       `cardValueText` 对实测卡只报 tokens；host 179 / client 82 全绿）
 - [x] T1.2 `derive` 支持 + 单测 → **改期到 T1.4 一起做**（OpenRouter 的差额计算跟着它才有被测的对象）
-- [ ] T1.3 预设：`moonshot-balance`（含 region）→ 首个新平台，跑通"新增一家"的全流程模板
+- [x] T1.3 预设：`moonshot-balance`（含 region）→ 首个新平台，跑通"新增一家"的全流程模板
+      （模板五件套＝预设 + `regions` + `SOURCE_META` + 源级 `errorHints` + 回环单测；见 `lib/index.js`
+      里 `moonshot-balance` 的注释）。顺带长出三个可复用件：`regions`（区→host+币种成对切换，
+      优先级 条目 region > 全局配置键 > 预设默认，认不出退回默认并 warn）、`buildSingleCard` 支持
+      静态 `unit`（Moonshot 这类端点不回币种）、`hintFor(code, source.errorHints)`（同一个 401
+      在不同家给不同人话），另外 4xx 现在会捞 `error.message` 进卡片（不再只写 `HTTP 401`）。
+      **待办**：本机没有 Moonshot Key，`available_balance` 等字段名只有官方文档 + 第三方实现背书；
+      真实 Key 的核对归 T1.8（已实测两区端点存在：无效 Key 回 401 `invalid_authentication_error`）。
 - [ ] T1.4 预设：`openrouter-credits`（+ 可选 `/api/v1/key` 作为第二个 meter）
 - [ ] T1.5 预设：`glm-quota`（多计量条真落地，含 CN region）
 - [ ] T1.6 通用实测窗口源去千问化：`token-plan-window` 保留，新增可复制的 `window:<provider>` 形状，

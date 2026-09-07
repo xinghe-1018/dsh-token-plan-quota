@@ -21,10 +21,16 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # 插件零第三方依赖：不装包，直接跑两个离线自测（宿主半边 + 浏览器半边）。
+      # 两步都包一层：日志要登录才看得到，注解不用（见 scripts/ci-run.sh）。
+      - name: runtime banner
+        shell: bash
+        run: node -e "console.log('::notice::node '+process.version+' '+require('os').platform()+'/'+require('os').release()+' tz='+Intl.DateTimeFormat().resolvedOptions().timeZone+' dsh_home='+(process.env.DSH_HOME??'unset'))"
       - name: host tests
-        run: node test/host.mjs
+        shell: bash
+        run: bash scripts/ci-run.sh node test/host.mjs
       - name: client tests
-        run: node test/client.mjs
+        shell: bash
+        run: bash scripts/ci-run.sh node test/client.mjs
 
   manifest:
     name: manifest & docs
@@ -37,7 +43,8 @@ jobs:
       - name: plugin manifest
         run: node scripts/check-manifest.mjs
       - name: README claims match the code
-        run: node scripts/check-docs.mjs
+        shell: bash
+        run: bash scripts/ci-run.sh node scripts/check-docs.mjs
       - name: packed tarball loads
         shell: bash
         run: |

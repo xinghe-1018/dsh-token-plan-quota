@@ -1,0 +1,7 @@
+# 统一按 LF 落地：Windows runner 默认 core.autocrlf=true，会把工作副本转成 CRLF，
+# 于是 `bash scripts/ci-run.sh` 带着 \r 就崩。Shell 脚本必须永远是 LF。
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.gif binary

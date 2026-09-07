@@ -3,11 +3,12 @@
 三条渠道，顺序不能换：**先 GitHub（公开 + topic），再 npm，最后插件目录站**——
 后两者都要引用前者的地址，且目录站的评审会**实际读你的仓库**。
 
-本机已核对的状态（2026-09-07）：仓库 `xinghe-1018/dsh-token-plan-quota` **已经是 public**、
-**没有 topic**、**tag 一个都没推**（本地已有 `v0.2.0/v0.3.0/v0.4.0/v0.4.1`）、
-npm 名 `dsh-token-plan-quota` **未被占用**、`npm whoami` 未登录、`npm publish --dry-run` 通过（9 文件 / 80 kB）。
+本机已核对的状态（2026-09-07 复核）：仓库 `xinghe-1018/dsh-token-plan-quota` **已经是 public**、
+**topic 已加**（含 `dsh-plugin`）、**tag 已推**（`v0.2.0/v0.3.0/v0.4.0/v0.4.1` 都在 origin 上）、
+npm 名 `dsh-token-plan-quota` **未被占用**、`npm whoami` 未登录；仓库描述（About）**仍为空**，只能网页里填。
 
-> 未推送的提交数以 `git rev-list --count origin/main..main` 为准，别信文档里写死的数字。
+> 这一段是快照，会过期：未推送提交数以 `git rev-list --count origin/main..main` 为准、
+> tag 以 `git ls-remote --tags origin` 为准、包内容以 `npm pack --dry-run` 为准，别信这里写死的数字。
 
 ---
 
@@ -62,23 +63,31 @@ curl -X PUT https://api.github.com/repos/xinghe-1018/dsh-token-plan-quota/topics
 ## 3. 发 npm
 
 ```bash
-npm login                                  # 网页授权即可
-npm publish --access public                # 名字已被占用时报 403，未占用时这步就是发布
-npm view dsh-token-plan-quota version      # 应为 0.4.1
+# 本机默认源是 npmmirror，所以每条都要显式指真源，否则会往镜像站发
+npm adduser --registry=https://registry.npmjs.org/     # 网页授权即可
+npm whoami --registry=https://registry.npmjs.org/      # 先打出用户名，再往下
+npm publish --registry=https://registry.npmjs.org/ --access public
+npm view dsh-token-plan-quota version --registry=https://registry.npmjs.org/
 ```
 
-两个坑：
+四个坑（前两个是 2026-09-07 实头发出来的）：
 
-- **开了 2FA 的账号**不能直接 `npm publish`（会 `E401`/要求 OTP）。要么 `npm publish --otp=…`，
-  要么建一个 **Granular Access Token** 并勾上 `Read and publish`，用它：
-  `npm publish // 带 NPM_TOKEN=...`。组织/受保护包需要走后者。
-- **`files` 白名单决定包里有什么**。当前是 `lib / cordis.patch.yml / README.md / README.en.md / CHANGELOG.md / LICENSE`。
-  发布前务必看 dry-run 列表（`npm publish --dry-run`），漏 `lib/detect.js` 这类新文件会让用户装到坏包——
+- **未登录时注册表回的是 `404`，不是 `401`**（npm 故意不泄露"包名是否存在"）。所以
+  `404 Not Found - PUT https://registry.npmjs.org/<包名>` 的意思是**没认证上**，不是包名有问题。
+  发布前先 `npm whoami`，这一步比什么都值钱。
+- **`--//registry.npmjs.org/:_authToken=…` 不是 `npm publish` 的参数**，它是一条 npm 配置。放命令行里
+  会被当位置参数、认证根本不生效。要用 `npm config set //registry.npmjs.org/:_authToken <token>`
+  （该键按源作用域，不会把 token 连带发给 npmmirror），发完 `npm config delete` 清掉。
+  token 得是 npmjs.com → Access Tokens 里的 **Publish** 或 **Automation** 类型，`Read` 型发不了。
+- **开了 2FA 的账号**直接 publish 会要 OTP：`npm publish --otp=…`，或改用 **Automation** token（豁免交互）。
+- **`files` 白名单决定包里有什么**。当前是 `lib / docs / cordis.patch.yml / README.md / README.en.md / CHANGELOG.md / LICENSE`。
+  0.4.2 之前这里漏了 `docs`，而 README 引用 `docs/images/*`——**GitHub 页面图正常、npm 页面全 404，本地完全看不出来**。
+  所以"看 dry-run 文件表"不是形式：漏 `lib/detect.js` 会让用户装到坏包，漏 `docs` 会让包页文档图全断。
   本仓库的 `scripts/check-docs.mjs` + CI 的 tarball 冒烟就是为这个准备的：
 
   ```bash
-  npm run check            # 测试 + manifest + README 声明一致性
-  npm pack && tar -tzf dsh-token-plan-quota-0.4.1.tgz   # 肉眼过一遍文件表
+  npm run check            # 测试 + manifest + README 声明一致性（含截图存在性）
+  npm pack --dry-run       # 肉眼过文件表：docs/images 的 8 个文件必须在，_debug/_frames 必须不在
   ```
 
 装法验证（发布后，任选一台干净机器）：
@@ -147,8 +156,8 @@ description:
 
 ```bash
 npm deprecate dsh-token-plan-quota "reason"   # 保留包但装机时给警告
-npm unpublish dsh-token-plan-quota@0.4.1      # 24 小时内可撤；之后受限，别指望它
-git push origin :refs/tags/v0.4.1             # 撤 tag（GitHub release 也要手动删）
+npm unpublish dsh-token-plan-quota@0.4.2      # 24 小时内可撤；之后受限，别指望它
+git push origin :refs/tags/v0.4.2             # 撤 tag（GitHub release 也要手动删）
 ```
 
 ---

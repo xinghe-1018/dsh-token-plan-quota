@@ -5,3 +5,6 @@ node_modules/
 package-lock.json
 # 日志
 *.log
+# 截图流水线的中间产物（合成 payload 快照、GIF 帧目录）：可重生成，不入库。
+# 必须在 docs/ 之外——package.json 的 files 显式列了 docs，allowlist 会压过 .gitignore。
+.shots-work/

@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-plan-quota",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换，零配置按在用路由自动开源。官方真值来源：DeepSeek /user/balance、Moonshot 开放平台、OpenRouter credits、阿里云 BssOpenApi（AK/SK）、千问 Token Plan 控制台网关（Cookie）；官方无额度接口的供应商显示明确标注「实测」的本实例窗口。含模型工具 token_plan_quota。",
   "type": "module",
   "main": "lib/index.js",
@@ -65,6 +65,7 @@
   },
   "files": [
     "lib",
+    "docs",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",

@@ -15,7 +15,8 @@
  *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
- *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）。
+ *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）；
+ *  10. 四张截图真实存在且 README 已引用，合成数据仍符合产品口径。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -250,6 +251,50 @@ for (const rel of textFiles) {
   }
   if (hasReplacement) problems.push(`${rel} 含 U+FFFD 替换符：这份文本已经被错误的码页读过一次了`)
   if (hasCjkChar && hasPuaChar) problems.push(`${rel} 同时含中日韩文字与私用区字符，是 GBK 误读 UTF-8 的典型残骸`)
+}
+
+/* 10) 四张截图：占位块必须已被真图取代，图必须真实存在且非零字节。
+ *     截图是合成数据生成的（scripts/shots/），所以这里同时跑一次 fixture 自检——
+ *     产品口径（实测卡不带百分比、百分比与 remaining/total 自洽、键 ⊆ publicCard 白名单）
+ *     漂了就红，而不是悄悄拍出一张宿主永远发不出的图。 */
+{
+  const images = [
+    'docs/images/badge-follows-model.gif',
+    'docs/images/panel-official-plus-meters.png',
+    'docs/images/floating-panel.png',
+    'docs/images/cookie-fallback-measured.png',
+    'docs/images/en/badge-follows-model.gif',
+    'docs/images/en/panel-official-plus-meters.png',
+    'docs/images/en/floating-panel.png',
+    'docs/images/en/cookie-fallback-measured.png',
+  ]
+  for (const rel of images) {
+    const abs = join(root, rel)
+    if (!existsSync(abs)) { problems.push(`${rel} 不存在：README 引了张没有的图`); continue }
+    const bytes = statSync(abs).size
+    if (bytes < 1024) problems.push(`${rel} 只有 ${bytes} 字节，多半是裁图裁空了`)
+  }
+  // 占位串留着就说明图没换干净（也防有人把图删了退回占位块还自称通过）。
+  if (zh.includes('截图位')) problems.push('README.md 仍留着「截图位」占位块')
+  if (en.includes('Screenshots (4 to add before release)')) problems.push('README.en.md 仍留着截图占位块')
+  // 两份 README 都得真的引到图，缺一张就是图文不符。
+  for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
+    const refs = [...text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1])
+    if (refs.length < 4) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 4 张`)
+    for (const ref of refs) {
+      if (!existsSync(join(root, ref))) problems.push(`${name} 引用的图片不存在：${ref}`)
+    }
+  }
+  try {
+    const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')
+    const whitelist = publicCardKeys()
+    if (whitelist.length < 30) problems.push(`publicCard() 白名单只读出 ${whitelist.length} 个键，守卫可能失效`)
+    for (const variant of ['panel', 'float', 'cookieDrop', 'badgeSwitch']) {
+      for (const lang of ['zh', 'en']) assertFixture(makeSnapshot({ variant, lang }))
+    }
+  } catch (error) {
+    problems.push(`截图合成数据自检失败：${error.message}`)
+  }
 }
 
 if (problems.length > 0) {

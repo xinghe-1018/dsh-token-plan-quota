@@ -13,9 +13,29 @@ decided from the provider routes you actually have.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-> Screenshots (4 to add before release): ① the chip switching as you change model provider; ② the detail panel
-> with an official quota card and its multi-window meters; ③ the panel detached into a floating window;
-> ④ the measured card taking over after the console cookie expires.
+**① The chip follows the active model's provider** — one route reports an official true value, and switching to a
+route with no official quota API falls back to an explicitly labelled *measured* card:
+
+![The chip switching as you change model provider](docs/images/en/badge-follows-model.gif)
+
+**② The detail panel**: an official quota card (a bar and a percentage only exist when the vendor publishes a
+denominator) plus the multi-window meters of a single card:
+
+![Detail panel with an official quota card and its multi-window meters](docs/images/en/panel-official-plus-meters.png)
+
+**③ The panel detached into a floating window** (drag the title bar, double-click to re-anchor):
+
+![The panel detached into a floating window](docs/images/en/floating-panel.png)
+
+**④ The measured card taking over after the console cookie expires**: the official card becomes an error card that
+states the reason and carries **no numbers at all**, while the fallback measured card stays on the chip —
+no official denominator means no bar and no percentage:
+
+![The measured card after the console cookie expires](docs/images/en/cookie-fallback-measured.png)
+
+> Every balance, token count and date in those four images is **synthetic sample data**, not any real account
+> (this plugin never puts real numbers into the public repo). To reproduce or replace them:
+> [scripts/shots/README.md](scripts/shots/README.md).
 
 ## What this plugin does not do
 

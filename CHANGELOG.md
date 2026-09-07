@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 本文件按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式维护。
 
+## [0.4.2] - 2026-09-07
+
+### Added
+
+- README 的四张截图（中英各一套）：改由 `scripts/shots/` 用**合成数据**生成——CDP 拦下同源
+  `/token-plan-quota/summary` 与 `/token-plan-quota/refresh` 换成 `fixture.mjs` 造的对象，画面状态由宿主自带的
+  `?fixture` 模式提供。真实余额、真实日期、真实用户目录不会进入仓库，跑图实例也不需要任何凭据。
+- `scripts/check-docs.mjs` 规则 10：四张图必须存在且非零字节、README 不得再留「截图位」占位块、
+  合成 payload 仍符合产品口径（键 ⊆ `publicCard()` 白名单、实测卡不带百分比、百分比与 `remaining/total` 自洽）。
+  三条破坏性注入均已验证会转红。
+
+### Changed
+
+- README 顶部原先那段 ASCII 示意图旁边补上了真图；英文 README 改用英文界面截图（`--lang` 驱动界面语言）。
+
+### Fixed
+
+- **npm 包里的 README 图片不再 404**：`package.json` 的 `files` 之前只有 `lib`/`cordis.patch.yml`/三份 md/`LICENSE`，
+  不含 `docs`，而 README 引用的正是 `docs/images/*`——GitHub 页面正常、npm 页面全断（本地看不出）。
+  现在 `files` 补上 `docs`。中间产物（合成 payload 快照、GIF 帧）改落在仓库根的 `.shots-work/`——
+  一开始放在 `docs/images/_debug`、`_frames` 并指望 `.gitignore` 排除，结果 `npm pack --dry-run` 显示
+  **显式 allowlist 会压过 `.gitignore`**，34 帧 JPEG 被一起打进了包。这条就是"必须看 dry-run 文件表"的理由。
+
+### 说明
+
+- 本版本只动文档与出图物料，`lib/**` 的产品逻辑一行未改。
+- 记录一处既有 i18n 缺口：`formatTokens` 把中文数量单位「万/亿」写死，英文界面会出现 `84.7万 tok`。
+
 ## [0.4.1] - 2026-09-07
 
 开源发布前做了**四轮盲测**：中英文档各交两名读者，只准读 README，不许看代码、不许上网，回答同一组配置题。
@@ -149,6 +177,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.2]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.2.0...v0.3.0

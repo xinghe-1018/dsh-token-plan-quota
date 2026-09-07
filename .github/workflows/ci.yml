@@ -24,7 +24,7 @@ jobs:
       # 两步都包一层：日志要登录才看得到，注解不用（见 scripts/ci-run.sh）。
       - name: runtime banner
         shell: bash
-        run: node -e "console.log('::notice::node '+process.version+' '+require('os').platform()+'/'+require('os').release()+' tz='+Intl.DateTimeFormat().resolvedOptions().timeZone+' dsh_home='+(process.env.DSH_HOME??'unset'))"
+        run: node -e "console.log('::notice::node '+process.version+' '+require('os').platform()+'/'+require('os').release()+' tz='+Intl.DateTimeFormat().resolvedOptions().timeZone+' off='+new Date().getTimezoneOffset()+' home='+require('os').homedir()+' tmp='+require('os').tmpdir()+' dsh_home='+(process.env.DSH_HOME??'unset'))"
       - name: host tests
         shell: bash
         run: bash scripts/ci-run.sh node test/host.mjs

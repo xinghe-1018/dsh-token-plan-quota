@@ -36,7 +36,11 @@ jobs:
     name: manifest & docs
     runs-on: ubuntu-latest
     steps:
+      # check-docs 会核 CHANGELOG 里的 tag 死链，而 checkout 默认是"单层且不带 tag"——
+      # 那种克隆里四个 tag 全都"不存在"，检查必然假红。这条 job 要看到真实 ref 才有意义。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

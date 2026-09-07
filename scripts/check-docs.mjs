@@ -13,7 +13,7 @@
  *   4. README 里的相对链接指向的文件真实存在；
  *   5. README 声称的测试项数与实跑结果一致（数字不许漂）；
  *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
- *   7. CHANGELOG 引用的 tag 必须存在；
+ *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
  *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）。
  */
@@ -29,6 +29,7 @@ const zh = read('README.md')
 const en = read('README.en.md')
 const pkg = JSON.parse(read('package.json'))
 const problems = []
+const notices = []
 
 /* 1) 配置键 */
 for (const key of Object.keys(__internals.DEFAULTS).sort()) {
@@ -124,13 +125,41 @@ const changelog = read('CHANGELOG.md')
 // 只看链接定义行（`[0.4.0]: https://…`），正文里提到 vX.Y.Z 的说明文字不算声明。
 const referenced = [...new Set([...changelog.matchAll(/^\[[\d.]+\]:\s.*?(v\d+\.\d+\.\d+)(?:\.\.\.)?(v\d+\.\d+\.\d+)?/gm)]
   .flatMap(m => [m[1], m[2]].filter(Boolean)))]
-const tags = execFileSync('git', ['tag'], { cwd: root, encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
-for (const tag of referenced.sort()) {
-  if (!tags.includes(tag)) problems.push(`CHANGELOG 引用了 ${tag}，但仓库没有这个 tag（要么补 tag，要么把链接删掉）`)
+/**
+ * 仓库里看得见的 tag。**不打网络**：这是每次提交都要跑的检查，不能悄悄发出请求。
+ * 返回 null 表示"这里看不见 tag 不等于 tag 不存在"（不是 git 仓库 / 浅克隆），
+ * 那种情况下跳过这条，而不是把四个版本全判成死链——CI 上 `actions/checkout` 默认的
+ * 单层克隆就会命中这一条，假红过一次。
+ */
+function visibleTags() {
+  try {
+    if (execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, encoding: 'utf8' }).trim() !== 'true') {
+      return { tags: null, why: '不是 git 仓库（装出来的包）' }
+    }
+    if (execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: root, encoding: 'utf8' }).trim() === 'true') {
+      return { tags: null, why: '浅克隆，tag 不在本地' }
+    }
+    return { tags: execFileSync('git', ['tag'], { cwd: root, encoding: 'utf8' }).split(/\r?\n/).filter(Boolean), why: null }
+  } catch {
+    return { tags: null, why: 'git 不可用' }
+  }
 }
-if (pkg.version !== '0.0.0' && !referenced.some(t => t === `v${pkg.version}`) && tags.includes(`v${pkg.version}`) === false) {
-  // 当前版本尚未在 CHANGELOG 里出现时，至少要有对应章节
-  if (!changelog.includes(`## [${pkg.version}]`)) problems.push(`CHANGELOG 缺当前版本 ${pkg.version} 的章节`)
+
+const seen = visibleTags()
+if (seen.tags === null) {
+  notices.push(`CHANGELOG tag 检查跳过：${seen.why}`)
+} else {
+  const tags = seen.tags
+  // 一个 tag 都看不见又不是浅克隆：要么仓库真没打过 tag（当初这条就是抓到四个死链），
+  // 要么这个克隆没取 tag。两种情况的对策相反，所以一次把两条都摆出来，别让人去删好链接。
+  const hint = tags.length === 0 ? '（仓库确实没打过 tag 就删掉链接；只是这个克隆没取 tag 的话先 `git fetch --tags`）' : ''
+  for (const tag of referenced.sort()) {
+    if (!tags.includes(tag)) problems.push(`CHANGELOG 引用了 ${tag}，但仓库没有这个 tag${hint}`)
+  }
+  if (pkg.version !== '0.0.0' && !referenced.some(t => t === `v${pkg.version}`) && tags.includes(`v${pkg.version}`) === false) {
+    // 当前版本尚未在 CHANGELOG 里出现时，至少要有对应章节
+    if (!changelog.includes(`## [${pkg.version}]`)) problems.push(`CHANGELOG 缺当前版本 ${pkg.version} 的章节`)
+  }
 }
 
 /* 8) 两张键表是外人唯一能照着写配置的地方：文档说的键，代码必须真读。
@@ -231,3 +260,5 @@ if (problems.length > 0) {
   console.log(`check-docs: OK（配置键 ${tally.keys}、数据源 ${tally.sources}、出站主机 ${tally.hosts}、`
     + `host ${counts.host} 项 / client ${counts.client} 项，中英 README 与代码一致）`)
 }
+// 跳过的检查要出声，不然"绿"里混着"这条其实没跑"。
+for (const notice of notices) console.log(`  note: ${notice}`)

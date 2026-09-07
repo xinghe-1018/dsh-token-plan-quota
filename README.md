@@ -20,6 +20,9 @@
 这是本插件的立场，比功能列表更重要：
 
 - **不折算 Credits**，不做抵扣率，不"按历史推算剩余"；
+- **没有"我自己填一个额度上限"的窗口**：分母只能来自官方接口，手填的上限就是编数，所以本插件没有任何
+  表达"周期 + 上限"的键。`token-plan-window` **不是**自建窗口预设，它是千问 Token Plan 的本地实测账本
+  （不打网络，只记经过本实例的调用）；
 - **没有官方分母就没有百分比**：实测卡永不画余量条、永不显示百分比，只报「窗口内用了多少 token / 多少次」；
 - **档位配置不等于你的额度**：一个窗口只有在这个套餐真回了读数时才存在（上游 `quota-config` 里躺着的
   `five_hour` 上限不代表这个账号有 5 小时窗口）；
@@ -52,6 +55,13 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 | MiniMax、普通 Key 的 OpenAI / Gemini 等 | ❌ 官方无 Key 化额度端点 | **实测**卡（只报 token/次数） | 常见路径实测过，均无端点 |
 
 逐条端点、信封字段、单位与百分比方向陷阱见 [`docs/upstream-contracts.md`](docs/upstream-contracts.md)。
+
+**只看 API host，不看控制台域名**：`platform.kimi.com`、`platform.moonshot.cn`、
+`bailian.console.aliyun.com` 这类**网页控制台**域名一律不参与识别——插件查的是余额接口，落在路由
+`baseURL` 指向的 API host（`api.moonshot.cn` / `api.moonshot.ai`）上。Kimi 开放平台的 Key 与 Moonshot
+开放平台是同一套账号与余额体系，所以 Key 配好后要走 `api.moonshot.*`；若你的 `baseURL` 写成别的域名，
+检测认不出，会退回实测卡（此时手写 `sources: ["moonshot-balance"]` 可强制开官方卡——但请注意下表最后一列：
+这一家的字段名还没用真 Key 核对过，强制开出来若数字不对，用 `probe` 对字段名）。
 
 ### 与相邻插件的区别
 
@@ -86,7 +96,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   不轮询、不打网络。优先级：有数字的官方卡 > 有数字的实测卡 > 报错的官方卡（提示去配 Cookie）。
 - **一家只展示一张额度卡**：官方卡有数字时收起自动挂的实测兜底卡；官方卡变错误卡时兜底必须回来。
   收合发生在看得见数据的显示层，不在规划期——否则 Cookie 一过期徽标就空白。
-- **一张卡可以有多个窗口**：宿主按主次排进 `card.meters`，`meters[0]` 与顶层数值同源、由标题行与大条表达，
+- **一张卡可以有多个窗口**：宿主按主次排进 `card.meters`（**这是快照里的卡形状，不是手写条目的配置键**），
+  `meters[0]` 与顶层数值同源、由标题行与大条表达，
   其余窗口各出一行「标签 · 剩余/总额 · 已用% · 重置日」带自己的细渐变条。
 - **明细是常驻小窗**：可拖（按住标题栏）、可缩（右下角握柄）、位置与尺寸记进 `localStorage`、双击标题栏归位。
   **点哪儿都不会关掉它**——关闭只由再点徽标或 `Esc` 决定。不做「点外面就关」：那是下拉菜单的语义，
@@ -95,6 +106,10 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   「官方／实测」药丸标档级；字体自成一套（Geist Variable + Noto Sans SC，断网落系统栈），等宽只留给标识串；
   所有动效尊重 `prefers-reduced-motion`。
 - `panelScope: current`（默认）只列当前模型供应商的卡；想全看设 `"all"`。
+- **"实测"在本文只有一个意思**：本地账本算出来的数，不是官方余量。它出现在三处——明细里的「本实例实测用量」块
+  （`showInstanceWindow` 管这块的显隐）、任意供应商的 `window:<provider>` 卡、以及内置的 `token-plan-window`
+  （就是千问那条账本）。三者默认窗口 7 天，`windowDays` 可改；重置时刻由本实例第一次调用起算，
+  点「清本周期账本」重新起算。
 
 ## 配置
 
@@ -111,22 +126,49 @@ JSON 优先级更高）：
 }
 ```
 
+下表 18 行：17 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
+通过 `regionConfigKey` 读取的区选择器。**一个键一行，单位都写在键名里**（`Minutes`/`Seconds`/`Ms`）。
+
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `autoDetect` | `true` | 按宿主在用路由自动补齐数据源；`false` 完全回到手写 `sources` 语义 |
-| `sources` | 无（交给检测） | 数据源清单：`deepseek-balance`、`token-plan-console`、`token-plan-window`、`moonshot-balance`、`openrouter-credits`、`account-balance`、`fr-instances`、`resource-package`，或简写 `window:<provider>`，或完全自定义的 `{...}` 对象 |
+| `autoDetect` | `true` | 按宿主在用路由自动补齐数据源；`false` 完全回到手写 `sources` 语义。**关掉后什么都没写**时回落到内置两条：`deepseek-balance` + `token-plan-window`；只要写了 `sources`（哪怕 `"sources": []`）就以你写的为准 |
+| `sources` | 无（交给检测） | 数据源清单，按顺序显示。内置源名（8 个）：`deepseek-balance`（DeepSeek 余额）、`token-plan-console`（千问控制台余量，Cookie）、`token-plan-window`（**千问本地实测账本**，非自建窗口）、`moonshot-balance`（Moonshot/Kimi 余额）、`openrouter-credits`（OpenRouter 余额）、`account-balance`（阿里云账户余额）、`fr-instances`（阿里云资源包实例列表）、`resource-package`（阿里云资源包额度列表）；或简写 `window:<provider>`（给任意供应商挂实测窗口）；或完全自定义对象（见[自定义源](#自定义源)） |
 | `moonshotRegion` | `china-mainland` | Moonshot 区：`china-mainland`（`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
-| `refreshMinutes` | `10` | 官方源快照缓存分钟数（下限 15 秒）；点面板「更新于」或 `?fresh=1` 可强制回源 |
-| `pollSeconds` | `10` | 前端轮询秒数（实测与吞吐每次实时重算；调小让徽标速度更跟手） |
+| `refreshMinutes` | `10` | 官方源的快照缓存分钟数：TTL = 分钟 × 60 秒，**下限 15 秒**，所以 `"refreshMinutes": 3` 就是每 3 分钟回源一次（想比 1 分钟更勤没有意义，秒级刷新请看 `pollSeconds`）。点面板「更新于」或带 `?fresh=1` 可强制回源 |
+| `pollSeconds` | `10` | 前端轮询秒数——只管界面多久取一次快照，实测与吞吐每次实时重算；调小让徽标速度更跟手，不会多打上游 |
 | `panelScope` | `current` | 明细面板范围：`current` 只列当前模型供应商的卡 + 本实例实测；`all` 列全部源 |
-| `showInstanceWindow` | `true` | 明细里是否带「本实例实测用量 + 限流重试观测」块 |
+| `showInstanceWindow` | `true` | 明细里是否带「本实例实测用量 + 限流重试观测」这一块。它**不是**某个数据源的开关，也不影响 `window:<provider>` 卡 |
 | `exposeTool` | `true` | 是否注册模型可调用工具 `token_plan_quota` |
-| `debug` | `false` | 明细里回显上游响应的**字段骨架**（值打码、跳过凭据字段名），核对字段名用 |
-| `endpoint` / `regionId` | `business.aliyuncs.com` / 无 | 阿里云 OpenAPI 接入点（国际站要换） |
-| `accessKeyIdRef` / `accessKeySecretRef` / `securityTokenRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` / `..._SECRET` / 无 | 阿里云 AK/SK 的引用名 |
-| `configPath` | `$DSH_HOME/token-plan-quota.json` | 外部 JSON 配置位置 |
+| `debug` | `false` | 明细里常驻回显上游响应的**字段骨架**（值打码、跳过凭据字段名）。与 `GET /token-plan-quota/probe?source=<id>` 输出同一份东西，区别是 debug 常驻、probe 按需单次且不用改配置 |
+| `endpoint` | `business.aliyuncs.com` | 仅阿里云费用中心三个源使用：OpenAPI 接入点（国际站要换）。会自动剥掉 `https://` 与末尾斜杠 |
+| `regionId` | 无 | 仅阿里云使用：OpenAPI 的 `RegionId` |
+| `accessKeyIdRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` | 仅阿里云使用：AccessKeyId 的凭据引用名 |
+| `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 仅阿里云使用：AccessKeySecret 的凭据引用名 |
+| `securityTokenRef` | 无 | 仅阿里云使用：STS 临时凭据的引用名（用 AK/SK 长期凭据时留空） |
+| `configPath` | `$DSH_HOME/token-plan-quota.json` | 外部 JSON 配置位置（`~/` 落 OS 家目录，`$DSH_HOME/` 落 harness 家目录） |
 | `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | 本实例账本落盘位置 |
-| `minIntervalMs` / `timeoutMs` | `1200` / `15000` | 出站最小间隔与单次超时 |
+| `minIntervalMs` | `1200` | 出站最小间隔（毫秒），全局节流 |
+| `timeoutMs` | `15000` | 单次上游请求超时（毫秒，下限 1000） |
+
+### 只想关掉某一张卡
+
+`sources` 的一项既可以写成内置源名（字符串），也可以写成对象——**选项只有对象形式带得上去**，所以想关掉某一家，
+要把那一项改成对象：
+
+```json
+{
+  "sources": [
+    { "id": "fr-instances", "enabled": false },
+    { "id": "moonshot-balance", "enabled": false }
+  ]
+}
+```
+
+- **对自动检测开出来的源同样有效**：写了 `{"id":"moonshot-balance","enabled":false}`，检测就不会再把这张卡补
+  回来，诊断块的 `skipped` 里留一条 `disabled-by-config`——「没认出来」和「你关掉了」这两种情况得分得开。
+- **关的是这一条源，不是这个供应商**：同一路由的实测兜底窗口不受牵连（关掉 `token-plan-console`，
+  `token-plan-window` 照旧在）。连兜底窗口也不要，就点它的名关：`{"id":"window:<路由 id>","enabled":false}`。
+- 不想逐张关，就把 `autoDetect` 设 `false` 之后自己列全清单。两种做法都行，**你写过的永远赢**。
 
 ### 凭据
 
@@ -166,11 +208,54 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 }
 ```
 
-`derive` 只认「一个 `+`/`-`、两侧是引用名或数字」；**任何一个操作数取不到就整条空**，绝不猜数补上。
-`fields` 每个引用名给多条候选路径是有意为之（同一家 API 版本间 `data` 信封加不加都见过）。
-列表型用 `kind: "list"` + `list`/`item`，多窗口家用 `card.meters`，多 host 家用 `regions`；
-实测窗口用 `{"kind":"window","providers":[...],"windowDays":30}` 或简写 `window:<provider>`。
-完整清单见 [`docs/adding-a-provider.md`](docs/adding-a-provider.md)。
+`derive` 只认「一个 `+`/`-`、两侧是 `fields` 里的引用名或数字」；**任何一个操作数取不到就整条空**，绝不猜数补上。
+`fields` 的槽位名随你起（`credits`/`usage` 只是示例），它同时也是 `derive` 表达式里能引用的变量名；
+每个槽位给多条候选路径是有意为之（同一家 API 版本间 `data` 信封加不加都见过）。
+
+#### 手写条目的全部可用键
+
+**认不出的键不会报错，只是没作用**（条目对象是原样合并进去的），所以键名打错字的表现是"卡片空着"而不是启动失败。
+这张表是权威清单：
+
+| 键 | 用在哪 | 说明 |
+|---|---|---|
+| `id` | 必填 | 源标识，同时是缓存键和 `probe?source=` 的参数。两个条目用同一个 `id` 会共用缓存并叠成两张卡（日志会 warn），第二个请改名 |
+| `kind` | 建议写 | `single`（一次读数，不写即此值）/ `list`（多条资源列表）/ `window`（本实例实测窗口，不打网络） |
+| `label` / `labelEn` | 标题 | `label` 是卡片标题，不写时回落成该条目的 `id`。`labelEn` 会随快照下发但**当前界面不消费它**（面板标题只读 `label`），留着是为宿主英文化 |
+| `url` | `single` / `list` | 端点。写了 `url` 即 HTTP 源；不写 `url`、也不是内置源名，则按阿里云 OpenAPI **RPC** 处理（要 `action` + `version`） |
+| `method` | HTTP | 默认 `GET` |
+| `headers` | HTTP | 追加请求头，与 `accept: application/json` 合并 |
+| `jsonBody` / `formBody` | HTTP（POST 用） | JSON 请求体 / `application/x-www-form-urlencoded` 请求体 |
+| `bearerRef` / `cookieRef` | HTTP | 凭据引用名。Bearer 型只认 `bearerRef`，Cookie 会话型只认 `cookieRef`——**不会拿套餐 Key 去顶替 Cookie**（反之亦然），因为那只会得到一张误导性的错误卡 |
+| `action` / `version` / `params` | RPC | OpenAPI 的 Action、版本号、查询参数（`params` 会被扁平化）。RPC 型缺 `action` 或 `version` 会直接出错误卡 |
+| `paginate` | RPC | `{ "mode": "page", "request": "PageNum", "pageSize": "PageSize", "total": ["TotalCount"] }`，或 `{ "mode": "token", "request": "NextToken", "response": ["NextToken"] }`；`page` 模式最多翻 10 页 |
+| `fields` | `single` | 变量名 → 候选路径数组，取到数的才进 `derive` 作用域 |
+| `extract` | `single` | 上游直接给值时的路径：`remaining`、`total`、`unit`。它们也能被 `derive` 引用 |
+| `derive` | `single` | 只有 `remaining` / `total` / `used` 三个键会被消费；`used` 不写时，`remaining` 与 `total` 都在就自动算差值 |
+| `extra` | `single` | 副信息，键名随你起；`toppedUp`/`granted`/`cash`/`credit`/`quotaLimit` 有既定文案 |
+| `list` / `item` | `list` | `list` 是数组候选路径；`item` 内可给 `name`/`id`/`remaining`/`total`/`used`/`unit`/`status`/`expiresAt`/`startsAt`/`cycleType`/`capacityType`/`haystack` |
+| `metric` | 显示口径 | `money` / `credits` / `count`。默认值按构建器不同：手写 `single` 源是 `money`，`list` 源是 `credits`，`window` 是 `count`——**要按 token/次数显示就显式写** |
+| `unit` | 显示 | 上游不给单位时的兜底（如 `USD`）；`metric:"money"` 且上游不给时兜到 `CNY` |
+| `providers` | 面板归属 | 这条属于哪些供应商路由名，`panelScope:"current"` 靠它决定显不显示；`window:<provider>` 简写会自动填 |
+| `windowDays` | `window` | 实测窗口天数，默认 7，最小 1 |
+| `regions` / `region` | 多区供应商 | `regions` 是「区名 → 该区的字段覆盖（host 与币种成对换）」，`region` 选哪一区；写错的区会 warn 并退回第一个 |
+| `enabled` | 任意 | `false` 停用这一条（临时关源不必删整段） |
+
+**表外的键是内置预设专用，手写别照抄**：`builder`、`apiPrefix`、`consoleSite`、`gatewayAction`、`gatewayProduct`、
+`infoUrl`、`secTokenRef`、`dashboardURL`、`regionConfigKey`、`errorHints`、`keywords` 走的是各家特定的签名/CSRF/
+信封流程，只对相应预设成立。特别地：面板里的**多行窗口**（「5 小时」+「每周」两行）目前**只有
+`token-plan-console` 会产生**，手写条目一条只有一个读数；想显示两个窗口，就写两条源。
+实测窗口用 `{"kind":"window","providers":["my-provider"],"label":"我的窗口","windowDays":30}`，
+或简写 `window:<provider>`。接入新厂家的完整核对流程见 [`docs/adding-a-provider.md`](docs/adding-a-provider.md)。
+
+#### 卡片空着、又没报错，按这个顺序查
+
+1. `GET /token-plan-quota/probe?source=<id>`（或临时开 `"debug": true`）——先看上游**实际**回了哪些字段名；
+2. 对照上面那张权威键表逐字核对键名：**认不出的键不报错、只是没作用**，表现就是卡片空着而不是启动失败；
+3. `fields` 的路径是否真命中了这份响应（信封加不加 `data` 见过两种），`derive` 引用的名字是否都取到了数
+   ——任一操作数缺失就整条空；
+4. 如果这张卡**根本没出现**，那通常不是空卡问题：凭据解析不到的源整个不开（不挂错误卡占地方），
+   或者被 `panelScope: current` 挡在视野外。看快照的 `detection` 块，它会写明谁被跳过、为什么。
 
 ## 吞吐速度（实测，不估算）
 
@@ -229,13 +314,13 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面四步一次跑完
-node test/host.mjs                 # 324 项，离线
+node test/host.mjs                 # 341 项，离线
 node test/client.mjs               # 102 项，假 React/DOM/fetch
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 ```
 
-`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 324/102 项」这些写在 README
+`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 341/102 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

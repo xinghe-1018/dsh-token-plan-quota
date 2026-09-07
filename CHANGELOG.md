@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format follows
 
 本文件按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式维护。
 
+## [0.4.1] - 2026-09-07
+
+开源发布前做了一轮**盲测**：中英文档各交两名读者，只准读 README，不许看代码、不许上网，回答同一组配置题。
+两个人独立答不出来的地方，就是文档的洞——这一轮补了四个洞，其中一个是功能。
+
+### Added
+
+- **`enabled: false` 现在连自动检测一起压住**：`{"id":"moonshot-balance","enabled":false}` 写下去，检测就不会
+  再把这张卡补回来，诊断块 `skipped` 留 `disabled-by-config`——「没认出来」和「你关掉了」从此分得开。
+  语义是**关这一条源，不是关这个供应商**：同路由的实测兜底窗口不受牵连；连兜底也不要就点名
+  `{"id":"window:<路由 id>","enabled":false}`。此前"我只想干掉某一张卡"这个最高频诉求，文档里没有答案。
+- README 新增两节：**「只想关掉某一张卡」**（带可抄的 JSON）与**「卡片空着、又没报错，按这个顺序查」**
+  （probe → 键名 → 字段路径 → 卡整个不出现的两种原因）。中英同步。
+- README 补一张**手写条目可用键的权威表**（28 个键，逐个标注用在哪、默认值、哪个构建器消费），并明确
+  「认不出的键不报错、只是没作用」——所以键名打错的表现是卡片空着，不是启动失败。
+- `check-docs` 加两条硬检查：配置表逐行必须等于 `DEFAULTS` 键（`moonshotRegion` 是唯一例外）、条目键表逐行
+  必须被代码 `source.<key>` 真读到；再加一条编码护栏（BOM / U+FFFD / GBK 私用区残骸）。五种损坏均验证可捕获。
+
+### Changed
+
+- **文档不再写自己做不到的事**：`token-plan-window` 明确标注为"千问本地实测账本"而非自建窗口预设，并在
+  「它不做什么」写死**没有"我手填额度上限"的窗口**（分母只能来自官方接口）；`card.meters` 从"配置键"改标为
+  快照里的卡形状，多行窗口只有 `token-plan-console` 会产生；`docs/adding-a-provider.md` 同一处同步。
+- 配置表改为**一键一行**（18 行 = 17 个 `DEFAULTS` 键 + `moonshotRegion`），阿里云专属五个键标注"仅阿里云使用"，
+  `refreshMinutes` 说清「TTL = 分钟 × 60s，下限 15s，所以 3 就是每 3 分钟」。此前合并行让"17 个键"这句
+  自查声明对不上任何人自己数出来的行数。
+- 说明「只看 API host，不看控制台域名」：`platform.kimi.com` / `platform.moonshot.cn` /
+  `bailian.console.aliyun.com` 不参与识别，并给出 Kimi 用户的路径；`labelEn` 如实标注**当前界面不消费**。
+
+### Fixed
+
+- 手写条目不写 `label` 时卡片标题为空 → 回落成条目 `id`（徽标 tooltip 直接用了 `label`，此前会渲染出 `undefined`）。
+- `plan.skipped` 从未透出到诊断块：规则层判定的跳过原因（含新增的 `disabled-by-config`）现在会出现在
+  `detection.skipped` 里，与本地更详细的凭据记录合并去重。
+
 ## [0.4.0] - 2026-09-06
 
 ### Added
@@ -82,6 +117,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.1]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/releases/tag/v0.2.0

@@ -11,10 +11,14 @@
  *   2. `PRESETS` 每个源名都在中英 README 里出现（新增一家忘了同步文档 = CI 红）；
  *   3. 预设与字体 CDN 的每个出站主机都在 `dshhub.permissions.network` 里；
  *   4. README 里的相对链接指向的文件真实存在；
- *   5. README 声称的测试项数与实跑结果一致（数字不许漂）。
+ *   5. README 声称的测试项数与实跑结果一致（数字不许漂）；
+ *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
+ *   7. CHANGELOG 引用的 tag 必须存在；
+ *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
+ *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
@@ -116,6 +120,96 @@ for (const tag of referenced.sort()) {
 if (pkg.version !== '0.0.0' && !referenced.some(t => t === `v${pkg.version}`) && tags.includes(`v${pkg.version}`) === false) {
   // 当前版本尚未在 CHANGELOG 里出现时，至少要有对应章节
   if (!changelog.includes(`## [${pkg.version}]`)) problems.push(`CHANGELOG 缺当前版本 ${pkg.version} 的章节`)
+}
+
+/* 8) 两张键表是外人唯一能照着写配置的地方：文档说的键，代码必须真读。
+ *    动机：盲测时有读者照着 README 写 `card.meters`，而那个键手写根本无效——
+ *    "照文档写出来却静默失效"这类洞不该等下一次人工发现。 */
+const libText = read('lib/index.js')
+const codeSourceKeys = new Set([...libText.matchAll(/\bsource\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]))
+
+/** 取某小节里表格每行第一个单元格内的反引号标识符（行尾按 \n 归一：工作副本是 CRLF）。 */
+function tableKeys(input, startMarker, endMarker) {
+  const text = input.replace(/\r\n/g, '\n')
+  const start = text.indexOf(startMarker)
+  if (start < 0) return null
+  const rest = text.slice(start + startMarker.length)
+  const at = endMarker === undefined ? -1 : rest.indexOf(endMarker)
+  const slice = at < 0 ? rest : rest.slice(0, at)
+  const keys = []
+  for (const line of slice.split(/\r?\n/)) {
+    const cell = /^\|\s*([^|]+)\|/.exec(line)
+    if (cell === null) continue
+    // 允许点号：`card.meters` 这类"点出来的键"恰恰是最该被抓的（它就是当初误导读者的那个词）。
+    for (const token of cell[1].matchAll(/`([A-Za-z][A-Za-z0-9_.]*)`/g)) keys.push(token[1])
+  }
+  return keys
+}
+
+const documentedDefaults = new Set(Object.keys(__internals.DEFAULTS))
+for (const [file, text, marker] of [['README.md', zh, '## 配置\n'], ['README.en.md', en, '## Configuration\n']]) {
+  const configKeys = tableKeys(text, marker, '\n### ')
+  if (configKeys === null) { problems.push(`${file} 找不到「${marker.trim()}」小节，配置表检查失去落点`); continue }
+  const missing = [...documentedDefaults].filter(key => !configKeys.includes(key))
+  if (missing.length > 0) problems.push(`${file} 的配置表缺键：${missing.join(', ')}`)
+  for (const key of configKeys) {
+    if (!documentedDefaults.has(key) && key !== 'moonshotRegion') {
+      problems.push(`${file} 配置表里的 ${key} 既不是 DEFAULTS 键，也不在允许的单列例外里`)
+    }
+  }
+  if (new Set(configKeys).size !== configKeys.length) problems.push(`${file} 配置表里同一个键出现了多次`)
+  if (configKeys.length !== documentedDefaults.size + 1) {
+    problems.push(`${file} 配置表列了 ${configKeys.length} 个键，应为 ${documentedDefaults.size} 个 DEFAULTS 键 + moonshotRegion`)
+  }
+}
+for (const [file, text, marker, endMarker] of [
+  ['README.md', zh, '#### 手写条目的全部可用键', '**表外的键'],
+  ['README.en.md', en, '#### Every key a hand-written entry accepts', '**Keys outside this table'],
+]) {
+  const entryKeys = tableKeys(text, marker, endMarker)
+  if (entryKeys === null) { problems.push(`${file} 找不到条目键表小节（${marker}），这条检查失去落点`); continue }
+  if (entryKeys.length < 20) problems.push(`${file} 条目键表只解析出 ${entryKeys.length} 个键，不像一张完整的表`)
+  for (const key of new Set(entryKeys)) {
+    if (!codeSourceKeys.has(key)) problems.push(`${file} 条目键表里的 ${key} 代码从没读过（写成这样就是又一处死文档）`)
+  }
+}
+
+/* 9) 编码护栏：Windows PowerShell 5.1 的 `Get-Content` 按 ANSI(GBK) 读 UTF-8，一次
+ *    `Get-Content | Set-Content -Encoding utf8` 往返就把中文变成乱码 + BOM，而且**不可逆**
+ *    （GBK 私用区字符没有反向映射）。本仓库真的踩过，所以这类损坏必须当场红灯。
+ *    判断只看码位，不用字面量——不然这条检查自己就会成为又一处隐形损坏。 */
+const textFiles = ['README.md', 'README.en.md', 'ROADMAP.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md',
+  'RELEASE.md', 'LICENSE', 'package.json', 'cordis.patch.yml']
+for (const dir of ['docs', 'lib', 'scripts', 'test', '.github/workflows', '.github/ISSUE_TEMPLATE']) {
+  const abs = join(root, dir)
+  if (!existsSync(abs)) continue
+  for (const name of readdirSync(abs)) {
+    if (statSync(join(abs, name)).isFile()) textFiles.push(join(dir, name))
+  }
+}
+const isCjk = ch => { const cp = ch.codePointAt(0); return cp >= 0x4E00 && cp <= 0x9FFF }
+const isPua = ch => { const cp = ch.codePointAt(0); return cp >= 0xE000 && cp <= 0xF8FF }
+for (const rel of textFiles) {
+  let raw
+  try {
+    raw = readFileSync(join(root, rel)).toString('utf8')
+  } catch {
+    continue
+  }
+  if (raw.charCodeAt(0) === 0xFEFF) {
+    problems.push(`${rel} 以 BOM 开头（多半是 PowerShell 5.1 的 Set-Content -Encoding utf8 写的；JSON 解析会直接炸）`)
+  }
+  let hasReplacement = false
+  let hasCjkChar = false
+  let hasPuaChar = false
+  for (const ch of raw) {
+    const cp = ch.codePointAt(0)
+    if (cp === 0xFFFD) hasReplacement = true
+    else if (isCjk(ch)) hasCjkChar = true
+    else if (isPua(ch)) hasPuaChar = true
+  }
+  if (hasReplacement) problems.push(`${rel} 含 U+FFFD 替换符：这份文本已经被错误的码页读过一次了`)
+  if (hasCjkChar && hasPuaChar) problems.push(`${rel} 同时含中日韩文字与私用区字符，是 GBK 误读 UTF-8 的典型残骸`)
 }
 
 if (problems.length > 0) {

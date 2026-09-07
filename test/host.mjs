@@ -201,6 +201,15 @@ check('windowDays 可覆盖（对齐别家自己的窗口规则）', multiSource
 const badWarns = []
 check('未知源照样丢弃', normalizeSources(['windowx:nope'], { logger: { warn: e => badWarns.push(String(e.message)) }, get: () => undefined }).length, 0)
 ok('未知源的提示里要告诉用户这条兜底写法', String(badWarns[0]).includes('window:<provider>'))
+// README「手写条目的全部可用键」这张表里的每一行都要能被这几条钉住：文档说"回落 id"、"不写 url 就走 RPC"，
+// 代码改了没同步就该红，而不是让下一个人照文档写出一个静默失效的条目。
+check('手写条目不写 label → 标题回落 id', normalizeSources([{ id: 'my-src', url: 'https://example.com/b' }], ctxStub)[0].label, 'my-src')
+check('label 是空白串也按没写处理', normalizeSources([{ id: 'my-src', url: 'https://example.com/b', label: '   ' }], ctxStub)[0].label, 'my-src')
+check('写了 label 就用作者的', normalizeSources([{ id: 'my-src', url: 'https://example.com/b', label: '我的余额' }], ctxStub)[0].label, '我的余额')
+check('不写 url 也不是内置源名 → 按 RPC 处理', normalizeSources([{ id: 'rpc-src', action: 'QueryFoo', version: '2024-01-01' }], ctxStub)[0].type, 'rpc')
+check('写了 url → 按 HTTP 处理', normalizeSources([{ id: 'http-src', url: 'https://example.com/balance' }], ctxStub)[0].type, 'http')
+check('kind 不写默认 single', normalizeSources([{ id: 'plain', url: 'https://example.com/b' }], ctxStub)[0].kind, 'single')
+check('enabled:false 停掉这一条', normalizeSources([{ id: 'off-src', url: 'https://example.com/b', enabled: false }], ctxStub).length, 0)
 resetInstanceState()
 
 /* ============================================ 4. 滑动窗口与重试观测 */
@@ -925,6 +934,42 @@ await applyAutoDetect(userCfg, fakeHost({
 }))
 check('用户已覆盖的路由，检测一个源都不加', userCfg.sources.length, 1)
 check('原本的用户源保持不动', [userCfg.sources[0].id, userCfg.sources[0].detected], ['token-plan-window', undefined])
+
+/* 「这张卡我不看」——外人最常有的配置诉求，必须有正面答案，且不能靠关整个检测。 */
+const kimiHost = () => fakeHost({
+  routes: [{ id: 'kimi-open-cn', name: 'Kimi Open' }],
+  profiles: { 'kimi-open-cn': { baseURL: 'https://api.moonshot.cn/v1', apiKeyEnv: 'MOONSHOT_CN_API_KEY' } },
+  refs: { MOONSHOT_CN_API_KEY: 'sk-cn' },
+})
+const noMoonCfg = effectiveConfig({ sources: [{ id: 'moonshot-balance', enabled: false }], minIntervalMs: 0 }, ctxStub)
+const noMoonInfo = await applyAutoDetect(noMoonCfg, kimiHost())
+check('enabled:false 的条目不进源列表', noMoonCfg.sources.length, 0)
+check('关掉的源名交给检测（disabledSources）', noMoonCfg.disabledSources, ['moonshot-balance'])
+check('检测不再把被关的源补回来', noMoonInfo.added.length, 0)
+check('为什么没开在诊断里说清', noMoonInfo.skipped[0].reason, 'disabled-by-config')
+const onCfg = hostCfg()
+await applyAutoDetect(onCfg, kimiHost())
+check('对照组：同样的宿主没写这条就照常开出源', onCfg.sources.map(source => source.id), ['moonshot-balance'])
+
+const qwenHost = () => fakeHost({
+  routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
+  profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },
+  refs: { QWEN_TOKEN_PLAN_CN_API_KEY: 'sk-sp-x', BAILIAN_CONSOLE_COOKIE: 'c' },
+})
+const qwenOff = effectiveConfig({ sources: [{ id: 'token-plan-console', enabled: false }], minIntervalMs: 0 }, ctxStub)
+await applyAutoDetect(qwenOff, qwenHost())
+check('关一条源不牵连同路由的实测窗口（关源 ≠ 关供应商）', qwenOff.sources.map(source => source.id), ['token-plan-window'])
+const qwenOn = hostCfg()
+await applyAutoDetect(qwenOn, qwenHost())
+check('对照组：没关时官方源与兜底按规则各归其位', qwenOn.sources.map(source => source.id).includes('token-plan-console'), true)
+
+const autoWinCfg = effectiveConfig({ sources: [{ id: 'window:minimax-cn', enabled: false }], minIntervalMs: 0 }, ctxStub)
+const autoWinInfo = await applyAutoDetect(autoWinCfg, fakeHost({ routes: [{ id: 'minimax-cn', name: 'MiniMax' }], profiles: { 'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1' } }, refs: {} }))
+check('自动挂的实测窗口可按 window:<路由> 点名关掉', autoWinCfg.sources.length, 0)
+check('关掉兜底也在诊断里留痕', autoWinInfo.skipped[0].reason, 'disabled-by-config')
+const autoWinOn = hostCfg()
+await applyAutoDetect(autoWinOn, fakeHost({ routes: [{ id: 'minimax-cn', name: 'MiniMax' }], profiles: { 'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1' } }, refs: {} }))
+check('对照组：不写这条时兜底窗口照常挂上', autoWinOn.sources.map(source => source.id), ['window:minimax-cn'])
 
 // 回归锁：Cookie 型源绝不能被写成 bearerRef，否则查询先撞 Bearer 门，报
 // "未配置凭据 BAILIAN_CONSOLE_COOKIE（…设同名环境变量）"——Cookie 明明在，却被叫去配 Key。

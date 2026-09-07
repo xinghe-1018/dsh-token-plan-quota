@@ -4,7 +4,7 @@
 后两者都要引用前者的地址，且目录站的评审会**实际读你的仓库**。
 
 本机已核对的状态（2026-09-07）：仓库 `xinghe-1018/dsh-token-plan-quota` **已经是 public**、
-**没有 topic**、**tag 一个都没推**（本地已有 `v0.2.0/v0.3.0/v0.4.0`）、
+**没有 topic**、**tag 一个都没推**（本地已有 `v0.2.0/v0.3.0/v0.4.0/v0.4.1`）、
 npm 名 `dsh-token-plan-quota` **未被占用**、`npm whoami` 未登录、`npm publish --dry-run` 通过（9 文件 / 80 kB）。
 
 > 未推送的提交数以 `git rev-list --count origin/main..main` 为准，别信文档里写死的数字。
@@ -35,7 +35,7 @@ git grep -nI -E '40\.33|40\.74|2117|2661|2957|3620|3,677|934 字符|specCode: st
 ```bash
 cd ~/.dsh/plugins/dsh-token-plan-quota
 git push origin main --follow-tags        # 未推送的提交 + 3 个 tag
-git ls-remote --tags origin               # 确认 v0.2.0 v0.3.0 v0.4.0 都在
+git ls-remote --tags origin               # 确认 v0.2.0 … v0.4.1 都在
 ```
 
 远端别名 `github.com-new` 已在 `~/.ssh/config` 指向 `~/.ssh/id_ed25519_ghnew`，
@@ -64,7 +64,7 @@ curl -X PUT https://api.github.com/repos/xinghe-1018/dsh-token-plan-quota/topics
 ```bash
 npm login                                  # 网页授权即可
 npm publish --access public                # 名字已被占用时报 403，未占用时这步就是发布
-npm view dsh-token-plan-quota version      # 应为 0.4.0
+npm view dsh-token-plan-quota version      # 应为 0.4.1
 ```
 
 两个坑：
@@ -78,7 +78,7 @@ npm view dsh-token-plan-quota version      # 应为 0.4.0
 
   ```bash
   npm run check            # 测试 + manifest + README 声明一致性
-  npm pack && tar -tzf dsh-token-plan-quota-0.4.0.tgz   # 肉眼过一遍文件表
+  npm pack && tar -tzf dsh-token-plan-quota-0.4.1.tgz   # 肉眼过一遍文件表
   ```
 
 装法验证（发布后，任选一台干净机器）：
@@ -139,8 +139,8 @@ description:
 
 ```bash
 npm deprecate dsh-token-plan-quota "reason"   # 保留包但装机时给警告
-npm unpublish dsh-token-plan-quota@0.4.0      # 24 小时内可撤；之后受限，别指望它
-git push origin :refs/tags/v0.4.0             # 撤 tag（GitHub release 也要手动删）
+npm unpublish dsh-token-plan-quota@0.4.1      # 24 小时内可撤；之后受限，别指望它
+git push origin :refs/tags/v0.4.1             # 撤 tag（GitHub release 也要手动删）
 ```
 
 ---

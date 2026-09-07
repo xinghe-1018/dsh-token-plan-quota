@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-plan-quota",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换，零配置按在用路由自动开源。官方真值来源：DeepSeek /user/balance、Moonshot 开放平台、OpenRouter credits、阿里云 BssOpenApi（AK/SK）、千问 Token Plan 控制台网关（Cookie）；官方无额度接口的供应商显示明确标注「实测」的本实例窗口。含模型工具 token_plan_quota。",
   "type": "module",
   "main": "lib/index.js",
@@ -24,10 +24,24 @@
     "schemaVersion": 1,
     "displayName": "dsh-token-plan-quota",
     "summary": "跟随当前模型供应商的额度徽标：官方接口给真值（DeepSeek、Moonshot、OpenRouter、阿里云费用中心、千问 Token Plan 控制台），没有官方额度接口的供应商显示标注「实测」的本实例消耗窗口。不折算 Credits、不估算余量。零配置自动识别在用路由，附 token_plan_quota 模型工具。",
-    "categories": ["费用", "Web UI", "观测"],
-    "surfaces": ["host", "web"],
-    "capabilities": { "provides": ["tool:token_plan_quota"] },
-    "compatibility": { "dsh": ">=0.1.0-rc.5", "node": ">=20" },
+    "categories": [
+      "费用",
+      "Web UI",
+      "观测"
+    ],
+    "surfaces": [
+      "host",
+      "web"
+    ],
+    "capabilities": {
+      "provides": [
+        "tool:token_plan_quota"
+      ]
+    },
+    "compatibility": {
+      "dsh": ">=0.1.0-rc.5",
+      "node": ">=20"
+    },
     "permissions": {
       "network": [
         "https://api.deepseek.com",
@@ -84,5 +98,7 @@
     "bssopenapi"
   ],
   "license": "MIT",
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

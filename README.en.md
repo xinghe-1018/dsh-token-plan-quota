@@ -22,6 +22,10 @@ decided from the provider routes you actually have.
 This stance matters more than the feature list:
 
 - **No Credits conversion**, no discount rates, no "remaining balance inferred from history";
+- **There is no "I type in my own quota limit" window**: a denominator may only come from an official endpoint,
+  so there is no key here that expresses "period + limit". `token-plan-window` is **not** a custom-window
+  preset - it is the local measured ledger for Qwen Token Plan (no network, only calls that passed through
+  this instance);
 - **No denominator, no percentage**: a measured card never draws a progress bar and never shows a percentage -
   it reports only "how many tokens / how many requests were used in this window";
 - **Plan configuration is not your quota**: a window exists only when that plan actually reports a reading
@@ -58,6 +62,15 @@ The only external resource at runtime is three CDN font links; if they fail, the
 
 Per-vendor endpoints, envelope fields, unit traps and percentage direction are documented in
 [`docs/upstream-contracts.md`](docs/upstream-contracts.md).
+
+**API hosts only, never console domains**: web console domains such as `platform.kimi.com`,
+`platform.moonshot.cn` and `bailian.console.aliyun.com` take no part in detection - the plugin queries balance
+APIs, which live on the API host the route's `baseURL` points at (`api.moonshot.cn` / `api.moonshot.ai`).
+A Kimi open-platform key belongs to the same account and balance as a Moonshot one, so point the route at
+`api.moonshot.*`; if your `baseURL` says something else, detection will not recognise it and you get the
+measured card instead (writing `sources: ["moonshot-balance"]` by hand forces the official one - but see the last
+column of the table above: that vendor's field names are not yet checked against a real key, so if the forced
+card looks wrong, compare field names with `probe`).
 
 ### How this differs from neighbouring plugins
 
@@ -102,7 +115,8 @@ Two invariants:
   is hidden; when the official card turns into an error card, the fallback must come back. This decision lives
   in the display layer where the data is visible - deciding it at planning time left a blank badge the moment
   a cookie expired.
-- **A card can carry several windows**: the host orders them into `card.meters`; `meters[0]` is the same source
+- **A card can carry several windows**: the host orders them into `card.meters` (**this is the card shape in the
+  snapshot, not a key you can write in a source entry**); `meters[0]` is the same source
   as the top-level value (shown by the headline and the main bar), and each further window gets its own row -
   "label · remaining/total · used% · resets" - with its own thin gradient bar.
 - **The detail panel is a persistent window**: drag it by the title bar, resize with the bottom-right handle,
@@ -116,6 +130,11 @@ Two invariants:
   stack (Geist Variable + Noto Sans SC, system fallback offline) with monospace reserved for identifiers;
   every animation respects `prefers-reduced-motion`.
 - `panelScope: current` (default) lists only the current provider's cards; set `"all"` to see every source.
+- **"Measured" has exactly one meaning in this document**: a number computed from the local ledger, never an
+  official balance. It appears in three places - the "this instance, measured" block in the panel (that is what
+  `showInstanceWindow` toggles), the `window:<provider>` card for any vendor, and the built-in
+  `token-plan-window` (which simply *is* the Qwen ledger). All three default to a 7-day window, changeable with
+  `windowDays`; the window is anchored at this instance's first call, and "reset this cycle" re-anchors it.
 
 ## Configuration
 
@@ -132,22 +151,53 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
+The table below has 18 rows: 17 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
+part of every name** (`Minutes` / `Seconds` / `Ms`).
+
 | Key | Default | Meaning |
 |---|---|---|
-| `autoDetect` | `true` | Fill in sources from the host's live provider routes; `false` restores fully manual `sources` behaviour |
-| `sources` | none (detection decides) | Source list: `deepseek-balance`, `token-plan-console`, `token-plan-window`, `moonshot-balance`, `openrouter-credits`, `account-balance`, `fr-instances`, `resource-package`, the `window:<provider>` shorthand, or a custom `{...}` object |
+| `autoDetect` | `true` | Fill in sources from the host's live provider routes; `false` restores fully manual `sources` behaviour. **With detection off and nothing written**, it falls back to two built-ins: `deepseek-balance` + `token-plan-window`; as soon as you write `sources` (even `"sources": []`) what you wrote wins |
+| `sources` | none (detection decides) | Ordered source list. Built-in names (8): `deepseek-balance` (DeepSeek balance), `token-plan-console` (Qwen console quota, cookie), `token-plan-window` (**Qwen local ledger** - not a custom window), `moonshot-balance` (Moonshot/Kimi balance), `openrouter-credits` (OpenRouter balance), `account-balance` (Aliyun account balance), `fr-instances` (Aliyun resource-pack instances), `resource-package` (Aliyun resource-package allowances); or the `window:<provider>` shorthand (a measured window for any vendor); or a custom object (see [Custom sources](#custom-sources)) |
 | `moonshotRegion` | `china-mainland` | `china-mainland` (`api.moonshot.cn`, CNY) or `international` (`api.moonshot.ai`, USD). **Keys do not work across regions**; a wrong region returns 401 and the card tells you to switch. Host and currency switch as a pair - there is no auto-probing |
-| `refreshMinutes` | `10` | TTL for official sources (15s floor); the panel's "updated" line or `?fresh=1` forces a refetch |
-| `pollSeconds` | `10` | Front-end poll interval (measured values and throughput are recomputed live; lower it for a snappier speed label) |
+| `refreshMinutes` | `10` | Cache TTL for official sources in minutes: TTL = minutes × 60 s, **floor 15 s**, so `"refreshMinutes": 3` means one upstream call per 3 minutes (sub-minute polling is not what this key is for - see `pollSeconds`). The panel's "updated" line or `?fresh=1` forces a refetch |
+| `pollSeconds` | `10` | Front-end poll interval - how often the UI re-reads the snapshot. Measured values and throughput are recomputed live anyway; lowering this never adds upstream calls |
 | `panelScope` | `current` | `current` lists only the active provider's cards plus this instance's usage; `all` lists every source |
-| `showInstanceWindow` | `true` | Include the "this instance, measured + retry observations" block in the panel |
+| `showInstanceWindow` | `true` | Include the "this instance, measured + retry observations" block in the panel. It is **not** a data-source switch and does not affect `window:<provider>` cards |
 | `exposeTool` | `true` | Register the `token_plan_quota` model tool |
-| `debug` | `false` | Echo the upstream response's **field skeleton** (values masked, credential-like keys skipped) to check field names |
-| `endpoint` / `regionId` | `business.aliyuncs.com` / none | Aliyun OpenAPI endpoint (change it for the international site) |
-| `accessKeyIdRef` / `accessKeySecretRef` / `securityTokenRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` / `..._SECRET` / none | Aliyun AK/SK reference names |
-| `configPath` | `$DSH_HOME/token-plan-quota.json` | Where the external JSON config lives |
+| `debug` | `false` | Permanently echo the upstream response's **field skeleton** (values masked, credential-like keys skipped) in the panel. Same output as `GET /token-plan-quota/probe?source=<id>`; the difference is that debug is always on while probe is one-off and needs no config change |
+| `endpoint` | `business.aliyuncs.com` | Aliyun BSS sources only: OpenAPI endpoint (change it for the international site). A leading `https://` and trailing slashes are stripped |
+| `regionId` | none | Aliyun only: the OpenAPI `RegionId` |
+| `accessKeyIdRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` | Aliyun only: credential reference name for the AccessKeyId |
+| `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | Aliyun only: credential reference name for the AccessKeySecret |
+| `securityTokenRef` | none | Aliyun only: credential reference name for an STS token (leave empty with long-lived AK/SK) |
+| `configPath` | `$DSH_HOME/token-plan-quota.json` | Where the external JSON config lives (`~/` = OS home, `$DSH_HOME/` = harness home) |
 | `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | Where the local ledger is persisted |
-| `minIntervalMs` / `timeoutMs` | `1200` / `15000` | Minimum interval between outbound calls, and per-request timeout |
+| `minIntervalMs` | `1200` | Minimum interval between outbound calls (ms), throttling globally |
+| `timeoutMs` | `15000` | Per-request upstream timeout (ms, floor 1000) |
+
+### Turning one single card off
+
+An item of `sources` may be a built-in name (a string) or an object - **options only attach to the object form**,
+so to switch a vendor off, turn that item into an object:
+
+```json
+{
+  "sources": [
+    { "id": "fr-instances", "enabled": false },
+    { "id": "moonshot-balance", "enabled": false }
+  ]
+}
+```
+
+- **It works on sources that detection opened too**: with `{"id":"moonshot-balance","enabled":false}` written,
+  detection will not add that card back, and the `skipped` list keeps a `disabled-by-config` entry - so
+  "not recognised" and "you switched it off" stay distinguishable.
+- **It switches off this source, not this vendor**: the measured fallback window on the same route is untouched
+  (switch off `token-plan-console` and `token-plan-window` stays). If you want that fallback gone too, name it:
+  `{"id":"window:<route id>","enabled":false}`.
+- Prefer a clean sweep? Set `autoDetect: false` and write the whole list yourself. Either way,
+  **what you wrote always wins**.
 
 ### Credentials
 
@@ -190,11 +240,60 @@ for this plugin. `kind: "single"` with `fields`/`derive` covers the "balance is 
 
 `derive` accepts exactly one `+`/`-` with a field reference or a number on each side, and **returns nothing if
 either side is missing** - it never invents a number. Multiply, divide or parenthesised expressions mean you
-should write a dedicated builder instead. Giving each reference several candidate paths is deliberate: the same
-API has shipped with and without a `data` envelope. Use `kind: "list"` with `list`/`item` for array responses,
-`card.meters` for multiple windows, `regions` for multi-host vendors, and
-`{"kind":"window","providers":[...],"windowDays":30}` (or the `window:<provider>` shorthand) for measured
-windows. The full checklist is in [`docs/adding-a-provider.md`](docs/adding-a-provider.md).
+should write a dedicated builder instead. The slot names in `fields` are yours to choose (`credits`/`usage` above
+are just names - they are also the variables `derive` can reference), and giving each slot several candidate paths
+is deliberate: the same API has shipped with and without a `data` envelope.
+
+#### Every key a hand-written entry accepts
+
+**An unrecognised key raises no error and does nothing** (entries are merged verbatim), so a typo in a key name
+shows up as "the card stays empty", not as a failed start. This table is the authoritative list:
+
+| Key | Applies to | Meaning |
+|---|---|---|
+| `id` | required | Source identifier, also the cache key and the `probe?source=` argument. Two entries sharing an `id` share a cache and stack into two cards (the log warns); rename the second one |
+| `kind` | recommended | `single` (one reading - the default when omitted) / `list` (a list of resources) / `window` (measured window for this instance, no network) |
+| `label` / `labelEn` | title | `label` is the card title and falls back to the entry's `id` when omitted. `labelEn` ships in the snapshot but **the UI does not consume it today** (the panel title reads `label` only); it is reserved for host localisation |
+| `url` | `single` / `list` | Endpoint. With `url` present the source is HTTP; without `url` and not a built-in name, it is treated as an Aliyun OpenAPI **RPC** call (needs `action` + `version`) |
+| `method` | HTTP | Defaults to `GET` |
+| `headers` | HTTP | Extra request headers, merged over `accept: application/json` |
+| `jsonBody` / `formBody` | HTTP (POST) | JSON body / `application/x-www-form-urlencoded` body |
+| `bearerRef` / `cookieRef` | HTTP | Credential reference names. A Bearer source honours only `bearerRef`, a cookie-session source only `cookieRef` - **a plan key is never used in place of a cookie** (nor the reverse), because that only produces a misleading error card |
+| `action` / `version` / `params` | RPC | OpenAPI action, version and query parameters (`params` are flattened). An RPC source missing `action` or `version` yields an error card |
+| `paginate` | RPC | `{ "mode": "page", "request": "PageNum", "pageSize": "PageSize", "total": ["TotalCount"] }`, or `{ "mode": "token", "request": "NextToken", "response": ["NextToken"] }`; page mode stops after 10 pages |
+| `fields` | `single` | variable name → array of candidate paths; only the ones that resolve enter the `derive` scope |
+| `extract` | `single` | Paths for values the upstream hands over directly: `remaining`, `total`, `unit`. These are also referenceable by `derive` |
+| `derive` | `single` | Only `remaining` / `total` / `used` are consumed; if you omit `used` and both `remaining` and `total` resolve, the difference is computed |
+| `extra` | `single` | Secondary figures, names are yours; `toppedUp`/`granted`/`cash`/`credit`/`quotaLimit` have established wording |
+| `list` / `item` | `list` | `list` is the array of candidate paths; `item` may name `name`/`id`/`remaining`/`total`/`used`/`unit`/`status`/`expiresAt`/`startsAt`/`cycleType`/`capacityType`/`haystack` |
+| `metric` | display | `money` / `credits` / `count`. The default depends on the builder: a hand-written `single` source defaults to `money`, `list` to `credits`, `window` to `count` - **set it explicitly when you want tokens** |
+| `unit` | display | Fallback unit when upstream gives none (e.g. `USD`); with `metric:"money"` and no upstream currency it falls back to `CNY` |
+| `providers` | panel grouping | Which provider route names this source belongs to; `panelScope:"current"` decides visibility on it. The `window:<provider>` shorthand fills it in |
+| `windowDays` | `window` | Measured window length in days; default 7, minimum 1 |
+| `regions` / `region` | multi-region vendors | `regions` maps a region name to its field overrides (host and currency switch together); `region` picks one. An unknown region warns and falls back to the first |
+| `enabled` | any | `false` disables the entry (handy for switching one source off without deleting a block) |
+
+**Keys outside this table are reserved for built-in presets - do not copy them into a hand-written entry**:
+`builder`, `apiPrefix`, `consoleSite`, `gatewayAction`, `gatewayProduct`, `infoUrl`, `secTokenRef`,
+`dashboardURL`, `regionConfigKey`, `errorHints`, `keywords` all drive vendor-specific signing / CSRF / envelope
+flows that only hold for the matching preset. In particular, **multi-row window cards** (the "5 hour" + "weekly"
+pair in the panel) are produced **only by `token-plan-console`**; one hand-written entry yields one reading, so
+write two sources to show two windows. For a measured window use
+`{"kind":"window","providers":["my-provider"],"label":"My window","windowDays":30}` or the
+`window:<provider>` shorthand. The full onboarding checklist is in
+[`docs/adding-a-provider.md`](docs/adding-a-provider.md).
+
+#### The card is empty and nothing errored - triage in this order
+
+1. `GET /token-plan-quota/probe?source=<id>` (or temporarily set `"debug": true`) - look at which field names the
+   upstream **actually** returned;
+2. Check every key against the authoritative table above: **an unrecognised key does not fail, it just does
+   nothing**, which is exactly why the symptom is an empty card rather than a failed start;
+3. Confirm the `fields` paths really hit this response (the same API has shipped with and without a `data`
+   envelope) and that every name `derive` references resolved - one missing operand empties the whole line;
+4. If the card is **missing entirely**, that is usually a different problem: a source whose credential cannot be
+   resolved is not opened at all (no error card taking up space), or it is outside `panelScope: current`'s view.
+   The snapshot's `detection` block names who was skipped and why.
 
 ## Throughput (measured, not estimated)
 
@@ -266,7 +365,7 @@ see [`SECURITY.md`](SECURITY.md) for details.
 
 ```bash
 npm run check                       # all four steps below
-node test/host.mjs                  # 324 assertions, offline
+node test/host.mjs                  # 341 assertions, offline
 node test/client.mjs                # 102 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code

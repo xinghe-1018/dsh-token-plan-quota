@@ -336,6 +336,9 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 | 3 | **英文整篇 `README.en.md`**（不是摘要），与中文版逐节对齐 | §3.2、T3.5；顺带要求 `lib/client.js` 的文案上双语（否则英文 README 配中文徽标） |
 | 4 | 走 **DSH 生态的公开渠道**（见 §5），不是往 `deepseek-harness` 主仓提 PR——**主仓不接受外部 PR**，官方认可的插件贡献方式就是"自己发仓库 + 打 `dsh-plugin` topic"（`CONTRIBUTING.md` L13-15） | §5 全节 |
 | 5 | **一家只展示一张额度卡，但收合放在显示层**（2026-09-06 实机纠正）：官方卡**有数字**时才收起自动检测挂的实测兜底卡；官方卡是错误卡/没数字时兜底必须回来。原方案在规划期砍兜底，Cookie 一过期徽标直接空白——**规划期看不见数据，就不该在那儿决定显示**。用户手写的实测源没有 `detected.fallback` 标记，永不代藏 | `detect.js` `fallbackPresets` ＋ `client.js dropShadowedMeasured`（含"不许自己 shade 自己"）＋ `summarizeText` 同规则 |
+| 6 | **开源前跑盲测**：中英文档各交两名只准读 README、不许读代码/上网的子代理，问同一组配置题（2026-09-07 两轮）。第一轮两名读者**独立**打出四个洞：① `token-plan-window` 只被列名、无说明，读者认定它是"自建固定额度窗口"预设（实际是千问本地账本）；② 文档写"多窗口家用 `card.meters`"，而那是**卡形状、手写无效**；③ 配置表合并行让"17 个键"没法核对（有人数出 16，有人数出 18）；④ **"我就想关掉某一张卡"这个最高频诉求，全篇没有正面答案**。结论：文档不是说明书的替代品，是**唯一一份能被外人执行的契约** | §3 文档要求；两张键表进 `check-docs` 第 8 条检查 |
+| 7 | 针对 ④ 补**实现**而不是补一段"做不到"：`enabled: false` 语义定为「关**这一条源**」——手写条目与自动检测同受约束（检测不再补回来，诊断记 `disabled-by-config`），但**不牵连**同路由的实测兜底窗口（关一条源 ≠ 关这个供应商；连兜底也不要就点名 `{"id":"window:<路由>","enabled":false}`）。不新增顶层黑名单键：**一个诉求只留一种写法** | `normalizeSources` 的 `disabledSources` ＋ `detect.js` `disabledPresets` ＋ `host.mjs` 三组带对照的测试 |
+| 8 | 仓库内**禁止用 Windows PowerShell 5.1 做文本往返**（`Get-Content`/`Set-Content`）：5.1 的 `Get-Content` 按 ANSI(GBK) 读 UTF-8，一次往返把中文变成乱码 + GBK 私用区字符并加 BOM，且**不可逆**（私用区无反向映射，本轮真的毁过一次 README，靠 `git checkout` 回滚重放）。改为：文本一律走文件工具或 Node | `check-docs` 第 9 条：BOM / U+FFFD / 「CJK + 私用区共存」三条码位护栏（码位判断，不用字面量——不然检查自身就是残骸） |
 
 ---
 

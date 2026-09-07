@@ -123,9 +123,10 @@ description:
 2. **"两个插件做同一件事，先来者留位"** → `dsh-cost-meter`（九家 Coding Plan）已在榜，
    所以 README 里那节「与相邻插件的区别」不是装饰，是投稿能不能过的关键；
 3. **描述必须与代码逐字对得上** → 这就是 `scripts/check-docs.mjs` 存在的原因；
-   上面那句 `description.en` 里 "official balances where an API exists" 目前只对
-   DeepSeek / 千问 / 阿里云成立，Moonshot 与 OpenRouter **还没用真 Key 核对过字段名**——
-   要么先补上 T1.8 再投稿，要么把措辞收窄到已验证的那几家；
+   上面那句 `description.en` 已经按这个标准**收窄过**：点名 DeepSeek / 千问 / 阿里云三家"取官方真值"，
+   Moonshot 与 OpenRouter 明写"已接官方端点但字段未用真 Key 核对"（T1.8 还没做）。
+   早先的草稿写的是 "official balances where an API exists"——那句对我们自己来说就是超售，
+   评审拿代码一核就露；**宁可点名哪几家核过、哪两家没核过**；
 4. **源码里有没有可疑之处**（混淆、凭据外传、安装期意外行为）→ 我们有 Cookie 型源，
    `SECURITY.md` 已主动交代边界与"明确不做的三类"，别等维护者去代码里翻；
 5. 仓库满 1 天 ✅（本仓库早于今天）、有真实代码 ✅、声明了 `dsh.bundle` ✅

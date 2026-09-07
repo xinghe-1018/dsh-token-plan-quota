@@ -307,9 +307,9 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
       逆向细节全部搬进 `docs/upstream-contracts.md`，README 只留结论与出处链接。
       **配置表从 6 键补到 17 键**（原先漏了 `refreshMinutes`/`usagePath`/`configPath`/`exposeTool`/
       `endpoint`/`accessKey*Ref`/`minIntervalMs`/`timeoutMs`/`regionId`）。
-      新增 `scripts/check-docs.mjs`：把 README 里的**可核实声明**（17 个配置键、8 个数据源、
-      声明 8 个出站主机、测试 324/102 项、相对链接目标）拿去和代码与实跑结果对，漂了就 CI 红；
-      已用两处反向用例证明它真会失败（删一个键名、把 17 改成 99）。
+      新增 `scripts/check-docs.mjs`：把 README 里的**可核实声明**（DEFAULTS 17 个键、配置表 18 行、8 个数据源、
+      声明 8 个出站主机、测试 350/102 项、相对链接目标、CHANGELOG 的 tag 死链、条目键表是否真被 `source.<key>` 读到、文本有无被错误码页读写过）拿去和代码与实跑结果对，漂了就 CI 红；
+      七种损坏逐一注入验证可捕获，并带一个"还原后必须绿"的对照组（`.scratch/negative-checks.cjs`，在 gitignore 内）。
       **仍缺**：4 张截图/GIF（我没有截屏能力）——README 里留了占位与拍摄清单。
 - [x] T3.8 发布前自查（可自动化的部分全部做完）：`git ls-files` 复核（18 个跟踪文件，`.scratch/` 与探针脚本
       未入库）；明文密钥扫描无命中；`npm pack` → 解 tar → `import lib/index.js` 加载成功（9 个文件，
@@ -362,15 +362,20 @@ DSH 生态的"插件存放处"是**三层**，本插件三层都要过：
   name: xinghe-1018/dsh-token-plan-quota
   category: usage
   description:
-    en: Quota badge in the composer toolbar that follows the active model's provider, showing official balances where an API exists and clearly-labelled local measurements elsewhere.
+    en: 'Balance badge that follows the active model provider: official readings for DeepSeek, Qwen Token Plan and Aliyun BSS, plus Moonshot and OpenRouter endpoints not yet key-verified.'
+    zh: '跟随当前模型供应商的额度徽标：DeepSeek、千问 Token Plan、阿里云费用中心取官方真值，Moonshot / OpenRouter 已接官方端点但字段未用真 Key 核对；其余只报本实例实测。'
   ```
+
+  （定稿与投稿路径以 `RELEASE.md` §4 为准：目录站默认分支 `main`、`data/plugins/<owner>__<repo>.yml`。）
 
 - ✅ **已满足**：`package.json` 声明了 `dsh.bundle.patch: ./cordis.patch.yml`（**最常见的被拒原因是只写
   `dsh.client`**，我们两者都有）；有真实代码；仓库早已满 1 天。
 - ⚠️ **需要注意**：
-  1. **描述必须与代码逐字对得上**（评审会拿代码核数）→ 那句"following the active model's provider"
-     成立（v0.2 已实现），但"showing official balances where an API exists"要等①做完多家再提，
-     否则只有 DeepSeek/千问两家，措辞要收窄；
+  1. **描述必须与代码逐字对得上**（评审会拿代码核数）→ "following the active model's provider"
+     成立（v0.2 已实现）；早期草稿那句"showing official balances where an API exists"**只对
+     DeepSeek / 千问 / 阿里云成立**，Moonshot 与 OpenRouter 的字段名还没用真 Key 核对（T1.8 未做）。
+     2026-09-07 投稿时按决策**收窄措辞**：把已核实的三家点名，另两家明写"接了官方端点但未用真 Key 核对"，
+     不靠模糊说法蒙过评审（§4 决策 1 的口径反过来约束自己）；
   2. **评审第 4 条明说"两个插件做同一件事，先来者留位"** → `dsh-cost-meter`（九家 Coding Plan）已在榜，
      **不提"与邻居的区别"就直接投稿，大概率被判重复**。§1.4 那节不是可选项，是投稿前置条件；
   3. 评审第 5 条看"凭据外传"→ 千问 Cookie 走非官方网关这条要在 README 安全节里**主动交代清楚**

@@ -46,6 +46,16 @@ const ctxStub = { logger: { warn() {} }, get: () => undefined }
  * token-plan-quota.json / .credentials.yaml，文件配置会盖掉各用例的行配置，
  * 测试必须与它们隔离。写死 Windows 路径（曾经的 C:\test-dsh-home）会让
  * Linux/macOS 的贡献者直接跑不起来，也进不了 CI。 */
+/**
+ * 恢复（或删掉）DSH_HOME。Node 里 `process.env.X = undefined` 会写成字符串 "undefined"，
+ * 于是"未设 DSH_HOME"这条用例在 CI（没有预设这个变量）上把默认路径算成 `undefined/...`——
+ * 本机跑得越好，CI 越红，因为只有本机恰好设了 DSH_HOME。2026-09-07 六个 job 一起红就是它。
+ */
+function setDshHome(value) {
+  if (value === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = value
+}
+
 const ORIG_DSH_HOME = process.env.DSH_HOME
 const TEST_HOME = join(os.tmpdir(), `dsh-quota-test-${process.pid}`)
 mkdirSync(TEST_HOME, { recursive: true })
@@ -55,7 +65,8 @@ process.env.DSH_HOME = TEST_HOME
 
 const withDsh = effectiveConfig({}, ctxStub)
 check('expandPath("$DSH_HOME/x") 不会双层 .dsh', withDsh.fileConfig.path, join(TEST_HOME, 'token-plan-quota.json'))
-process.env.DSH_HOME = ORIG_DSH_HOME
+// 显式删掉再测默认落点：这条用例不能依赖"开发者环境里恰好没设 DSH_HOME"。
+setDshHome(undefined)
 const withoutDsh = effectiveConfig({}, ctxStub)
 check('未设 DSH_HOME 时默认走 ~/.dsh 下', withoutDsh.fileConfig.path, join(os.homedir(), '.dsh', 'token-plan-quota.json'))
 process.env.DSH_HOME = TEST_HOME
@@ -177,7 +188,7 @@ recordUsage(winCfg, 'qwen-token-plan-cn', 'qwen3.8-flash', { inputTokens: 100, o
 const origHome = process.env.DSH_HOME
 process.env.DSH_HOME = TEST_HOME
 __internals.resetCurrentMonthUsage(winCfg, ctxStub)
-process.env.DSH_HOME = origHome
+setDshHome(origHome)
 check('清本周期账本把窗口锚点也清零', Object.keys(usageLedger.windows).length, 0)
 resetInstanceState()
 
@@ -1121,7 +1132,7 @@ check('config 回显也带 detected（排查时能对上）', e2eSnap.config.sou
 check('detection 里没有密钥字段', JSON.stringify(e2eSnap.detection).includes('sk-'), false)
 resetInstanceState()
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
-process.env.DSH_HOME = ORIG_DSH_HOME
+setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

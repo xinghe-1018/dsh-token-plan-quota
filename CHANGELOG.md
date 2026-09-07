@@ -55,6 +55,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **CI 六个 job 全红、本机全绿**：`process.env.X = undefined` 在 Node 里写入的是字符串 `"undefined"`，
+  于是"未设 `DSH_HOME`"那条用例在 CI 上把默认路径算成 `undefined/...`。本机之所以看不出来，是因为
+  宿主恰好导出了 `DSH_HOME`——本地跑得越顺，越是骗人。现在这条**显式删除**变量，恢复也统一走
+  `setDshHome()`；另在三种环境形态下各跑一遍（无 `DSH_HOME`＋空 HOME、本机常态、`DSH_HOME` 指向无关目录）。
+- **`check-docs` 的 tag 死链检查会假红**：`actions/checkout` 默认给的是"单层且不带 tag"的克隆，
+  那里四个 tag 全部"不存在"。manifest job 改为 `fetch-depth: 0` 取真实 ref；检查本身遇到浅克隆/
+  非仓库安装时**出声跳过**（`note:` 一行），而"非浅克隆但一个 tag 都看不见"仍然红，只是把两条对策
+  一起写出来（删链接 vs `git fetch --tags`）——这条检查当初就是靠"仓库其实没 tag"抓到四个死链的，
+  不能为了 CI 安静把它做成空转。
 - 手写条目不写 `label` 时卡片标题为空 → 回落成条目 `id`（徽标 tooltip 直接用了 `label`，此前会渲染出 `undefined`）。
 - `plan.skipped` 从未透出到诊断块：规则层判定的跳过原因（含新增的 `disabled-by-config`）现在会出现在
   `detection.skipped` 里，与本地更详细的凭据记录合并去重。

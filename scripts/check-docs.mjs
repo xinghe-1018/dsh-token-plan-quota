@@ -104,6 +104,20 @@ else {
   if (hostCount !== tally.hosts) problems.push(`README.en.md says ${hostCount} declared outbound hosts, actual ${tally.hosts}`)
 }
 
+/* 7) CHANGELOG 里的版本链接不能指向不存在的 tag（留个死链就是又一处假声明） */
+const changelog = read('CHANGELOG.md')
+// 只看链接定义行（`[0.4.0]: https://…`），正文里提到 vX.Y.Z 的说明文字不算声明。
+const referenced = [...new Set([...changelog.matchAll(/^\[[\d.]+\]:\s.*?(v\d+\.\d+\.\d+)(?:\.\.\.)?(v\d+\.\d+\.\d+)?/gm)]
+  .flatMap(m => [m[1], m[2]].filter(Boolean)))]
+const tags = execFileSync('git', ['tag'], { cwd: root, encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
+for (const tag of referenced.sort()) {
+  if (!tags.includes(tag)) problems.push(`CHANGELOG 引用了 ${tag}，但仓库没有这个 tag（要么补 tag，要么把链接删掉）`)
+}
+if (pkg.version !== '0.0.0' && !referenced.some(t => t === `v${pkg.version}`) && tags.includes(`v${pkg.version}`) === false) {
+  // 当前版本尚未在 CHANGELOG 里出现时，至少要有对应章节
+  if (!changelog.includes(`## [${pkg.version}]`)) problems.push(`CHANGELOG 缺当前版本 ${pkg.version} 的章节`)
+}
+
 if (problems.length > 0) {
   console.error('check-docs: 不通过')
   for (const problem of problems) console.error(`  - ${problem}`)

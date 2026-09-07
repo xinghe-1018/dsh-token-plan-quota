@@ -79,7 +79,9 @@ All notable changes to this project are documented here. The format follows
   可选阿里云 BssOpenApi（AK/SK 签名）三个数据源；只读路由 `/token-plan-quota/*`；
   模型可调用工具 `token_plan_quota`。
 
+> 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
+> 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
+
 [0.4.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/releases/tag/v0.1.0
+[0.2.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/releases/tag/v0.2.0

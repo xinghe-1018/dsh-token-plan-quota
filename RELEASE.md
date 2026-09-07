@@ -102,7 +102,10 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/new/main?filename=data/
 `npm ci && node scripts/generate-readme.mjs` 可本地预览生成出来的那一行，但**别把生成物一起提交**，
 维护者会在合并后重新生成。）
 
-文件内容（`description.en` 是唯一必填项；**含 `: ` 的值必须加引号**，否则 YAML 当嵌套键解析）：
+文件内容（`description.en` 是唯一必填项；**含 `: ` 的值必须加引号**，否则 YAML 当嵌套键解析）。
+这一段是投稿用的**权威文本**：`node scripts/check-submission.mjs`（已并入 `npm run check`）守着它的
+结构与措辞——分类在上游取值表里、含 `: ` 的加了引号、行尾没有逗号、以句号结尾、点名的厂家在预设里
+确实存在、条目文件名符合 `<owner>__<repo>.yml`。别在别处再抄一份，抄了就会漂。
 
 ```yaml
 url: https://github.com/xinghe-1018/dsh-token-plan-quota

@@ -46,6 +46,9 @@ jobs:
           node-version: '22'
       - name: plugin manifest
         run: node scripts/check-manifest.mjs
+      - name: directory submission entry is valid
+        shell: bash
+        run: bash scripts/ci-run.sh node scripts/check-submission.mjs
       - name: README claims match the code
         shell: bash
         run: bash scripts/ci-run.sh node scripts/check-docs.mjs

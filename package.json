@@ -75,7 +75,8 @@
     "test": "node test/host.mjs && node test/client.mjs",
     "test:host": "node test/host.mjs",
     "test:client": "node test/client.mjs",
-    "check": "node test/host.mjs && node test/client.mjs && node scripts/check-manifest.mjs && node scripts/check-docs.mjs"
+    "check": "node test/host.mjs && node test/client.mjs && node scripts/check-manifest.mjs && node scripts/check-docs.mjs && node scripts/check-submission.mjs",
+    "check:submission": "node scripts/check-submission.mjs"
   },
   "keywords": [
     "dsh",

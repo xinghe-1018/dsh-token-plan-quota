@@ -357,16 +357,8 @@ DSH 生态的"插件存放处"是**三层**，本插件三层都要过：
 
 - 提交格式（**只有 `description.en` 必填**，`zh` 缺了维护者会补；含 `: ` 的值必须加引号）：
 
-  ```yaml
-  url: https://github.com/xinghe-1018/dsh-token-plan-quota
-  name: xinghe-1018/dsh-token-plan-quota
-  category: usage
-  description:
-    en: 'Balance badge that follows the active model provider: official readings for DeepSeek, Qwen Token Plan and Aliyun BSS, plus Moonshot and OpenRouter endpoints not yet key-verified.'
-    zh: '跟随当前模型供应商的额度徽标：DeepSeek、千问 Token Plan、阿里云费用中心取官方真值，Moonshot / OpenRouter 已接官方端点但字段未用真 Key 核对；其余只报本实例实测。'
-  ```
-
-  （定稿与投稿路径以 `RELEASE.md` §4 为准：目录站默认分支 `main`、`data/plugins/<owner>__<repo>.yml`。）
+  投稿文本**不在这里复制**（抄一份就会漂）：权威版本是 `RELEASE.md` §4 的那段 YAML，
+  条目文件名为 `data/plugins/<owner>__<repo>.yml`，目录站默认分支 `main`。
 
 - ✅ **已满足**：`package.json` 声明了 `dsh.bundle.patch: ./cordis.patch.yml`（**最常见的被拒原因是只写
   `dsh.client`**，我们两者都有）；有真实代码；仓库早已满 1 天。

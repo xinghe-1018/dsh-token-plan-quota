@@ -26,6 +26,11 @@ All notable changes to this project are documented here. The format follows
 - `check-docs` 加三条硬检查：配置表逐行必须等于 `DEFAULTS` 键（`moonshotRegion` 是唯一例外）、条目键表逐行
   必须被代码 `source.<key>` 真读到、正文成对写的 "N/M tests" 必须等于实跑数（这条一上线就抓到英文 README
   里漂着的 324）；再加一条编码护栏（BOM / U+FFFD / GBK 私用区残骸）。六种损坏逐一验证可捕获，附对照组。
+- **投稿条目纳入 CI**：新增 `scripts/check-submission.mjs`（并入 `npm run check` 与 manifest job），守
+  `RELEASE.md` §4 那段权威 YAML——分类在上游取值表里、含 `: ` 的加了引号、行尾没有逗号、以句号结尾、
+  条目文件名符合 `<owner>__<repo>.yml`。更要紧的是**描述与代码双向核对**：点名的厂家必须在预设里真有
+  对应源，而 MiniMax / Anthropic / Gemini 这类"官方无额度端点"的 ❌ 档一旦写进描述就红。
+  四个方向各注入验证过（包括把 OpenRouter 预设临时改名，确认它真能抓到脱钩）。
 
 ### Changed
 

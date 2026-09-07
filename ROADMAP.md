@@ -143,7 +143,8 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 
 ### 1.4 生态已有相邻实现：先复用契约，再把差异化说清楚（重要）
 
-`awesome-dsh-plugin.com` 的 **Usage & Billing** 分类下已有 178 个插件，其中两家与本插件定位重叠：
+`awesome-dsh-plugin.com` 的 **Usage & Billing** 分类下已有 182 个插件（2026-09-07 数 `data/plugins/*.yml`
+的 `category: usage`），其中两家与本插件定位重叠：
 
 | 邻居 | 它做了什么 | 对①②③的影响 |
 |---|---|---|
@@ -322,8 +323,9 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 - [x] T3.7 `dshhub` 元数据校对：`summary` 收成事实描述（去营销词）、补 `bugs` 与 `files`
       （`README.en.md`/`CHANGELOG.md`/`LICENSE`）、`keywords` 补 moonshot/kimi/openrouter；
       新增 `scripts/check-manifest.mjs` 把这些承诺变成可执行的 CI 检查（安装性、出站主机、许可证、零依赖）
-- [ ] T3.9 发布渠道（见 §5）：GitHub 加 `dsh-plugin` topic → npm 发 `dsh-token-plan-quota`
-      → awesome-dsh-plugin.com 提交 → 本地自测 `dsh-sentinel-scanner` / `dsh-score` 类审计不报高危
+- [x] T3.9 发布渠道（见 §5）：GitHub 已加 `dsh-plugin` topic；npm 已发 `dsh-token-plan-quota@0.4.2`
+      （registry 复核过包内 8 张图齐全）；awesome-dsh-plugin 已提 **PR #4581**（1 文件 +6 行，待维护者批准工作流）
+      → 本地自测 `dsh-sentinel-scanner` / `dsh-score` 类审计不报高危
 
 ---
 
@@ -352,7 +354,7 @@ DSH 生态的"插件存放处"是**三层**，本插件三层都要过：
 |---|---|---|
 | GitHub topic | 官方 `CONTRIBUTING.md` 认可的发现机制：[topics/dsh-plugin](https://github.com/topics/dsh-plugin) | 给 `xinghe-1018/dsh-token-plan-quota` 加 `dsh-plugin` topic（一行设置） |
 | npm | `dsh plugin add` 是 **pnpm 直传**到 profile 目录（`apps/cli/src/plugin.ts` L120-157），所以发布到 npm 后 `dsh plugin --profile web add dsh-token-plan-quota` 就能装 | **包名 `dsh-token-plan-quota` 当前未被占用**（registry 404，已核）→ `npm publish`；本插件零构建，不会触发 pnpm ≥10 的 `prepare` 白名单拦截（对比：git 安装带构建步骤的插件会撞） |
-| Awesome DSH Plugin | [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com)（3196 条，含 `dsh-market` 一键装） | 提 PR 加**一个文件** `data/plugins/xinghe-1018__dsh-token-plan-quota.yml` |
+| Awesome DSH Plugin | [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com)（3304 条，含 `dsh-market` 一键装） | 提 PR 加**一个文件** `data/plugins/xinghe-1018__dsh-token-plan-quota.yml`（已提 [#4581](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4581)） |
 
 ### 5.1 awesome-dsh-plugin 的硬性准入（已读 `contributing.md` 核对）
 

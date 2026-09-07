@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 本文件按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式维护。
 
+## [Unreleased]
+
+### Added
+
+- `screenshots.json`（仓库根）：向插件市场声明 4 张截图，控制展示顺序。上游规范允许 1–8 张、
+  相对路径不得跳出插件目录；**不声明时市场会从 README 自动抽取**，声明只是取得顺序与选择权。
+  顺序把三张 PNG 放在 GIF 之前——万一某个店面不处理动图，前三张仍能正常呈现。
+  该文件只给目录站读（它读 GitHub 仓库），因此**不加入 npm 的 `files`**。
+
+### Changed
+
+- `RELEASE.md` §4 重写投稿路径：原写的"网页新建文件会自动 fork 并直接开 PR"实测**是错的**
+  （带子目录的深链接在无写权限时直接报错），换成实际走通的 fork → git 推分支 → 写死 base 的
+  compare 链接，并记录 PR #4581 与"fork 的 PR 需维护者批准工作流"。
+- `ROADMAP.md`：T3.9 勾选；两处过期计数按实测更正（`data/plugins/*.yml` 3196 → **3304** 条、
+  `category: usage` 178 → **182** 条）。
+
 ## [0.4.2] - 2026-09-07
 
 ### Added

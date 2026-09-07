@@ -101,11 +101,37 @@ dsh plugin --profile web add dsh-token-plan-quota
 投稿形式是**一个 YAML 文件**，不是改 README（那两个文件是生成的，手改会被拒）。
 目录站默认分支 `main`，`data/plugins/` 已有 1000+ 条目（API 分页上限），命名就是 `<owner>__<repo>.yml`。
 
-本机**没装 `gh` CLI**，所以走 GitHub 网页的「新建文件」路径——它会替你自动 fork 并直接开 PR：
+**已提交：PR [#4581](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4581)**
+（`data/plugins/xinghe-1018__dsh-token-plan-quota.yml`，1 文件 +6 行，base `awesome-dsh-plugin:main`）。
+`mergeable: true`，但 fork 的 PR **工作流要维护者批准才会跑**（实测 check-runs=0、statuses=0），
+所以"检查 0"不是我们的问题，也别重开 PR——有改动直接推同一分支。
 
-```
-https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/new/main?filename=data/plugins/xinghe-1018__dsh-token-plan-quota.yml
-```
+提交路径（2026-09-07 实测；早先这里写的"网页新建文件会自动 fork 并开 PR"是**错的**）：
+
+1. 先单独 fork：`https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/fork` → Create fork。
+   不要用 `/new/main?filename=data/plugins/xxx.yml` 这种**带子目录的深链接**——无写权限时它会先要求
+   fork，然后直接弹 `An unexpected error occurred`（今天就撞上了）。
+2. 用 git 加文件（SSH 能推自己账号的仓库，**不需要 PAT**）：
+
+   ```bash
+   git clone --depth 1 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git
+   git checkout -b add-dsh-token-plan-quota
+   # 只加这一个文件，内容从下面 §4 的 yaml 块抽，别手打
+   git commit -F msg.txt && git push -u fork add-dsh-token-plan-quota
+   ```
+
+3. 开 PR 用**写死 base 的 compare 链接**，避免 PR 开给自己：
+
+   ```
+   https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/compare/main...xinghe-1018:awesome-dsh-plugin:add-dsh-token-plan-quota?expand=1
+   ```
+
+4. 模板里 6 个必填复选框要**逐条核过再勾**（本次实测：单文件 / `dsh.bundle` 已声明 / 仓库 39 小时 /
+   `category=usage` 在表内 / 描述无最高级 / `dsh-plugin` topic 已打）。
+   **新建 PR 页面的预览复选框点不动**，只能在「撰写」里把 `[ ]` 改成 `[x]`。
+
+上游 `data/plugins/` 现有 3304 条，命名就是 `<owner>__<repo>.yml`；`description` 双语占 3301 条，
+`usage` 分类 182 条——我们的条目结构与它们一致。
 
 （命令行路径留在这里备用：`git clone` → 建分支 → 加这一个文件 → `git push -u <fork>` → 开 PR；
 `npm ci && node scripts/generate-readme.mjs` 可本地预览生成出来的那一行，但**别把生成物一起提交**，

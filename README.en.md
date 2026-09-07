@@ -279,7 +279,8 @@ number turns CI red (verified with a deliberately broken copy that it does fail)
 Tests are cross-platform (temp directories come from `os.tmpdir()` and never touch a real `~/.dsh`); CI runs
 node 20/22 across ubuntu/windows/macos plus a "the published tarball loads" smoke test
 (`npm pack` → untar → `import lib/index.js`). Contribution workflow and product invariants are in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+[`CONTRIBUTING.md`](CONTRIBUTING.md); the three release channels (GitHub topic / npm / plugin directory) are in
+[`RELEASE.md`](RELEASE.md).
 
 ## License
 

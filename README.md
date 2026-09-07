@@ -1,4 +1,4 @@
-﻿# dsh-token-plan-quota
+# dsh-token-plan-quota
 
 [中文](README.md) | [English](README.en.md)
 
@@ -240,7 +240,8 @@ node scripts/check-docs.mjs        # README 的可核实声明必须与代码一
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，
 外加"解包后能加载"的冒烟（`npm pack` → 解 tar → `import lib/index.js`）。
-贡献流程与产品口径见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+贡献流程与产品口径见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，发版三步（GitHub topic / npm / 插件目录站）见
+[`RELEASE.md`](RELEASE.md)。
 
 ## 许可
 

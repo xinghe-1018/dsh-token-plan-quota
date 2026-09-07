@@ -301,15 +301,26 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
       测试 → 回填文档），并写死"不要做的事"（假 meter、读 CLI 登录态、patch 里 pin sources、估算）
 - [x] T3.4 `docs/upstream-contracts.md`：逆向契约搬家，逐条带**验证到什么程度**与实测日期；
       千问 Cookie 细节与陷阱表（含"配置 ≠ 额度"、"别拿宿主 DOM 属性做交互判定"）都收在这里
-- [ ] T3.5 README 重写（3.2 结构）＋ 截图/GIF，**并整篇英文化 `README.en.md`**（`README.md` 顶部互链；
-      界面文案双语已具备（`COPY.zh` / `COPY.en` + `pickLocale()`），剩下的主要是文档工作量）
+- [x] T3.5 README 重写完成（中英各一份，逐节对齐）：中文 311 → 约 210 行，改成可扫读的
+      「不做什么 → 安装 → 支持表 → 零配置 → 界面 → 配置全表 → 吞吐 → 端点 → 边界 → 不做的三类 → 免责 → 开发」；
+      逆向细节全部搬进 `docs/upstream-contracts.md`，README 只留结论与出处链接。
+      **配置表从 6 键补到 17 键**（原先漏了 `refreshMinutes`/`usagePath`/`configPath`/`exposeTool`/
+      `endpoint`/`accessKey*Ref`/`minIntervalMs`/`timeoutMs`/`regionId`）。
+      新增 `scripts/check-docs.mjs`：把 README 里的**可核实声明**（17 个配置键、8 个数据源、
+      声明 8 个出站主机、测试 324/102 项、相对链接目标）拿去和代码与实跑结果对，漂了就 CI 红；
+      已用两处反向用例证明它真会失败（删一个键名、把 17 改成 99）。
+      **仍缺**：4 张截图/GIF（我没有截屏能力）——README 里留了占位与拍摄清单。
+- [x] T3.8 发布前自查（可自动化的部分全部做完）：`git ls-files` 复核（18 个跟踪文件，`.scratch/` 与探针脚本
+      未入库）；明文密钥扫描无命中；`npm pack` → 解 tar → `import lib/index.js` 加载成功（9 个文件，
+      含 LICENSE/CHANGELOG/双 README）；CI 里每条命令都在本机跑过一遍——**其中包括我自己写错的那条
+      `npm pack --destination`，本地失败后才改成可用形式**（不给 CI 留没跑过的命令）。
+      仍待：真·干净 profile 的 `dsh plugin add` 冒烟（要装到临时 profile，等发布后按 npm 名做一次）
 - [x] T3.6 `.github/workflows/ci.yml`（node 20/22 × ubuntu/windows/macos 跑两个离线自测 ＋ 清单自检 job）、
       `CONTRIBUTING.md`（含产品口径六条与"描述必须属实"）、`SECURITY.md`（凭据边界、Cookie 风险声明、
       明确不做的三类形态）、`.github/ISSUE_TEMPLATE/`（识别不对＝必填 `detection` 块；请求新供应商＝必填端点证据）
 - [x] T3.7 `dshhub` 元数据校对：`summary` 收成事实描述（去营销词）、补 `bugs` 与 `files`
       （`README.en.md`/`CHANGELOG.md`/`LICENSE`）、`keywords` 补 moonshot/kimi/openrouter；
       新增 `scripts/check-manifest.mjs` 把这些承诺变成可执行的 CI 检查（安装性、出站主机、许可证、零依赖）
-- [ ] T3.8 发布前自查：`git ls-files`、密钥扫描、README 里每条命令照做一遍、干净目录 `dsh plugin add` 冒烟
 - [ ] T3.9 发布渠道（见 §5）：GitHub 加 `dsh-plugin` topic → npm 发 `dsh-token-plan-quota`
       → awesome-dsh-plugin.com 提交 → 本地自测 `dsh-sentinel-scanner` / `dsh-score` 类审计不报高危
 

@@ -27,12 +27,26 @@ jobs:
         run: node test/client.mjs
 
   manifest:
-    name: plugin manifest
+    name: manifest & docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: dsh.bundle + cordis.patch.yml present
+      - name: plugin manifest
         run: node scripts/check-manifest.mjs
+      - name: README claims match the code
+        run: node scripts/check-docs.mjs
+      - name: packed tarball loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=$(npm pack --silent | tail -n 1)
+          test -f "$name"
+          mkdir -p /tmp/unpacked
+          tar -xzf "$name" -C /tmp/unpacked
+          test -f /tmp/unpacked/package/lib/index.js
+          test -f /tmp/unpacked/package/cordis.patch.yml
+          test -f /tmp/unpacked/package/LICENSE
+          node --input-type=module -e "await import('/tmp/unpacked/package/lib/index.js'); console.log('lib/index.js loads from the published tarball')"

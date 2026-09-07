@@ -1,215 +1,157 @@
-# dsh-token-plan-quota
+﻿# dsh-token-plan-quota
 
-在 DeepSeek Harness 网页界面里显示额度：**官方接口真值优先，没有官方接口的供应商
-用明确标注「实测」的本实例消耗窗口卡顶上**——绝不折算 Credits、不估算官方余量。
+[中文](README.md) | [English](README.en.md)
 
-徽标是工具行里的一个幽灵小控件（无边框、无状态圆点、无表情符号，**余量渐变条本身就是状态
-表达**），**跟随当前会话模型的供应商切换**：DeepSeek 模型显示 DeepSeek 官方余额，千问
-Token Plan 模型显示实测 7 天窗口；官方没有额度接口的供应商（MiniMax 这类）给它挂一条
-`window:<provider>` 实测源，**徽标照常出现、只报用了多少 token**（不整枚消失，也不假装有余量）。
-点徽标展开全部数据源的明细面板。
+在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 网页界面的输入框工具行里显示**额度**：
+官方接口给真值，没有官方接口的供应商显示明确标注「实测」的本实例消耗——**零配置**，装完按你实际在用的
+供应商路由自动决定该开哪些源。
 
 ```
-┌ 输入框工具行 ──────────────────────────────────────────────┐
+┌ 输入框工具行 ─────────────────────────────────────────────────┐
 │ Token Plan ▓▓▓▓░ 12.3万 tok │ 42 tok/s  实测  剩5d  ← 点开看明细 │
-└────────────────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────┘
 ```
 
-## 哪些供应商有官方额度接口（2026-09 实测核对）
+> 截图位（发布前补 4 张）：① 徽标跟随模型在两家供应商之间切换；② 明细面板（官方余量卡 + 多窗口计量条）；
+> ③ 面板拖成悬浮小窗；④ Cookie 掉线时退回「实测」卡的样子。
 
-| 供应商 | 官方 Key 化额度接口 | 徽标 | 证据 |
-|---|---|---|---|
-| DeepSeek | ✅ `GET https://api.deepseek.com/user/balance`（Bearer Key） | 余额/赠款/充值（真值） | 官方文档；真实 Key 实测返回 `balance_infos` |
-| 阿里云费用中心 | ✅ BssOpenApi + AK/SK（需 AliyunBSSReadOnlyAccess） | 账户余额 / 资源包余量（真值） | 官方 OpenAPI 元数据逐字段核对 |
-| 千问 Token Plan | ⚠️ 无 Key 化接口；**控制台网关可用**（Cookie 会话） | `token-plan-console` 官方余量卡（已用% + 进度条；**窗口按套餐真回读数的那些来**——个人版 standard 只有 7 天窗口，不会冒出 5 小时行）；Cookie 没配时自动退回 `token-plan-window` 实测卡 | 套餐 Key 实测网关候选路径全部 404、无额度头；订阅页数据来自千问AI平台数据网关 `cs-data.qianwenai.com`（`BroadScopeAspnGateway` · `tokenplan/personal/api/v2` 的 usage/subscription/quota-config），契约按其前端包逆向 + 真实账号实测验证 |
-| Moonshot / Kimi 开放平台 | ✅ `GET https://api.moonshot.cn/v1/users/me/balance`（大陆，CNY）<br>`GET https://api.moonshot.ai/v1/users/me/balance`（国际，USD） | 余额 + 充值 + 赠款（真值） | 官方文档；两区端点均实测存在（无效 Key 回 `401 {"error":{"message":"Invalid Authentication"}}`）。**两区 Key 不互通**，用 `moonshotRegion` 选区 |
-| OpenRouter | ✅ `GET https://openrouter.ai/api/v1/credits` | 余额（USD 真值） | 官方文档；实测两路径均存在（无效 Key 回 `401 {"error":{"message":"User not found."}}`）。**端点只给「累计充值」与「累计花费」，余额是差值**，由 `derive` 派生（不是上游字段）。`/api/v1/key` 的 key 级限额要第二次请求，尚未接入 |
-| MiniMax | ❌ 无 | 挂 `window:minimax-cn` 后显示**实测**卡（只报 token/次数） | 官方文档未提供；实测常见路径全部返回 SPA HTML |
+## 它不做什么
 
-**「不估算」仍是硬约束**：没有 Credits 折算、没有抵扣率。`token-plan-console` 报的是
-**网关原样返回的已用比例 × 总额度**（与订阅页同源）；`token-plan-window` 只统计
-**经过本实例**的真实调用（token/次数），永远带「实测」角标；控制台额度重置后可用
-`token_plan_quota` 工具（`reset`）让实测窗口重新起算。
+这是本插件的立场，比功能列表更重要：
 
-### 看到真实 Token Plan 余量（「剩余量 65.1% / 总额度 10,000」那种）
-
-套餐 API Key（`sk-sp-…`）拿不到 Credits 余量——这是产品边界。但订阅页背后的
-**控制台数据网关**可以，用登录 Cookie 鉴权，已内置为 `token-plan-console` 源：
-
-1. 浏览器登录打开 [千问AI平台订阅页](https://platform-home.qianwenai.com/analytics/token-plan/individual)；
-2. F12 → Network → 任意请求 → 复制**请求标头里整行 `Cookie:`**；
-3. 存进 `~/.dsh/.credentials.yaml`：`BAILIAN_CONSOLE_COOKIE: <粘贴内容>`（一行，别换行）；
-4. 点面板底部「更新于」时间戳强制刷新——千问徽标自动从「实测」升级为「Token Plan 余量 58%」（带进度条）。
-
-契约要点（按其前端包 `shared.js` 逆向核对，全部实测验证）：
-
-- 数据网关 `POST https://cs-data.qianwenai.com/data/api.json?action=BroadScopeAspnGateway`，
-  表单 `product/action/sec_token/region/params(JSON: Api+V+Data.cornerstoneParam)`；
-  `consoleSite=QIANWENAI`（百炼控制台是 `BAILIAN_ALIYUN`）；
-- **sec_token 全自动**：`GET https://platform-home.qianwenai.com/tool/user/info.json`
-  （登录 Cookie）→ `data.secToken`。手配 `BAILIAN_CONSOLE_SECTOKEN` 仅作兜底覆盖；
-- 三个内层 API：`usage`（per1Week/per5Hour 已用比例+重置时刻）、
-  `subscription`（specCode/剩余天数/到期）、`quota-config`（**按档位**的 weekly/five_hour
-  + `addon_quota.extrabundle` 用量包）。剩余 = `quota[specCode].weekly × (1 − 已用比例)`；
-- 网关的人机校验会拒自定义 User-Agent（报 `PostonlyOrTokenError`），请求必须用浏览器 UA；
-- Cookie 一般能用几周（`sessionExpireTimeStamp` 可见），过期后卡片报错并退回实测卡，重贴即恢复。
-  Cookie 只从本地解析，绝不进任何路由响应。
-
-另一条官方路是 AK/SK 费用中心（`fr-instances`，需建只读 RAM AccessKey），Token Plan
-是否出现取决于计费侧建模，用 `GET /token-plan-quota/probe?source=fr-instances` 验证。
-
-徽标优先级：有数字的官方卡 > 有数字的实测卡 > 报错的官方卡（提示去配 Cookie）。
-
-## 明细面板范围（panelScope）
-
-默认 `current`：面板只列**当前模型供应商**的卡 + 本实例实测用量，切到千问时不会再挂着
-DeepSeek 余额；想全看把 `panelScope` 设为 `"all"`（改 `~/.dsh/token-plan-quota.json`
-即热生效，不用重启）。
-
-面板为极简版：只列**当前模型供应商绑定的卡**（官方余量 + 实测窗口），本实例月度用量卡、
-隐藏提示、AK/SK 灰条、回源/清账按钮全部移除。卡片区不套圆角卡片，改用细分隔线分组
-（divide-y）：标题带「官方」（品牌色描边药丸，无渐变）/「实测」（灰药丸）标签，大号数值 +
-绿→蓝渐变余量条（宽度带 0.5s 弹性缓动，不硬跳），来源与口径长句收进 tooltip；吞吐压成一行
-（定宽 tabular 数字，不随位数抖动）；模型明细最多 6 行；底部只有一个低调的「更新于
-hh:mm:ss」——点它强制刷新官方源。多张卡随面板交错渐入（每卡级联 70ms）。
-**一张卡可以有多个窗口**：宿主按主次把窗口排进 `card.meters`（智谱这类＝5h/周/日），`meters[0]` 与顶层数值同源、由标题行与大条表达，其余窗口各出一行
-「标签 · 剩余/总额 · 已用% · 重置日」带自己的细条（`.tpq-meters`）。
-**窗口只在这个套餐真回了读数时才存在**：千问个人版 standard 的 `usage` 只回 `per1Week*`，
-而 `quota-config` 里躺着个 `five_hour=3000`——那是档位配置、不是这个账号的额度，
-所以这张卡只有一条 7 天计量，绝不会凭空多出「5 小时窗口」那一行（配置值只记进
-`extra.fiveHourConfiguredNoReading` 供 debug 用）。
-**实测卡一律不出条、不出百分比**：没有官方分母的比例就是估算，所以它只报「窗口内用了多少
-token / 多少次」，永远挂「实测」药丸——这是本插件的硬口径，宿主剥一遍、前端再兜一道。
-**明细是常驻小窗，点哪儿都不会关掉它**：它会悬浮、可拖、可缩、位置记进 localStorage，所以
-关闭只由用户决定——**再点一次徽标**（toggle）或按 **Esc**。不做「点外面就关」：那是下拉菜单的
-语义，跟这个面板的定位冲突，而且靠选择器识别"宿主输入区长什么样"必然漏（线上产物里
-`data-composer-card` 这类属性压根不存在）。
-强制刷新时徽标数值做呼吸动画（纯 opacity，宽度零抖动）；面板点开时 6px 上浮淡入，
-带 1px 内高光边。所有动效尊重 `prefers-reduced-motion`。面板宽度 380px、高度上限 52vh。
-字体自成一套，不跟宿主默认栈：UI 文字 **Geist Variable + Noto Sans SC**（思源黑体），
-断网/被墙时静默落 **Aptos→Segoe UI** 系统栈（刻意避开 Calibri/Corbel——它们默认
-旧式数字，`15:17:30` 会忽上忽下）；等宽 **Geist Mono** 只留给纯标识串（「当前模型」
-路径、按供应商吞吐行、debug 骨架），中英数混排的行（已用%、周期重置、请求数、
-更新于）一律 UI 栈 + `lining-nums,tabular-nums`，与中文同基线。三枚可变字体经
-jsDelivr Fontsource（锁 `@5`）以 `<link>` 注入，观感降级不影响功能。
-**面板可拖出悬浮**：面板经 **react-dom 的 `createPortal`** 挂到 `document.body`、一律
-fixed 视口坐标定位（注意 `createPortal` 在 react-dom 上，不在 react 上；且宿主工具栏
-的 transform/backdrop-filter 会劫持 inline fixed 的包含块，body 下才是视口坐标系）。
-锚定态由 JS 按徽标矩形实时算 left/bottom。按住标题栏（grab 手柄）可把明细拖到屏幕
-任意位置，移动只走 `transform`（零重渲染），松手冻结为 fixed 并写进 localStorage——
-关掉重开、刷新页面都记住位置；**右下角斜纹握柄拖拽缩放**（常驻显示，锚定态直接拖角
-会先自动脱离成悬浮；下限 280×160，上限夹到视口边，尺寸和位置一起记进 localStorage）；
-双击标题栏归位贴回徽标并清掉自定义尺寸；窗口变化自动重算/夹回视口。
-老宿主拿不到 react-dom 种子词时退回内联 CSS 锚定，拖拽悬浮自动禁用（不会拖飞）。
-余量渐变条即状态：≥70% 绿、40–70% 蓝、<40% 橙→红；不再用圆点或表情符号表状态。
-强制刷新/清账的编程入口仍在：`POST /token-plan-quota/refresh`、`POST /token-plan-quota/reset`、
-或 `token_plan_quota` 工具（`refresh`/`reset`）。
+- **不折算 Credits**，不做抵扣率，不"按历史推算剩余"；
+- **没有官方分母就没有百分比**：实测卡永不画余量条、永不显示百分比，只报「窗口内用了多少 token / 多少次」；
+- **档位配置不等于你的额度**：一个窗口只有在这个套餐真回了读数时才存在（上游 `quota-config` 里躺着的
+  `five_hour` 上限不代表这个账号有 5 小时窗口）；
+- **认不准就不开**：自动检测宁可少一张卡，也不会把别家的余额数字顶在你正在用的模型上；
+- **不做会产生计费的探活**；只用只读端点；
+- **不读别的 CLI 的登录态**（见[明确不做的三类](#明确不做的三类)）。
 
 ## 安装
 
-```powershell
-dsh plugin --profile web add <这个目录的路径>
+```bash
+dsh plugin --profile web add dsh-token-plan-quota          # npm 包名
+dsh plugin --profile web add github:xinghe-1018/dsh-token-plan-quota
+dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 ```
 
-装完**重启一次 `dsh web`**（bundle 与客户端入口在启动时组装）。代码零第三方依赖；
-运行时唯一的外部资源是上面那三枚 CDN 字体 link，加载失败自动落系统字体栈。
-**不用配任何东西**——该开哪些源由下面的「零配置自动检测」按你实际在用的供应商路由决定。
+`dsh plugin` 是 pnpm 直传到 profile 目录；本插件**零第三方依赖、无构建步骤**，所以不会撞上 pnpm ≥10 的
+`prepare` 脚本白名单。装完**重启一次 `dsh web`**（bundle 与客户端入口在启动时组装）。
+
+运行时唯一的外部资源是三枚 CDN 字体 link，加载失败自动落系统字体栈，不影响功能。
+
+## 支持哪些厂家
+
+| 厂家 | 额度来源 | 徽标上看到什么 | 验证到什么程度 |
+|---|---|---|---|
+| DeepSeek | ✅ 官方 `/user/balance`（Bearer） | 余额 + 充值 + 赠款（真值） | 真实 Key 实测 |
+| 千问 Token Plan | ⚠️ 控制台数据网关（**Cookie 会话**，非公开 API） | 已用 % + 进度条（与订阅页同源）；Cookie 没配/过期 → 退回实测卡 | 真账号实测 |
+| Moonshot / Kimi 开放平台 | ✅ 官方 `/v1/users/me/balance`（Bearer，`.cn` CNY / `.ai` USD 两区） | 余额 + 充值 + 赠款（真值） | 端点存在性实测；**字段名未用真 Key 核对** |
+| OpenRouter | ✅ 官方 `/api/v1/credits`（Bearer） | 余额（USD）＝累计充值 − 累计花费 | 端点存在性实测；**字段名未用真 Key 核对** |
+| 阿里云费用中心 | ✅ BssOpenApi（AK/SK 签名） | 账户余额 / 资源包余量（真值） | 逐字段对过官方 OpenAPI 元数据 |
+| MiniMax、普通 Key 的 OpenAI / Gemini 等 | ❌ 官方无 Key 化额度端点 | **实测**卡（只报 token/次数） | 常见路径实测过，均无端点 |
+
+逐条端点、信封字段、单位与百分比方向陷阱见 [`docs/upstream-contracts.md`](docs/upstream-contracts.md)。
+
+### 与相邻插件的区别
+
+生态里已有做同类事的插件（`dsh-cost-meter` 覆盖九家 Coding Plan 并带费用估算、`dsh-token-monitor` 做请求级
+成本统计）。区别在口径：本插件**只报真值或明确标注的实测，不折算不估算**，徽标**跟随当前模型供应商**切换，
+并且内置了千问 Token Plan 的控制台余量契约（邻居里没有）。要费用报表请选前者，要"我正在用的这家还剩多少"
+选这个。
+
+## 零配置自动检测
+
+宿主在用的供应商路由就是**唯一事实来源**，所以你不用写 `sources`，也不用手填 `providers`——历史上正是这两个
+字段各写各的，导致"卡查得到却永远看不见"。识别按可信度排序，命中即停：
+
+| 依据 | 说明 |
+|---|---|
+| `baseURL` 的 host | 最可信：路由实际打到哪。`api.moonshot.cn` → Moonshot 大陆区，`openrouter.ai` → OpenRouter，Token Plan 网关 → 千问 |
+| 路由 id / 名称关键词 | **只在拿不到 host 时**降级使用（出厂的 `deepseek-official` 就靠这条） |
+| Key 前缀 | 最后的线索（`sk-or-` → OpenRouter） |
+| 都没命中 | 挂 `window:<provider>` 实测源：徽标不空，只报本地 token/次数 |
+
+两条不变量：
+
+- **你写过的永远赢**。`sources` 已覆盖的路由，检测不再追加；凭据解析不到的源整个不开（不挂错误卡占地方）。
+  `autoDetect: false` 完全回到手写语义。
+- **可解释**。每张自动开出的卡带 `detected: {by, rule, host, fallback}`，标题 tooltip 写
+  「按 api.moonshot.ai 自动识别 · 区 international」；快照的 `detection` 块交代在用路由、开了什么、
+  谁因何被跳过、谁没被认出——排查"这家怎么不显示"只看这一处。老宿主没有 `llm` 服务时静默退回配置语义。
+
+## 界面
+
+- **徽标跟随模型**：订阅宿主现成的 `sessions.list` → `modelDirectories` 运行时 store，模型一切换立刻改卡，
+  不轮询、不打网络。优先级：有数字的官方卡 > 有数字的实测卡 > 报错的官方卡（提示去配 Cookie）。
+- **一家只展示一张额度卡**：官方卡有数字时收起自动挂的实测兜底卡；官方卡变错误卡时兜底必须回来。
+  收合发生在看得见数据的显示层，不在规划期——否则 Cookie 一过期徽标就空白。
+- **一张卡可以有多个窗口**：宿主按主次排进 `card.meters`，`meters[0]` 与顶层数值同源、由标题行与大条表达，
+  其余窗口各出一行「标签 · 剩余/总额 · 已用% · 重置日」带自己的细渐变条。
+- **明细是常驻小窗**：可拖（按住标题栏）、可缩（右下角握柄）、位置与尺寸记进 `localStorage`、双击标题栏归位。
+  **点哪儿都不会关掉它**——关闭只由再点徽标或 `Esc` 决定。不做「点外面就关」：那是下拉菜单的语义，
+  而且靠选择器识别宿主输入区必然漏（线上产物里连 `data-composer-card` 都不存在）。
+- 视觉：幽灵小控件，无边框、无状态圆点、无表情符号，**余量渐变条即状态**（≥70% 绿、40–70% 蓝、<40% 橙→红）；
+  「官方／实测」药丸标档级；字体自成一套（Geist Variable + Noto Sans SC，断网落系统栈），等宽只留给标识串；
+  所有动效尊重 `prefers-reduced-motion`。
+- `panelScope: current`（默认）只列当前模型供应商的卡；想全看设 `"all"`。
 
 ## 配置
 
-主配置 `~/.dsh/token-plan-quota.json`（宿主每次查询前重读，改完不用重启；
-也可写在插件行 `config`，JSON 优先级更高）：
+主配置 `~/.dsh/token-plan-quota.json`——宿主每次查询前重读，**改完不用重启**（也可写在插件行 `config`，
+JSON 优先级更高）：
 
 ```json
 {
   "autoDetect": true,
   "refreshMinutes": 10,
   "pollSeconds": 10,
-  "showInstanceWindow": true,
   "panelScope": "current",
   "debug": false
 }
 ```
 
-`sources` 现在**可以不写**（见上面的「零配置自动检测」）；写了就按写的来，检测只补你没覆盖的路由。
-
-| 键 | 含义 |
-|---|---|
-| `autoDetect` | 默认 `true`：按宿主在用路由自动补齐数据源。`false` 完全回到手写语义（只用 `sources`） |
-| `sources` | 数据源：`deepseek-balance`（官方真值）、`token-plan-window`（千问实测窗口，默认开）、`moonshot-balance`（Moonshot 开放平台官方余额，两区）、`openrouter-credits`（OpenRouter 余额，USD）、`account-balance`、`fr-instances`、`resource-package`（需 AK/SK） |
-| `moonshotRegion` | Moonshot 区：`china-mainland`（默认，`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
-| `showInstanceWindow` | 明细面板是否带「本实例实测用量 + 限流重试观测」块 |
-| `panelScope` | 明细面板范围：`current`（默认，只列当前模型供应商的卡 + 本实例实测，DeepSeek 卡不再常驻）/ `all`（全部数据源） |
-| `pollSeconds` | 前端轮询秒数（吞吐/实测每次实时重算；调小让徽标速度更跟手） |
-| `debug` | 明细里回显上游响应字段骨架（值打码），核对字段名用 |
-
-## 吞吐速度（实测，不估算）
-
-宿主包一层 `llm/stream`：记录**首分片到 usage 分片**的活跃时长。两个口径严格分开：
-
-- **速度（生成/解码）**：`lastTps = 输出 tokens ÷ 活跃秒`；`genTps` = 近 5 分钟
-  Σ输出 ÷ Σ活跃秒（活跃总时长 <1 秒不出数，防超短流外推）。缓存读不计入分子——
-  否则一次 36 万缓存命中的调用会把速度吹成几万 tok/s；
-- **吞吐（量）**：`tpm60 / tokens300` = 全部 tokens（含缓存读），计费/搬运视角；
-  `outTps60` 是近 60 秒输出均速。
-
-快照顶层 `throughput` 块每次请求实时重算，且**滑动窗口随账本落盘**（`recent` 键）——
-宿主重启后最近 5 分钟的实测还能带回。徽标速度标签 `NN tok/s`（纯文本、细分隔线、无图标前缀）
-只取当前模型供应商的行，
-优先级：最近单流（90 秒内新鲜）→ 近 60 秒输出均速 → 近 5 分钟生成速度；无新鲜活动不显示。
-明细面板的「吞吐」行常驻（无流量显示 `—`）；`token_plan_quota` 工具摘要同口径。
-
-### 实测窗口源（token-plan-window）
-
-```json
-{ "id": "token-plan-window", "kind": "window", "providers": ["qwen-token-plan-cn"], "windowDays": 7 }
-```
-
-- `providers`：绑定哪些供应商（徽标按**当前模型的 provider** 选卡，不是按模型名前缀——
-  Token Plan 网关上的 deepseek-* 模型照样算 Token Plan 消耗）。
-- `windowDays`：滚动窗口天数，对齐官方「每 7 天限额」规则；窗口起点 = 经过本实例的
-  第一次调用，到期后下一次调用自动开新窗。
-- 自定义窗口源（给别的订阅制供应商用）：**简写 `window:<provider>`** 就够，例如
-  `"sources": ["window:minimax-cn"]` 给 `minimax-cn` 挂一条 7 天实测窗口；要改天数或绑多条路由
-  就写全形状 `{ "id": "window:minimax", "kind": "window", "providers": ["minimax-cn","minimax"], "windowDays": 30 }`。
-  官方没有 Key 化额度接点的家（普通 Key 的 OpenAI/Gemini、MiniMax…）就靠这条兜住：
-  **徽标照常出现，但只报 token/次数，绝不出百分比与余量条**（没分母就没进度概念）。
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `autoDetect` | `true` | 按宿主在用路由自动补齐数据源；`false` 完全回到手写 `sources` 语义 |
+| `sources` | 无（交给检测） | 数据源清单：`deepseek-balance`、`token-plan-console`、`token-plan-window`、`moonshot-balance`、`openrouter-credits`、`account-balance`、`fr-instances`、`resource-package`，或简写 `window:<provider>`，或完全自定义的 `{...}` 对象 |
+| `moonshotRegion` | `china-mainland` | Moonshot 区：`china-mainland`（`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
+| `refreshMinutes` | `10` | 官方源快照缓存分钟数（下限 15 秒）；点面板「更新于」或 `?fresh=1` 可强制回源 |
+| `pollSeconds` | `10` | 前端轮询秒数（实测与吞吐每次实时重算；调小让徽标速度更跟手） |
+| `panelScope` | `current` | 明细面板范围：`current` 只列当前模型供应商的卡 + 本实例实测；`all` 列全部源 |
+| `showInstanceWindow` | `true` | 明细里是否带「本实例实测用量 + 限流重试观测」块 |
+| `exposeTool` | `true` | 是否注册模型可调用工具 `token_plan_quota` |
+| `debug` | `false` | 明细里回显上游响应的**字段骨架**（值打码、跳过凭据字段名），核对字段名用 |
+| `endpoint` / `regionId` | `business.aliyuncs.com` / 无 | 阿里云 OpenAPI 接入点（国际站要换） |
+| `accessKeyIdRef` / `accessKeySecretRef` / `securityTokenRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` / `..._SECRET` / 无 | 阿里云 AK/SK 的引用名 |
+| `configPath` | `$DSH_HOME/token-plan-quota.json` | 外部 JSON 配置位置 |
+| `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | 本实例账本落盘位置 |
+| `minIntervalMs` / `timeoutMs` | `1200` / `15000` | 出站最小间隔与单次超时 |
 
 ### 凭据
 
-密钥按顺序解析：DSH 凭据服务 → 环境变量 → `~/.dsh/.credentials.yaml` → `~/.dsh/.env`。
-DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与区配对**：大陆区要的是
-`api.moonshot.cn` 签发的 Key，国际区要 `api.moonshot.ai` 的，两者不互通）；OpenRouter 用
-`OPENROUTER_API_KEY`（`sk-or-v1-…`）；Key 引用名可在 sources 条目里覆盖（`bearerRef`）。
-阿里云源另需 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
-每次查询重新解析，换 Key 不用重启。
+按顺序解析：**DSH 凭据服务 → 环境变量 → `~/.dsh/.credentials.yaml` → `~/.dsh/.env`**，每次查询重新解析，
+换 Key 不用重启。
 
-已按官方元数据核对的字段：`QueryAccountBalance`(2017-12-14)、`DescribeFrInstances`(2023-09-30)、
-`QueryResourcePackageInstances`(2017-12-14)。`QueryTokenPackageList`/`QueryFreeQuotaInstance`/
-`QueryBalance`/`GetSubscriptionSummary` 在这些版本里不存在，别配。
+| 源 | 引用名 |
+|---|---|
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| Moonshot | `MOONSHOT_API_KEY`（须与区配对；自动检测会优先沿用路由 profile 点名的引用名，如 `MOONSHOT_CN_API_KEY`） |
+| OpenRouter | `OPENROUTER_API_KEY`（`sk-or-v1-…`） |
+| 千问 Token Plan 余量 | `BAILIAN_CONSOLE_COOKIE`（+ 可选 `BAILIAN_CONSOLE_SECTOKEN` 兜底） |
+| 阿里云 | `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` |
 
-### 自定义源（把官方网页/网关接口接进来）
+Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
-如果哪家日后开放了 Key 化接口（百炼业务空间网关已有 `GET /api/v1/models/limits`
-查**限流配置**，Bearer Key，但那是 workspace 域名、不含剩余额度），或你想把控制台
-内部接口（cookie 会话）配进来：
+想看到千问的**真实余量**（订阅页那种「剩余量 65.1% / 总额度 10,000」）：登录打开
+[订阅页](https://platform-home.qianwenai.com/analytics/token-plan/individual) → F12 Network → 复制任一请求的
+**整行 `Cookie:`** → 存成一行 `BAILIAN_CONSOLE_COOKIE: <内容>` → 点面板「更新于」刷新。Cookie 通常能用几周，
+过期后该源报错并自动退回实测卡，重贴即恢复。
 
-```json
-{
-  "sources": [{
-    "id": "my-quota", "label": "我的额度", "kind": "list",
-    "url": "https://example.com/api/quota", "method": "GET",
-    "cookieRef": "MY_CONSOLE_COOKIE",
-    "list": ["data.items"],
-    "item": { "name": ["name"], "remaining": ["left"], "total": ["total"], "unit": ["unit"], "expiresAt": ["expireAt"] },
-    "providers": ["my-provider"],
-    "keywords": []
-  }]
-}
-```
+### 自定义源
 
-只有一个标量的家用 `kind: "single"` + `fields`/`derive`（**上游不给余额、只给"充值"和"花费"时，
-差值由 `derive` 算**，不新增代码）：
+上游给了新端点、或你想把某个控制台接口接进来，不用等本插件更新——`kind: "single"` + `fields`/`derive`
+就能覆盖"余额是差值"这类形态：
 
 ```json
 {
@@ -217,95 +159,89 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与�
     "id": "my-balance", "label": "我的余额", "kind": "single", "metric": "money",
     "url": "https://example.com/api/account", "method": "GET", "bearerRef": "MY_API_KEY",
     "unit": "USD",
-    "fields": {
-      "credits": ["data.total_credits", "total_credits"],
-      "usage": ["data.total_usage", "total_usage"]
-    },
+    "fields": { "credits": ["data.total_credits", "total_credits"], "usage": ["data.total_usage", "total_usage"] },
     "derive": { "total": "credits", "used": "usage", "remaining": "credits - usage" },
     "providers": ["my-provider"]
   }]
 }
 ```
 
-`derive` 的算式**只认「一个 `+`/`-`、两侧是引用名或数字」**（`'credits - usage'`、`'100 - used'`）：
-取不到任何一个操作数，这条就是空，**绝不猜一个数补上**。需要乘除/括号说明该写专用 builder 了。
-`fields` 里每个引用名给多条候选路径是有意为之——同一家 API 版本间 `data` 信封加不加都见过。
-一个家有多个 host/币种时用 `regions`（如 `moonshot-balance`），区由条目 `region` 或全局键
-（`moonshotRegion`）决定，认不出的区退回默认并 warn，不做自动探测。
+`derive` 只认「一个 `+`/`-`、两侧是引用名或数字」；**任何一个操作数取不到就整条空**，绝不猜数补上。
+`fields` 每个引用名给多条候选路径是有意为之（同一家 API 版本间 `data` 信封加不加都见过）。
+列表型用 `kind: "list"` + `list`/`item`，多窗口家用 `card.meters`，多 host 家用 `regions`；
+实测窗口用 `{"kind":"window","providers":[...],"windowDays":30}` 或简写 `window:<provider>`。
+完整清单见 [`docs/adding-a-provider.md`](docs/adding-a-provider.md)。
 
-## 零配置自动检测（装完就开箱可用）
+## 吞吐速度（实测，不估算）
 
-宿主在用的供应商路由就是该开哪些源的**唯一事实来源**，所以你不用写 `sources`，也不用手填
-`providers`（历史上正是这两个字段各写各的导致"卡查得到却看不见"）。检测规则按可信度排序，
-**命中即停**：
+宿主包一层 `llm/stream`，记录**首分片到 usage 分片**的活跃时长。两个口径严格分开：
 
-| 依据 | 说明 |
-|---|---|
-| `baseURL` 的 host | 最可信——路由实际打到哪。`api.moonshot.cn` → Moonshot 大陆区，`openrouter.ai` → OpenRouter，Token Plan 网关 → 千问…… |
-| 路由 id / 名称关键词 | host 被自建网关反代时兜底（`deepseek-official` 这类出厂 id 就是靠这条认出的） |
-| Key 前缀 | 连 baseURL 都拿不到时的最后线索（`sk-or-` → OpenRouter） |
-| 都没命中 | 给这条路由挂 `window:<provider>` **实测**源：徽标不空，但只报本地 token/次数 |
+- **速度（生成/解码）**：`lastTps` = 输出 tokens ÷ 活跃秒；`genTps` = 近 5 分钟 Σ输出 ÷ Σ活跃秒
+  （活跃总时长 <1 秒不出数，防超短流外推）。**缓存读不计入分子**——否则一次 36 万缓存命中的调用会把
+  速度吹成几万 tok/s；
+- **吞吐（量）**：`tpm60` / `tokens300` = 全部 tokens（含缓存读），计费与搬运视角；`outTps60` 是近 60 秒输出均速。
 
-三条不变量：
-
-- **认不准就不开源**。宁可少一张卡，也不能把别家的余额数字顶在某个模型上——徽标跟着模型走，
-  报错的数比没有数恶劣得多。所以 `kimi`（kimi.com/code 订阅）不会被认成 Kimi 开放平台，
-  `api.moonshot.cn.evil.test` 也不会因为后缀像就命中。
-- **你写过的永远赢**。`sources` 里已经覆盖的路由，检测一概不再追加；`autoDetect: false`
-  就完全回到手写语义。凭据解析不到的源整个不开（不挂一张 NoCredentials 错误卡占地方）。
-- **可解释**。每张自动开出的卡带 `detected: {by, rule, host}`，标题 tooltip 会写
-  「按 api.moonshot.ai 自动识别 · 区 international」；快照里的 `detection` 块
-  （`GET /token-plan-quota/summary`）交代在用路由、开了什么、谁因没凭据被跳过、谁没被认出——
-  排查"这家怎么不显示"只看这一处。Cookie 掉线时千问仍留实测窗口卡，徽标不至于空。
-
-老宿主（没有 `llm` 服务）拿不到路由，检测静默退回配置语义，不抛错；`detection.reason` 里留原因。
-
-## 徽标如何跟随模型
-
-
-
-浏览器半边订阅两份现成的客户端运行时 store：`sessions.list`（当前会话 id）→
-`modelDirectories.directoryFor(id).store`（宿主报的当前 provider/model）。模型一切换，
-宿主 `selectModel` 的 echo 立刻推给徽标——不轮询、不打网络。拿不到这两个服务（老外壳）
-时退回「官方卡全量显示」。
+滑动窗口随账本落盘，宿主重启后最近 5 分钟的实测还能带回。徽标速度标签只取当前模型供应商的行，
+优先级：最近单流（90 秒内）→ 近 60 秒输出均速 → 近 5 分钟生成速度；无新鲜活动不显示。
 
 ## 只读路由与模型工具
 
 | 端点 | 作用 |
 |---|---|
-| `GET /token-plan-quota/summary` | 快照（官方源吃 TTL；`?fresh=1` 强制回源） |
+| `GET /token-plan-quota/summary` | 快照（官方源吃 TTL；`?fresh=1` 强制回源）；含 `detection` 诊断块 |
 | `POST /token-plan-quota/refresh` | 官方源回源 |
-| `POST /token-plan-quota/reset` | 清零本实例实测用量统计（含窗口锚点） |
+| `POST /token-plan-quota/reset` | 清零本实例实测统计（含窗口锚点） |
 | `GET /token-plan-quota/probe?source=<id>` | 上游响应字段骨架（排查用） |
 
-只接受同源请求，永不回传密钥。模型侧有 `token_plan_quota` 工具（`status`/`refresh`/`reset`）。
+只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset`）。
 
-## 配合 429 自动重试
-
-`~/.dsh/settings.yaml` 给 qwen-token-plan-cn 配 `retryPolicy`：`QUOTA` 纳入 retryableCodes，
-`initialDelayMs == maxDelayMs` + `jitterRatio: 0` 把退避压成固定 60 秒（10 次上限）。
-徽标明细的「自动重试观测」会显示真实发生的重试次数、等待秒数与生效策略（读取 llm/retry
-持久事件的 policyKey，不估算）。
+配合 429：`settings.yaml` 里给该 provider 配 `retryPolicy`（把 `QUOTA` 纳入 `retryableCodes`，
+`initialDelayMs == maxDelayMs` + `jitterRatio: 0` 可把退避压成固定间隔）。明细的「自动重试观测」显示真实
+发生的重试次数、等待秒数与生效策略——读 `llm/retry` 持久事件的 `policyKey`，不估算。
 
 ## 已知边界
 
-- 千问 Token Plan 的实测窗口只含**经过本 DSH 实例**的调用：别的设备/工具消耗的 Credits
-  不在内，官方 Credits 折算率也不公开——所以它只报 token/次数，不报「剩余额度」。
-- 控制台做过「额度重置」后，本实例窗口不会自动感知，用 `token_plan_quota` 工具（`reset`）重新起算。
+- 实测窗口只含**经过本 DSH 实例**的调用：别的设备/工具消耗的额度不在内，官方折算率也不公开，
+  所以它只报 token/次数，不报「剩余额度」。
+- 上游控制台做过「额度重置」后，本实例窗口不会自动感知，用 `token_plan_quota`（`reset`）重新起算。
 - 观测计数是本次进程启动以来的；持久事实仍在会话日志里。
-- 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`。
-- 宿主没有 react-dom 种子词（老外壳）时面板退回内联 CSS 锚定，拖拽悬浮禁用。
-- 当前模型供应商**一个数据源都没绑**时徽标隐藏。零配置下这条几乎不会再触发：认不出官方端点的
-  在用路由会自动挂 `window:<provider>` 实测卡；只有你把 `autoDetect` 关掉且没写对应源时才可能遇到。
+- 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`；
+  老外壳拿不到 react-dom 时面板退回内联 CSS 锚定，拖拽悬浮禁用。
+- Moonshot / OpenRouter 的字段名**尚未用真实 Key 核对**（只有官方文档 + 端点存在性背书）。
 
-## 开发与验证
+## 明确不做的三类
 
-```powershell
-node test/host.mjs     # 324 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、derive 派生（一次加减、宁缺勿猜、两版信封、0 花费、花超报负）、window:<provider> 简写（C 档兜底、显式 providers 优先、口径措辞）、自动检测纯函数层（host>id>Key 前缀优先级、反代域名不瞎撞、kimi 订阅不冒充开放平台）、自动检测接线（假宿主 llm+settings+credentials：幂等、凭据门控、用户写过的赢、Cookie 源不许带 bearerRef、老宿主静默退回、快照 detection 诊断）、panelScope、Bearer 回环链路、并发与 TTL、观测解析
-node test/client.mjs   # 102 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、官方有数时收起自动挂的实测兜底卡（且不自己 shade 自己）、USD 显 $ 不套 ¥、tooltip 交代识别依据与区、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
-node scripts/check-manifest.mjs   # 清单自检：dsh.bundle 安装性、出站主机声明、许可证、零运行时依赖
+以下形态需要读取其它 CLI 的本地登录态或额外强凭据，因权限与账号风险**不在本插件射程内**，
+也不接受相关 PR——需要的人请用上面的「自定义源」自己配：
+
+- 智谱 GLM 团队模式（`Bigmodel-Organization` / `Bigmodel-Project`）
+- Kimi Code 的浏览器 Cookie / `~/.kimi-code/credentials/*`
+- Codex·ChatGPT / Gemini CLI 的 OAuth token（`~/.codex/auth.json`、`~/.gemini/oauth_creds.json`）
+
+## 免责声明
+
+千问 Token Plan 的余量卡走的是**控制台数据网关（Cookie 会话），不是公开发布的官方 API**：
+上游随时可能改动或拒绝；若其服务条款禁止此类访问，请**不要启用**该源（把 `token-plan-console` 从
+`sources` 去掉，或关掉 `autoDetect` 后不写它）。Cookie 只从本地解析、只在进程内使用、
+**绝不进任何路由响应**——细节见 [`SECURITY.md`](SECURITY.md)。
+
+## 开发
+
+```bash
+npm run check                      # 下面四步一次跑完
+node test/host.mjs                 # 324 项，离线
+node test/client.mjs               # 102 项，假 React/DOM/fetch
+node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
+node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 ```
 
-测试**跨平台**：临时目录取 `os.tmpdir()`（每进程唯一、收尾清理），不依赖真实 `~/.dsh`，
-Linux / macOS / Windows 与 CI 直接可跑（`.github/workflows/ci.yml` 跑 node 20/22 × 三个 OS）。
-新增一家供应商请照 [`docs/adding-a-provider.md`](docs/adding-a-provider.md) 的清单走。
+`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 324/102 项」这些写在 README
+里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
+
+测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，
+外加"解包后能加载"的冒烟（`npm pack` → 解 tar → `import lib/index.js`）。
+贡献流程与产品口径见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
+## 许可
+
+[MIT](LICENSE)

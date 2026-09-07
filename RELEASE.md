@@ -90,17 +90,17 @@ dsh plugin --profile web add dsh-token-plan-quota
 ## 4. 提交到 awesome-dsh-plugin（插件目录站）
 
 投稿形式是**一个 YAML 文件**，不是改 README（那两个文件是生成的，手改会被拒）。
+目录站默认分支 `main`，`data/plugins/` 已有 1000+ 条目（API 分页上限），命名就是 `<owner>__<repo>.yml`。
 
-```bash
-git clone https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
-cd awesome-dsh-plugin && git checkout -b add-dsh-token-plan-quota
-mkdir -p data/plugins
-$EDITOR data/plugins/xinghe-1018__dsh-token-plan-quota.yml   # 内容见下
-npm ci && node scripts/generate-readme.mjs                   # 本地预览那一行（可选）
-git add data/plugins/xinghe-1018__dsh-token-plan-quota.yml
-git commit -m "Add dsh-token-plan-quota"
-git push -u <你的 fork> add-dsh-token-plan-quota             # 然后开 PR
+本机**没装 `gh` CLI**，所以走 GitHub 网页的「新建文件」路径——它会替你自动 fork 并直接开 PR：
+
 ```
+https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/new/main?filename=data/plugins/xinghe-1018__dsh-token-plan-quota.yml
+```
+
+（命令行路径留在这里备用：`git clone` → 建分支 → 加这一个文件 → `git push -u <fork>` → 开 PR；
+`npm ci && node scripts/generate-readme.mjs` 可本地预览生成出来的那一行，但**别把生成物一起提交**，
+维护者会在合并后重新生成。）
 
 文件内容（`description.en` 是唯一必填项；**含 `: ` 的值必须加引号**，否则 YAML 当嵌套键解析）：
 
@@ -109,9 +109,13 @@ url: https://github.com/xinghe-1018/dsh-token-plan-quota
 name: xinghe-1018/dsh-token-plan-quota
 category: usage
 description:
-  en: 'Quota chip in the composer toolbar that follows the active model provider, showing official balances where an API exists and clearly-labelled local measurements elsewhere, with no Credits conversion or estimates.'
-  zh: '跟随当前模型供应商的额度徽标：有官方接口的显示真值，没有的显示明确标注「实测」的本实例消耗，不折算 Credits、不估算余量。'
+  en: 'Balance badge that follows the active model provider: official readings for DeepSeek, Qwen Token Plan and Aliyun BSS, plus Moonshot and OpenRouter endpoints not yet key-verified.'
+  zh: '跟随当前模型供应商的额度徽标：DeepSeek、千问 Token Plan、阿里云费用中心取官方真值，Moonshot / OpenRouter 已接官方端点但字段未用真 Key 核对；其余只报本实例实测。'
 ```
+
+> 这句描述是**收窄过的**。早先的写法是"有官方接口处显示官方余额"，但 README 自己的表格写着 Moonshot 与
+> OpenRouter 的字段名**没拿真 Key 核对过**（只实测过端点存在）。目录站的评审会逐字核描述与代码，
+> 所以宁可写明哪三家核过、哪两家待核——这也正是本插件"标到字段级"口径该给自己用的标准。
 
 评审会看什么（我读过它们的 `contributing.md`，这几条对我们最相关）：
 

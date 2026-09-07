@@ -68,9 +68,17 @@ Per-vendor endpoints, envelope fields, unit traps and percentage direction are d
 APIs, which live on the API host the route's `baseURL` points at (`api.moonshot.cn` / `api.moonshot.ai`).
 A Kimi open-platform key belongs to the same account and balance as a Moonshot one, so point the route at
 `api.moonshot.*`; if your `baseURL` says something else, detection will not recognise it and you get the
-measured card instead (writing `sources: ["moonshot-balance"]` by hand forces the official one - but see the last
-column of the table above: that vendor's field names are not yet checked against a real key, so if the forced
-card looks wrong, compare field names with `probe`).
+measured card instead. To force the official card, do not just name the source - **bind it to your real route
+id**, or under the default `panelScope: "current"` it is queried but never displayed (the preset carries generic
+names like `moonshot`, which do not include your route):
+
+```json
+{ "sources": [{ "id": "moonshot-balance", "providers": ["kimi-open-cn"] }] }
+```
+
+Mind the last column of the table above: this vendor's field names are not yet checked against a real key, so if
+the forced card looks wrong, compare field names with `probe`. When a `providers` list binds to nothing at all,
+the host logs a warning - you are not left guessing in front of an empty panel.
 
 ### How this differs from neighbouring plugins
 
@@ -92,7 +100,7 @@ what produced "the card is queried but never displayed". Matching runs in confid
 | `baseURL` host | Most trustworthy - where the route actually points. `api.moonshot.cn` → Moonshot mainland region, `openrouter.ai` → OpenRouter, the Token Plan gateway → Qwen |
 | route id / display name | Used **only when no host is available** (the shipped `deepseek-official` route relies on this) |
 | key prefix | Last resort (`sk-or-` → OpenRouter) |
-| nothing matched | Attach a `window:<provider>` measured source: the chip stays visible, reporting local tokens/requests only |
+| nothing matched | Attach a `window:<provider>` measured source **per unmatched route** (three unrecognised routes, three cards): the chip stays visible, reporting local tokens/requests only |
 
 **In this document `provider`, "route id" and the strings inside `providers` are the same thing**: the `id`
 returned by the host's `llm.listProviders()` (compared case-insensitively, with `.` `_` `/` all treated as `-`).
@@ -107,8 +115,9 @@ Two invariants:
   (1) one of your sources lists this route id in `providers` → detection adds nothing to that route;
   (2) you have a source with the same `id` → detection will not open a second one (`skipped` records
   `id-taken-by-configured`); (3) you wrote `{"id":"<source>","enabled":false}` → that name is never opened
-  automatically again (`skipped` records `disabled-by-config`). Apart from that, a source whose credential cannot
-  be resolved is not opened at all (no error card taking up space). Only `autoDetect: false` makes your list the
+  automatically again (`skipped` records `disabled-by-config`). A fourth case is not a coverage rule at all: a
+  source whose credential cannot be resolved is simply not opened (`skipped` records `no-credential` and lists the
+  reference names it tried; no error card taking up space). Only `autoDetect: false` makes your list the
   single source of truth.
 - **Explainable.** Every auto-opened card carries `detected: {by, rule, host, fallback}`; its tooltip says
   "identified from api.moonshot.ai · region international", and the snapshot's `detection` block lists live
@@ -174,7 +183,7 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `moonshotRegion` | `china-mainland` | `china-mainland` (`api.moonshot.cn`, CNY) or `international` (`api.moonshot.ai`, USD). **Keys do not work across regions**; a wrong region returns 401 and the card tells you to switch. Host and currency switch as a pair - there is no auto-probing |
 | `refreshMinutes` | `10` | Cache TTL for official sources in minutes: TTL = minutes × 60 s, **floor 15 s**, so `"refreshMinutes": 3` means one upstream call per 3 minutes (sub-minute polling is not what this key is for - see `pollSeconds`). The panel's "updated" line or `?fresh=1` forces a refetch |
 | `pollSeconds` | `10` | Front-end poll interval - how often the UI re-reads the snapshot. Measured values and throughput are recomputed live anyway; lowering this never adds upstream calls |
-| `panelScope` | `current` | `current` lists only the active provider's cards plus this instance's usage; `all` lists every source |
+| `panelScope` | `current` | `current` lists **only cards whose `providers` include the active route id**, plus this instance's usage; `all` lists every source. That means the three Aliyun sources are **invisible under `current`** - an account balance and its resource packs have no provider binding, so they never enter a route-filtered view; set `"all"` to see them |
 | `showInstanceWindow` | `true` | Include the "this instance, measured + retry observations" block in the panel. It is **not** a data-source switch and does not affect `window:<provider>` cards |
 | `exposeTool` | `true` | Register the `token_plan_quota` model tool |
 | `debug` | `false` | Permanently echo the upstream response's **field skeleton** (values masked, credential-like keys skipped) in the panel. Same output as `GET /token-plan-quota/probe?source=<id>`; the difference is that debug is always on while probe is one-off and needs no config change |
@@ -287,7 +296,7 @@ shows up as "the card stays empty", not as a failed start. This table is the aut
 | `list` / `item` | `list` | `list` is the array of candidate paths; `item` may name `name`/`id`/`remaining`/`total`/`used`/`unit`/`status`/`expiresAt`/`startsAt`/`cycleType`/`capacityType`/`haystack` |
 | `metric` | display | `money` / `credits` / `count`. The default depends on the builder: a hand-written `single` source defaults to `money`, `list` to `credits`, `window` to `count` - **set it explicitly when you want tokens** |
 | `unit` | display | Fallback unit when upstream gives none (e.g. `USD`); with `metric:"money"` and no upstream currency it falls back to `CNY` |
-| `providers` | panel grouping | Which provider route names this source belongs to; `panelScope:"current"` decides visibility on it. The `window:<provider>` shorthand fills it in |
+| `providers` | panel grouping | The **route ids** this source belongs to (see "provider = route id" above); under `panelScope: "current"` a card is displayed only if this list contains the active route, and if you write names that match no live route the host logs a warning. The `window:<provider>` shorthand fills it in |
 | `windowDays` | `window` | Measured window length in days; default 7, minimum 1 |
 | `regions` / `region` | multi-region vendors | `regions` maps a region name to its field overrides (host and currency switch together); `region` picks one. An unknown region warns and falls back to the first |
 | `enabled` | any | `false` disables the entry (handy for switching one source off without deleting a block) |
@@ -384,14 +393,15 @@ see [`SECURITY.md`](SECURITY.md) for details.
 
 ```bash
 npm run check                       # all four steps below
-node test/host.mjs                  # 344 assertions, offline
+node test/host.mjs                  # 350 assertions, offline
 node test/client.mjs                # 102 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "17 config keys, 8 sources,
-8 declared outbound hosts, 324/102 tests" - and checks them against the code and a real test run, so a drifting
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
+config table, 8 sources, 8 declared outbound hosts, 350/102 tests" - and checks them against the code and a real
+test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).
 
 Tests are cross-platform (temp directories come from `os.tmpdir()` and never touch a real `~/.dsh`); CI runs

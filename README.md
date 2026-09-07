@@ -60,8 +60,15 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 `bailian.console.aliyun.com` 这类**网页控制台**域名一律不参与识别——插件查的是余额接口，落在路由
 `baseURL` 指向的 API host（`api.moonshot.cn` / `api.moonshot.ai`）上。Kimi 开放平台的 Key 与 Moonshot
 开放平台是同一套账号与余额体系，所以 Key 配好后要走 `api.moonshot.*`；若你的 `baseURL` 写成别的域名，
-检测认不出，会退回实测卡（此时手写 `sources: ["moonshot-balance"]` 可强制开官方卡——但请注意下表最后一列：
-这一家的字段名还没用真 Key 核对过，强制开出来若数字不对，用 `probe` 对字段名）。
+检测认不出，会退回实测卡。想强制开官方卡，别只写源名——**要把它绑到你真正的路由 id 上**，否则默认
+`panelScope: "current"` 下这张卡查得到却不露面（预设自带的 `providers` 是 `moonshot` 这类通用名，不含你的路由名）：
+
+```json
+{ "sources": [{ "id": "moonshot-balance", "providers": ["kimi-open-cn"] }] }
+```
+
+（下表最后一列请注意：这一家的字段名还没用真 Key 核对过，强制开出来若数字不对，用 `probe` 对字段名。
+`providers` 落空时宿主日志会直接提醒，不至于一边是空白面板、一边让人瞎猜。）
 
 ### 与相邻插件的区别
 
@@ -80,7 +87,7 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 | `baseURL` 的 host | 最可信：路由实际打到哪。`api.moonshot.cn` → Moonshot 大陆区，`openrouter.ai` → OpenRouter，Token Plan 网关 → 千问 |
 | 路由 id / 名称关键词 | **只在拿不到 host 时**降级使用（出厂的 `deepseek-official` 就靠这条） |
 | Key 前缀 | 最后的线索（`sk-or-` → OpenRouter） |
-| 都没命中 | 挂 `window:<provider>` 实测源：徽标不空，只报本地 token/次数 |
+| 都没命中 | 给**每条**认不出的路由各挂一张 `window:<provider>` 实测源：徽标不空，只报本地 token/次数 |
 
 **本文里 `provider`、`路由 id`、`providers` 数组里的字符串是同一个东西**：宿主 `llm.listProviders()` 返回的
 `id`（比较时忽略大小写，`.` `_` `/` 一律当 `-`）。所以 `window:minimax-cn` 的实测卡只在路由 id 为
@@ -92,7 +99,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   检测再补齐**你没管的部分**——不会因为多写了一条就把它不认识的卡全清掉。"已覆盖"只有三种精确含义：
   ① 你某条源的 `providers` 里含这个路由 id → 该路由不再追加任何源；② 你有一条同名 `id` 的源 → 检测不再开
   同名源（`skipped` 记 `id-taken-by-configured`）；③ 你写了 `{"id":"<源名>","enabled":false}` → 这个名字
-  永不再自动开（`skipped` 记 `disabled-by-config`）。除此之外，凭据解析不到的源整个不开（不挂错误卡占地方）。
+  永不再自动开（`skipped` 记 `disabled-by-config`）。此外还有第四种可能：凭据解析不到的源整个不开
+  （`skipped` 记 `no-credential`，并列出试过哪些引用名；不挂错误卡占地方）。
   `autoDetect: false` 才是"以你写的为唯一事实"。
 - **可解释**。每张自动开出的卡带 `detected: {by, rule, host, fallback}`，标题 tooltip 写
   「按 api.moonshot.ai 自动识别 · 区 international」；快照的 `detection` 块交代在用路由、开了什么、
@@ -145,7 +153,7 @@ JSON 优先级更高）：
 | `moonshotRegion` | `china-mainland` | Moonshot 区：`china-mainland`（`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
 | `refreshMinutes` | `10` | 官方源的快照缓存分钟数：TTL = 分钟 × 60 秒，**下限 15 秒**，所以 `"refreshMinutes": 3` 就是每 3 分钟回源一次（想比 1 分钟更勤没有意义，秒级刷新请看 `pollSeconds`）。点面板「更新于」或带 `?fresh=1` 可强制回源 |
 | `pollSeconds` | `10` | 前端轮询秒数——只管界面多久取一次快照，实测与吞吐每次实时重算；调小让徽标速度更跟手，不会多打上游 |
-| `panelScope` | `current` | 明细面板范围：`current` 只列当前模型供应商的卡 + 本实例实测；`all` 列全部源 |
+| `panelScope` | `current` | 明细面板范围：`current` **只列 `providers` 里含当前路由 id 的卡** + 本实例实测；`all` 列全部源。所以 `current` 下**看不到阿里云那三条**——账户余额与资源包没有供应商归属，永远不进按路由过滤的视图，要看它们就设 `"all"` |
 | `showInstanceWindow` | `true` | 明细里是否带「本实例实测用量 + 限流重试观测」这一块。它**不是**某个数据源的开关，也不影响 `window:<provider>` 卡 |
 | `exposeTool` | `true` | 是否注册模型可调用工具 `token_plan_quota` |
 | `debug` | `false` | 明细里常驻回显上游响应的**字段骨架**（值打码、跳过凭据字段名）。与 `GET /token-plan-quota/probe?source=<id>` 输出同一份东西，区别是 debug 常驻、probe 按需单次且不用改配置 |
@@ -251,7 +259,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 | `list` / `item` | `list` | `list` 是数组候选路径；`item` 内可给 `name`/`id`/`remaining`/`total`/`used`/`unit`/`status`/`expiresAt`/`startsAt`/`cycleType`/`capacityType`/`haystack` |
 | `metric` | 显示口径 | `money` / `credits` / `count`。默认值按构建器不同：手写 `single` 源是 `money`，`list` 源是 `credits`，`window` 是 `count`——**要按 token/次数显示就显式写** |
 | `unit` | 显示 | 上游不给单位时的兜底（如 `USD`）；`metric:"money"` 且上游不给时兜到 `CNY` |
-| `providers` | 面板归属 | 这条属于哪些供应商路由名，`panelScope:"current"` 靠它决定显不显示；`window:<provider>` 简写会自动填 |
+| `providers` | 面板归属 | 这条属于哪些**路由 id**（见上文「provider 就是路由 id」）。`panelScope:"current"` 下，列表里没有当前路由就不显示这张卡；写了却一条都对不上在用路由，宿主日志会提醒（免得对着空白面板瞎猜）；`window:<provider>` 简写会自动填 |
 | `windowDays` | `window` | 实测窗口天数，默认 7，最小 1 |
 | `regions` / `region` | 多区供应商 | `regions` 是「区名 → 该区的字段覆盖（host 与币种成对换）」，`region` 选哪一区；写错的区会 warn 并退回第一个 |
 | `enabled` | 任意 | `false` 停用这一条（临时关源不必删整段） |
@@ -329,13 +337,13 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面四步一次跑完
-node test/host.mjs                 # 344 项，离线
+node test/host.mjs                 # 350 项，离线
 node test/client.mjs               # 102 项，假 React/DOM/fetch
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 ```
 
-`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 344/102 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 350/102 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

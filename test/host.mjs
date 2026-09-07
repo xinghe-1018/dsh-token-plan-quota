@@ -988,6 +988,26 @@ const autoWinOn = hostCfg()
 await applyAutoDetect(autoWinOn, fakeHost({ routes: [{ id: 'minimax-cn', name: 'MiniMax' }], profiles: { 'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1' } }, refs: {} }))
 check('对照组：不写这条时兜底窗口照常挂上', autoWinOn.sources.map(source => source.id), ['window:minimax-cn'])
 
+/* 绑定漂移：手写源写了 providers 却没有一条对得上在用路由 → panelScope:current 下
+   卡查得到但永远不露面（本项目犯过的老错，这次要在日志里说出来，而不是让用户排查半天）。 */
+const { warnUnboundSources, unboundWarned } = __internals
+const bindWarns = []
+const bindCtx = { logger: { warn: e => bindWarns.push(String(e.message)) }, get: () => undefined }
+const kimiOnly = [{ id: 'kimi-open-cn' }]
+unboundWarned.clear()
+warnUnboundSources({ sources: normalizeSources(['moonshot-balance'], bindCtx) }, kimiOnly, bindCtx)
+check('providers 落空的手写源会提醒（预设名不等于路由 id）', bindWarns.length, 1)
+ok('提醒里给出两条出路', bindWarns[0].includes('panelScope') && bindWarns[0].includes('路由 id'))
+warnUnboundSources({ sources: normalizeSources(['moonshot-balance'], bindCtx) }, kimiOnly, bindCtx)
+check('同一组合只提醒一次（每次快照都跑，不能刷屏）', bindWarns.length, 1)
+warnUnboundSources({ sources: normalizeSources(['moonshot-balance'], bindCtx) }, [{ id: 'moonshot-cn' }], bindCtx)
+check('路由对上了就不提醒', bindWarns.length, 1)
+warnUnboundSources({ sources: normalizeSources([{ id: 'my-src', url: 'https://x/y', providers: ['Kimi.Open/CN'] }], bindCtx) }, kimiOnly, bindCtx)
+check('按同一套归一化比较（大小写与 ._/ 一视同仁）', bindWarns.length, 1)
+warnUnboundSources({ sources: normalizeSources(['account-balance'], bindCtx) }, kimiOnly, bindCtx)
+check('没写 providers 的源（阿里云那几条）保持安静', bindWarns.length, 1)
+unboundWarned.clear()
+
 // 回归锁：Cookie 型源绝不能被写成 bearerRef，否则查询先撞 Bearer 门，报
 // "未配置凭据 BAILIAN_CONSOLE_COOKIE（…设同名环境变量）"——Cookie 明明在，却被叫去配 Key。
 const cookieCfg = hostCfg()

@@ -339,6 +339,7 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 | 6 | **开源前跑盲测**：中英文档各交两名只准读 README、不许读代码/上网的子代理，问同一组配置题（2026-09-07 两轮）。第一轮两名读者**独立**打出四个洞：① `token-plan-window` 只被列名、无说明，读者认定它是"自建固定额度窗口"预设（实际是千问本地账本）；② 文档写"多窗口家用 `card.meters`"，而那是**卡形状、手写无效**；③ 配置表合并行让"17 个键"没法核对（有人数出 16，有人数出 18）；④ **"我就想关掉某一张卡"这个最高频诉求，全篇没有正面答案**。结论：文档不是说明书的替代品，是**唯一一份能被外人执行的契约** | §3 文档要求；两张键表进 `check-docs` 第 8 条检查 |
 | 7 | 针对 ④ 补**实现**而不是补一段"做不到"：`enabled: false` 语义定为「关**这一条源**」——手写条目与自动检测同受约束（检测不再补回来，诊断记 `disabled-by-config`），但**不牵连**同路由的实测兜底窗口（关一条源 ≠ 关这个供应商；连兜底也不要就点名 `{"id":"window:<路由>","enabled":false}`）。不新增顶层黑名单键：**一个诉求只留一种写法** | `normalizeSources` 的 `disabledSources` ＋ `detect.js` `disabledPresets` ＋ `host.mjs` 三组带对照的测试 |
 | 8 | 仓库内**禁止用 Windows PowerShell 5.1 做文本往返**（`Get-Content`/`Set-Content`）：5.1 的 `Get-Content` 按 ANSI(GBK) 读 UTF-8，一次往返把中文变成乱码 + GBK 私用区字符并加 BOM，且**不可逆**（私用区无反向映射，本轮真的毁过一次 README，靠 `git checkout` 回滚重放）。改为：文本一律走文件工具或 Node | `check-docs` 第 9 条：BOM / U+FFFD / 「CJK + 私用区共存」三条码位护栏（码位判断，不用字面量——不然检查自身就是残骸） |
+| 9 | **`providers` 落空必须说出来**（2026-09-07 第三轮盲测撞出）：面板按 `bindProviders.includes(当前路由 id)` 过滤，而预设自带的名字是 `moonshot`/`deepseek-official` 这类通用串，不含用户真实路由 id——照文档"强制开一张卡"写出来的配置会**查得到却不露面**。文档改到位之后仍要加一条 warn：这类坑的表征与根因隔了三层，光靠文字让人自查不现实 | `warnUnboundSources`（去重、按归一化比较、不写 `providers` 的源保持安静）＋ 5 项测试；同轮把「`panelScope: current` 下阿里云三条永远不可见」第一次写进配置表 |
 
 ---
 

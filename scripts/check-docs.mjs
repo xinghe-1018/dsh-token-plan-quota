@@ -89,23 +89,34 @@ for (const [suite, text] of [['host', zh], ['client', en]]) {
 }
 
 /* 6) 正文里写死的计数也是声明：新增一家忘了改这句，就该 CI 红。
- *    主机数说的是**已声明**的出站主机（审计看的就是这个数），不是从预设里推导出来的那批。 */
+ *    主机数说的是**已声明**的出站主机（审计看的就是这个数），不是从预设里推导出来的那批。
+ *    键数与"配置表行数"分开声明（17 个 DEFAULTS 键 vs 表里 18 行），因为盲测时有读者把这两个数当成
+ *    互相矛盾的证据——两个都检查，两个就都别再想漂。 */
 const tally = { keys: Object.keys(__internals.DEFAULTS).length, sources: Object.keys(__internals.PRESETS).length, hosts: declared.size }
-const zhProse = /配置表 (\d+) 个键、(\d+) 个数据源、声明 (\d+) 个出站主机/.exec(zh)
-if (zhProse === null) problems.push('README.md 里找不到「配置表 N 个键、M 个数据源、声明 K 个出站主机」这句（措辞被改了？那就同步改这条检查）')
+const zhProse = /DEFAULTS (\d+) 个键、配置表 (\d+) 行、(\d+) 个数据源、声明 (\d+) 个出站主机/.exec(zh)
+if (zhProse === null) problems.push('README.md 里找不到「DEFAULTS N 个键、配置表 M 行、K 个数据源、声明 L 个出站主机」这句（措辞被改了？那就同步改这条检查）')
 else {
-  const [keys, sources, hostCount] = [Number(zhProse[1]), Number(zhProse[2]), Number(zhProse[3])]
-  if (keys !== tally.keys) problems.push(`README.md 说配置表 ${keys} 个键，实际 ${tally.keys} 个`)
+  const [keys, rows, sources, hostCount] = [Number(zhProse[1]), Number(zhProse[2]), Number(zhProse[3]), Number(zhProse[4])]
+  if (keys !== tally.keys) problems.push(`README.md 说 DEFAULTS ${keys} 个键，实际 ${tally.keys} 个`)
+  if (rows !== tally.keys + 1) problems.push(`README.md 说配置表 ${rows} 行，应为 ${tally.keys + 1}（DEFAULTS 键 + moonshotRegion）`)
   if (sources !== tally.sources) problems.push(`README.md 说 ${sources} 个数据源，实际 ${tally.sources} 个`)
   if (hostCount !== tally.hosts) problems.push(`README.md 说声明 ${hostCount} 个出站主机，实际 ${tally.hosts} 个`)
 }
-const enProse = /(\d+) config keys, (\d+) sources,\s*\n?\s*(\d+) declared outbound hosts/.exec(en)
-if (enProse === null) problems.push('README.en.md 里找不到 "N config keys, M sources, K declared outbound hosts" 这句')
+const enProse = /(\d+) DEFAULTS keys, an (\d+)-row\s*\n?\s*config table, (\d+) sources,\s*\n?\s*(\d+) declared outbound hosts/.exec(en)
+if (enProse === null) problems.push('README.en.md 里找不到 "N DEFAULTS keys, an M-row config table, K sources, L declared outbound hosts" 这句')
 else {
-  const [keys, sources, hostCount] = [Number(enProse[1]), Number(enProse[2]), Number(enProse[3])]
-  if (keys !== tally.keys) problems.push(`README.en.md says ${keys} config keys, actual ${tally.keys}`)
+  const [keys, rows, sources, hostCount] = [Number(enProse[1]), Number(enProse[2]), Number(enProse[3]), Number(enProse[4])]
+  if (keys !== tally.keys) problems.push(`README.en.md says ${keys} DEFAULTS keys, actual ${tally.keys}`)
+  if (rows !== tally.keys + 1) problems.push(`README.en.md says an ${rows}-row config table, expected ${tally.keys + 1}`)
   if (sources !== tally.sources) problems.push(`README.en.md says ${sources} sources, actual ${tally.sources}`)
   if (hostCount !== tally.hosts) problems.push(`README.en.md says ${hostCount} declared outbound hosts, actual ${tally.hosts}`)
+}
+/* 6b) 正文里成对写的"N/M tests"也是声明。这条原本没人管，英文 README 就一直漂着 324/102。 */
+for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
+  for (const m of text.matchAll(/(\d+)\/(\d+)\s*(?:tests|项)/g)) {
+    if (counts.host !== undefined && Number(m[1]) !== counts.host) problems.push(`${file} 正文写 ${m[1]}/${m[2]} tests，host 实跑 ${counts.host}`)
+    if (counts.client !== undefined && Number(m[2]) !== counts.client) problems.push(`${file} 正文写 ${m[1]}/${m[2]} tests，client 实跑 ${counts.client}`)
+  }
 }
 
 /* 7) CHANGELOG 里的版本链接不能指向不存在的 tag（留个死链就是又一处假声明） */

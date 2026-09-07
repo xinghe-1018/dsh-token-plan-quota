@@ -1,7 +1,7 @@
 {
   "name": "dsh-token-plan-quota",
-  "version": "0.2.0",
-  "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换——DeepSeek 官方余额（/user/balance）、千问 Token Plan 实测 7 天窗口（本实例账本，标「实测」）、可选阿里云 BssOpenApi（AK/SK）。含模型可调用工具 token_plan_quota。Token quota chip that follows the active model's provider for the DeepSeek Harness web GUI.",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换，零配置按在用路由自动开源。官方真值来源：DeepSeek /user/balance、Moonshot 开放平台、OpenRouter credits、阿里云 BssOpenApi（AK/SK）、千问 Token Plan 控制台网关（Cookie）；官方无额度接口的供应商显示明确标注「实测」的本实例窗口。含模型工具 token_plan_quota。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -23,7 +23,7 @@
   "dshhub": {
     "schemaVersion": 1,
     "displayName": "dsh-token-plan-quota",
-    "summary": "额度徽标跟随当前模型供应商：DeepSeek 官方 /user/balance 真值 + 千问 Token Plan 实测 7 天窗口（本实例账本，明确标注非官方余量）+ 可选阿里云 BssOpenApi（AK/SK）资源包/余额；实测吞吐速度（tokens÷流式活跃秒）按供应商归因，徽标以纯文本 NN tok/s 显示；幽灵小徽标，余量渐变条即状态表达（无圆点、无表情符号），点开明细面板看全部源；附带 token_plan_quota 模型工具。",
+    "summary": "跟随当前模型供应商的额度徽标：官方接口给真值（DeepSeek、Moonshot、OpenRouter、阿里云费用中心、千问 Token Plan 控制台），没有官方额度接口的供应商显示标注「实测」的本实例消耗窗口。不折算 Credits、不估算余量。零配置自动识别在用路由，附 token_plan_quota 模型工具。",
     "categories": ["费用", "Web UI", "观测"],
     "surfaces": ["host", "web"],
     "capabilities": { "provides": ["tool:token_plan_quota"] },
@@ -46,7 +46,17 @@
     "url": "git+https://github.com/xinghe-1018/dsh-token-plan-quota.git"
   },
   "homepage": "https://github.com/xinghe-1018/dsh-token-plan-quota#readme",
-  "files": ["lib", "cordis.patch.yml", "README.md"],
+  "bugs": {
+    "url": "https://github.com/xinghe-1018/dsh-token-plan-quota/issues"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node test/host.mjs && node test/client.mjs",
     "test:host": "node test/host.mjs",
@@ -57,13 +67,19 @@
     "dsh-plugin",
     "deepseek-harness",
     "client-plugin",
-    "aliyun",
-    "bailian",
-    "qwen",
-    "model-studio",
-    "token-plan",
     "quota",
     "balance",
+    "billing",
+    "usage",
+    "deepseek",
+    "moonshot",
+    "kimi",
+    "openrouter",
+    "qwen",
+    "bailian",
+    "model-studio",
+    "token-plan",
+    "aliyun",
     "bssopenapi"
   ],
   "license": "MIT",

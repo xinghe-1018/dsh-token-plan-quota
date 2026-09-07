@@ -1,0 +1,70 @@
+name: 某家额度不显示 / 识别不对
+about: 某个供应商的徽标或明细卡异常（不显示、显示错家、数字不对、区不对）
+labels: [triage]
+body:
+  - type: markdown
+    value: |
+      排查"为什么这家没显示"只需要一个东西：`detection` 块。请把它贴上来。
+      浏览器打开 `http://127.0.0.1:3080/token-plan-quota/summary?fresh=1`（或
+      `curl` 同源访问），取 JSON 里的 `detection` 与 `cards` 两段。
+      **贴之前请把任何 `key` / `cookie` / `token` 字样的值删掉**——这两个字段本来不含密钥，
+      但如果你顺手贴了 `config` 之外的内容，请自查。
+  - type: textarea
+    id: detection
+    attributes:
+      label: detection 块（原样贴 JSON）
+      description: 含 `routes`（在用路由）、`added`（开了什么、凭什么）、`skipped`（谁因何没开）、`uncovered`（谁没被认出）
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: cards
+    attributes:
+      label: cards 里的 id / veracity / bindProviders / error 字段
+      description: 不用贴数值，敏感的话可以打码；要的是"哪张卡、绑在谁身上、有没有报错"
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: 当前模型的供应商路由 id（面板标题「当前模型」那行就是）
+      placeholder: qwen-token-plan-cn
+    validations:
+      required: true
+  - type: input
+    id: baseurl
+    attributes:
+      label: 该路由在 DSH 设置里的 baseURL
+      description: `settings.yaml` → `llm-pi-ai.providers.<路由 id>.baseURL`，或设置页里该 provider 的端点
+      placeholder: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    validations:
+      required: true
+  - type: dropdown
+    id: expectation
+    attributes:
+      label: 你认为正确的行为是
+      options:
+        - 应该显示官方额度（现在没显示）
+        - 应该显示"实测"卡（现在什么都没有）
+        - 显示的数不属于这家（认错供应商）
+        - 出现了重复的卡
+        - 区/币种不对（¥ 与 $ 搞反）
+        - 其它（下面描述）
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象与复现步骤
+      description: 什么时候开始、重启前后、是否改过 `~/.dsh/token-plan-quota.json`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本与 DSH 版本
+      description: 插件看 `package.json` 的 `version`；DSH 看 `dsh --version`
+      placeholder: 'dsh-token-plan-quota 0.4.0 / dsh 0.1.0-rc.8'
+    validations:
+      required: true

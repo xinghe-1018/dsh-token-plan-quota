@@ -1,0 +1,58 @@
+name: 请求支持新的供应商
+about: 想让插件支持某家额度接口
+labels: [provider-request]
+body:
+  - type: markdown
+    value: |
+      **请先给出可核实的官方端点**：URL、鉴权方式、响应字段名。
+      本插件的口径是"只报真值、不估算"，没有 Key 化官方端点的家，只能进
+      `window:<provider>` 实测窗口（那不需要新代码，配一行就行）。
+  - type: input
+    id: vendor
+    attributes:
+      label: 供应商
+      placeholder: 例 Moonshot / Kimi 开放平台
+    validations:
+      required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: 额度端点（完整 URL + 方法）
+      placeholder: 'GET https://api.moonshot.cn/v1/users/me/balance'
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: 鉴权方式
+      options:
+        - 同一把 API Key（Bearer）
+        - AK/SK 签名
+        - 需要额外凭据（Admin key / Management key / org id）
+        - 只有浏览器 Cookie 会话
+        - OAuth（要读本地 CLI 登录态）
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: 响应字段（余额/已用/总额/重置时刻分别叫什么）
+      description: 有官方文档链接请一并给出；**百分比的方向（是"已用"还是"剩余"）请务必写明**
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: windows
+    attributes:
+      label: 有没有多窗口（5 小时 / 周 / 月）与档位差异
+      description: 一次请求回多窗口，还是要打多个端点？各档位配置里躺着的上限值，是否代表该账号真有这个窗口？
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我能提供真实 Key 用于核对字段名（不需要公开，本地跑 probe 即可）
+          required: false
+        - label: 我理解"只有官方文档背书、未经真实 Key 核对"的能力在 README 里会被标注为未验证
+          required: true

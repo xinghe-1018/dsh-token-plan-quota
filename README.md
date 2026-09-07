@@ -295,12 +295,17 @@ DeepSeek 用 `DEEPSEEK_API_KEY`；Moonshot 用 `MOONSHOT_API_KEY`（**注意与�
 - 观测计数是本次进程启动以来的；持久事实仍在会话日志里。
 - 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`。
 - 宿主没有 react-dom 种子词（老外壳）时面板退回内联 CSS 锚定，拖拽悬浮禁用。
-- 当前模型供应商**一个数据源都没绑**时徽标隐藏——官方无额度接口的家请自己挂
-  `window:<provider>`（阶段②做完后这一步也不用你动手）。
+- 当前模型供应商**一个数据源都没绑**时徽标隐藏。零配置下这条几乎不会再触发：认不出官方端点的
+  在用路由会自动挂 `window:<provider>` 实测卡；只有你把 `autoDetect` 关掉且没写对应源时才可能遇到。
 
 ## 开发与验证
 
 ```powershell
-node test/host.mjs     # 301 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、derive 派生（一次加减、宁缺勿猜、两版信封、0 花费、花超报负）、window:<provider> 简写（C 档兜底、显式 providers 优先、口径措辞）、自动检测纯函数层（host>id>Key 前缀优先级、反代域名不瞎撞、kimi 订阅不冒充开放平台）、自动检测接线（假宿主 llm+settings+credentials：幂等、凭据门控、用户写过的赢、老宿主静默退回、快照 detection 诊断）、panelScope、Bearer 回环链路、并发与 TTL、观测解析（注：测试固定写 C:\test-dsh-home，需在可写该路径的终端里跑）
-node test/client.mjs   # 100 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、USD 显 $ 不套 ¥、tooltip 交代识别依据与区、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node test/host.mjs     # 324 项：签名对照官方 SDK、官方字段抽取、窗口账本滚动与基线、吞吐速度数学、控制台网关回环（sec_token 自动获取+三接口）、多计量条数学（各窗口独立算百分比、没读数的窗口不存在、实测计量剥百分比）、Moonshot 多区模板（区→host+币种、区优先级、未知区退回并 warn、code:0 信封、0 余额与欠款、401 源级提示、上游人话进卡片）、derive 派生（一次加减、宁缺勿猜、两版信封、0 花费、花超报负）、window:<provider> 简写（C 档兜底、显式 providers 优先、口径措辞）、自动检测纯函数层（host>id>Key 前缀优先级、反代域名不瞎撞、kimi 订阅不冒充开放平台）、自动检测接线（假宿主 llm+settings+credentials：幂等、凭据门控、用户写过的赢、Cookie 源不许带 bearerRef、老宿主静默退回、快照 detection 诊断）、panelScope、Bearer 回环链路、并发与 TTL、观测解析
+node test/client.mjs   # 102 项：座位注册、样式与 CDN 字体 link 注入、徽标跟随模型切换、panelScope 过滤与 all 回退、速度标签新鲜度（纯文本）、徽标无圆点无表情符号、多计量条只渲染真有读数的次级窗口、常驻小窗不注册 mousedown（只有 toggle/Esc 关）、官方有数时收起自动挂的实测兜底卡（且不自己 shade 自己）、USD 显 $ 不套 ¥、tooltip 交代识别依据与区、实测卡误喂分母也不出条不出百分比、面板 portal 到 body、拖拽/缩放手柄与提示、面板卡交错渐入序号、混排灰列走 UI 栈、手势态禁碰 animation（防重播渐入）、紧凑面板（一行摘要/一行吞吐/每供应商一行重试）、无绑定隐藏、缺服务退回全量
+node scripts/check-manifest.mjs   # 清单自检：dsh.bundle 安装性、出站主机声明、许可证、零运行时依赖
 ```
+
+测试**跨平台**：临时目录取 `os.tmpdir()`（每进程唯一、收尾清理），不依赖真实 `~/.dsh`，
+Linux / macOS / Windows 与 CI 直接可跑（`.github/workflows/ci.yml` 跑 node 20/22 × 三个 OS）。
+新增一家供应商请照 [`docs/adding-a-provider.md`](docs/adding-a-provider.md) 的清单走。

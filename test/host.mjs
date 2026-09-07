@@ -7,7 +7,7 @@
  * 重试观测来自 llm/retry 持久事件。
  */
 import { createHmac } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import os from 'node:os'
 import { __internals, apply, observeStream, parsePolicyKey } from '../lib/index.js'
@@ -42,19 +42,23 @@ function ok(label, condition) {
 }
 const ctxStub = { logger: { warn() {} }, get: () => undefined }
 
-/* 全程把 DSH_HOME 指到测试目录：真实 ~/.dsh 里可能有 token-plan-quota.json /
- * .credentials.yaml，文件配置会盖掉各用例的行配置，测试必须与它们隔离。 */
+/* 全程把 DSH_HOME 指到一个**每进程唯一的临时目录**：真实 ~/.dsh 里可能有
+ * token-plan-quota.json / .credentials.yaml，文件配置会盖掉各用例的行配置，
+ * 测试必须与它们隔离。写死 Windows 路径（曾经的 C:\test-dsh-home）会让
+ * Linux/macOS 的贡献者直接跑不起来，也进不了 CI。 */
 const ORIG_DSH_HOME = process.env.DSH_HOME
-process.env.DSH_HOME = 'C:\\test-dsh-home'
+const TEST_HOME = join(os.tmpdir(), `dsh-quota-test-${process.pid}`)
+mkdirSync(TEST_HOME, { recursive: true })
+process.env.DSH_HOME = TEST_HOME
 
 /* ============================================ 0. 路径展开与状态隔离 */
 
 const withDsh = effectiveConfig({}, ctxStub)
-check('expandPath("$DSH_HOME/x") 不会双层 .dsh', withDsh.fileConfig.path, 'C:\\test-dsh-home\\token-plan-quota.json')
+check('expandPath("$DSH_HOME/x") 不会双层 .dsh', withDsh.fileConfig.path, join(TEST_HOME, 'token-plan-quota.json'))
 process.env.DSH_HOME = ORIG_DSH_HOME
 const withoutDsh = effectiveConfig({}, ctxStub)
 check('未设 DSH_HOME 时默认走 ~/.dsh 下', withoutDsh.fileConfig.path, join(os.homedir(), '.dsh', 'token-plan-quota.json'))
-process.env.DSH_HOME = 'C:\\test-dsh-home'
+process.env.DSH_HOME = TEST_HOME
 resetInstanceState()
 
 /* ============================================ 1. 签名（对照官方 pop-core） */
@@ -171,7 +175,7 @@ check('快照回带 panelScope 供前端过滤', winSnap.config.panelScope, 'cur
 resetInstanceState()
 recordUsage(winCfg, 'qwen-token-plan-cn', 'qwen3.8-flash', { inputTokens: 100, outputTokens: 10 })
 const origHome = process.env.DSH_HOME
-process.env.DSH_HOME = 'C:\\test-dsh-home'
+process.env.DSH_HOME = TEST_HOME
 __internals.resetCurrentMonthUsage(winCfg, ctxStub)
 process.env.DSH_HOME = origHome
 check('清本周期账本把窗口锚点也清零', Object.keys(usageLedger.windows).length, 0)
@@ -261,7 +265,7 @@ ok('摘要含按供应商行', summarizeText(tpSnap).includes('按供应商 qwen
 
 // 吞吐窗口随账本落盘：模拟宿主重启（hardReset + 重新 loadUsage）后还能带回最近 5 分钟。
 __internals.flushUsage(ctxStub)
-const persisted = JSON.parse(readFileSync(join('C:\\test-dsh-home', 'token-plan-quota.usage.json'), 'utf8'))
+const persisted = JSON.parse(readFileSync(join(TEST_HOME, 'token-plan-quota.usage.json'), 'utf8'))
 ok('账本落盘 recent 窗口（带供应商与活跃秒）', Array.isArray(persisted.recent) && persisted.recent.length >= 3
   && persisted.recent.every(entry => typeof entry.provider === 'string' && typeof entry.elapsedMs === 'number'), true)
 __internals.hardResetUsage()
@@ -1034,6 +1038,9 @@ check('快照的 detection 块可诊断', [e2eSnap.detection.enabled, e2eSnap.de
 check('config 回显也带 detected（排查时能对上）', e2eSnap.config.sources[0].detected.by, 'fallback-window')
 check('detection 里没有密钥字段', JSON.stringify(e2eSnap.detection).includes('sk-'), false)
 resetInstanceState()
+// 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
+process.env.DSH_HOME = ORIG_DSH_HOME
+rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 
 console.log(`\n${passed} passed, ${failed} failed`)
 // 不用 process.exit：全局 undici 的回环保活 socket 与 exit 撞车会触发 libuv 断言。

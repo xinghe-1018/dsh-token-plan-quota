@@ -133,7 +133,10 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
       本机已现场生效：给 `minimax-cn` 挂了 `minimax-window`（宿主每次查询前重读 JSON，没重启），
       卡出来时 `estimated=True / veracity=local / 无 total / 无百分比`，正是决策 1 的形状。
       ②做完后这条由 detect 自动挂，用户不用写。
-- [ ] T1.7 `SOURCE_META`/`ERROR_HINTS` 为每家补 veracity 说明与可操作报错
+- [x] T1.7 `SOURCE_META` / 报错说明为每家补齐：`moonshot-balance`、`openrouter-credits` 都带
+      `veracity` + 口径 `sourceNote` + **源级 `errorHints`**（同一个 401 在不同家说不同的话：
+      Moonshot 指切区、OpenRouter 指"要它自己的 Key"、402 指欠费）。这条已固化进
+      `docs/adding-a-provider.md` 的第 3 步，不再需要单独记任务
 - [ ] T1.8 手工验收：真实 Key 逐家跑 `GET /token-plan-quota/probe?source=<id>` 核对字段名，
       把核对结论写回本文件 §1.1（表格即证据链）
 
@@ -230,7 +233,12 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
       `DEFAULTS.sources`**（那两条正是漂移源头）；`autoDetect: false` 时照旧用它们
 - [x] T2.7 测试：纯函数层 15 组（优先级、区映射、反例不许认错）＋接线层 13 组（假宿主三服务、
       幂等、凭据门控、用户覆盖优先、Cookie 掉线只留实测、老宿主静默退回、快照带 detected）
-- [ ] T2.8 本机现场验收：把 `~/.dsh/token-plan-quota.json` 里的 `sources` 删掉，核对 §2.4 三条期望
+- [x] T2.8 本机现场验收（2026-09-06 通过）：`~/.dsh/token-plan-quota.json` 已删掉 `sources`，
+      活路由 `detection` 显示 5 条在用路由全部有归属——`qwen-token-plan-cn` 按 host 开出官方余量卡
+      （`remaining=2117.76/10000`）＋实测兜底（有数时前端收起）、`minimax-cn` 落 `uncovered` →
+      `window:minimax-cn` 实测卡、`deepseek-official` 按路由名开出余额卡。
+      顺带在这次验收里抓出并修掉两个真 bug：Cookie 源被写入 `bearerRef`（→ 官方卡误报"未配置凭据"）、
+      代理路由按名字冒充别家（→ 同名两张卡且缓存互覆盖）。
 
 ### 2.4 ②的本机验收基线（把 §0.1 的三个漂移当回归用例）
 
@@ -285,16 +293,22 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 
 ### 3.3 任务清单
 
-- [ ] T3.1 跨平台测试修复（`os.tmpdir()`），CI 上 ubuntu 先跑绿
-- [ ] T3.2 `LICENSE` / `CHANGELOG.md` / 版本对齐 / tag `v1.0.0`
-- [ ] T3.3 `docs/adding-a-provider.md`（把 T1.3 的模板固化成 checklist：预设 → SOURCE_META → ERROR_HINTS → probe 核对 → 表回填）
-- [ ] T3.4 `docs/upstream-contracts.md`（现有逆向细节搬家，逐条带出处 URL 与实测日期）
+- [x] T3.1 跨平台测试修复：`test/host.mjs` 改用每进程唯一的 `join(os.tmpdir(), 'dsh-quota-test-<pid>')`，
+      收尾 `rmSync` 清目录；仓库内已无写死平台路径（`grep 'C:\\test'` = 0）
+- [x] T3.2 `LICENSE`（MIT，版权行暂写 "dsh-token-plan-quota contributors"，发布前可换成你的名字）、
+      `CHANGELOG.md`（Keep a Changelog，按提交历史回填 0.1.0→0.4.0）、`version` → **0.4.0**
+- [x] T3.3 `docs/adding-a-provider.md`：清单化（先核实端点三档证据 → 预设 → 三处元数据 → 规则表 →
+      测试 → 回填文档），并写死"不要做的事"（假 meter、读 CLI 登录态、patch 里 pin sources、估算）
+- [x] T3.4 `docs/upstream-contracts.md`：逆向契约搬家，逐条带**验证到什么程度**与实测日期；
+      千问 Cookie 细节与陷阱表（含"配置 ≠ 额度"、"别拿宿主 DOM 属性做交互判定"）都收在这里
 - [ ] T3.5 README 重写（3.2 结构）＋ 截图/GIF，**并整篇英文化 `README.en.md`**（`README.md` 顶部互链；
-      界面内文案也要跟上：`lib/client.js` 已有 `COPY.zh`，需要 `COPY.en` + 语言选择，否则英文 README
-      配中文徽标会立刻被 issue 打回——这项工作量不小，排在③的第二优先）
-- [ ] T3.6 `.github/workflows/ci.yml` + `CONTRIBUTING.md` + `SECURITY.md` + issue 模板（含"某家识别不对"必填项）
-- [ ] T3.7 `dshhub` 元数据校对：`summary` 收短、`categories`、`capabilities`、`engines.dsh` 下限按实际依赖验证；
-      `repository`/`homepage` 字段补上（邻居都带，market 抓取要用）
+      界面文案双语已具备（`COPY.zh` / `COPY.en` + `pickLocale()`），剩下的主要是文档工作量）
+- [x] T3.6 `.github/workflows/ci.yml`（node 20/22 × ubuntu/windows/macos 跑两个离线自测 ＋ 清单自检 job）、
+      `CONTRIBUTING.md`（含产品口径六条与"描述必须属实"）、`SECURITY.md`（凭据边界、Cookie 风险声明、
+      明确不做的三类形态）、`.github/ISSUE_TEMPLATE/`（识别不对＝必填 `detection` 块；请求新供应商＝必填端点证据）
+- [x] T3.7 `dshhub` 元数据校对：`summary` 收成事实描述（去营销词）、补 `bugs` 与 `files`
+      （`README.en.md`/`CHANGELOG.md`/`LICENSE`）、`keywords` 补 moonshot/kimi/openrouter；
+      新增 `scripts/check-manifest.mjs` 把这些承诺变成可执行的 CI 检查（安装性、出站主机、许可证、零依赖）
 - [ ] T3.8 发布前自查：`git ls-files`、密钥扫描、README 里每条命令照做一遍、干净目录 `dsh plugin add` 冒烟
 - [ ] T3.9 发布渠道（见 §5）：GitHub 加 `dsh-plugin` topic → npm 发 `dsh-token-plan-quota`
       → awesome-dsh-plugin.com 提交 → 本地自测 `dsh-sentinel-scanner` / `dsh-score` 类审计不报高危

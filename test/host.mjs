@@ -335,12 +335,12 @@ check('该计量自己算出百分比', [fiveOnly.meters[0].remaining, fiveOnly.
 // usage.keys 只有 per1WeekResetTime/per1WeekPercentage，而 quota-config.standard.five_hour=3000）。
 // 这条窗口必须**根本不存在**，不能渲染成一行「额度上限 3,000」的配置噪声。
 const weekOnly = finalizeCard(buildConsoleCard(consolePreset, {
-  per1WeekPercentage: 0.637959301, per1WeekResetTime: weekReset,
-}, { standard: { weekly: 10000, five_hour: 3000 } }, { specCode: 'standard' }))
+  per1WeekPercentage: 0.625, per1WeekResetTime: weekReset,
+}, { standard: { weekly: 4000, five_hour: 800 } }, { specCode: 'standard' }))
 check('没有 5 小时读数 → 只有一条计量', weekOnly.meters.map(m => m.key), ['weekly'])
 check('没有 5 小时读数 → extra 也不留 5 小时字段', [weekOnly.extra.fiveHourTotal, weekOnly.extra.fiveHourUsedPercent], [undefined, undefined])
 check('档位配了却无读数，收成诊断字段', weekOnly.extra.fiveHourConfiguredNoReading, true)
-check('顶层仍是 7 天窗口', [weekOnly.total, weekOnly.remaining], [10000, 3620.407])
+check('顶层仍是 7 天窗口', [weekOnly.total, weekOnly.remaining], [4000, 1500])
 // 反过来：只有 5 小时窗口的套餐，它升为主计量（徽标不能因为"没有 7 天"而空着）。
 const fiveOnlyPrimary = finalizeCard(buildConsoleCard(consolePreset, {
   per5HourPercentage: 0.25, per5HourResetTime: weekReset,
@@ -962,7 +962,7 @@ check('两路源都开（不在规划期砍兜底）', qwenCfg.sources.map(sourc
 check('实测窗带 fallback 标记，官方源不带', qwenCfg.sources.map(source => `${source.id}=${source.detected?.fallback === true ? 'fallback' : 'primary'}`).sort(), ['token-plan-console=primary', 'token-plan-window=fallback'])
 check('不再有"规划期就断定官方有数"的跳过', qwenInfo.skipped.length, 0)
 // 同一规则在工具摘要里也要成立：模型读到的文本不能和面板看到的两样。
-const qwenOfficialCard = { id: 'token-plan-console', label: 'Token Plan 余量', veracity: 'verified', metric: 'credits', unit: 'Credits', remaining: 2661, total: 10000, usedPercent: 73.4, bindProviders: ['qwen-token-plan-cn'] }
+const qwenOfficialCard = { id: 'token-plan-console', label: 'Token Plan 余量', veracity: 'verified', metric: 'credits', unit: 'Credits', remaining: 1500, total: 4000, usedPercent: 62.5, bindProviders: ['qwen-token-plan-cn'] }
 const qwenMeasuredCard = { id: 'token-plan-window', label: 'Token Plan 实测', estimated: true, veracity: 'local', metric: 'count', tokens: 1234567, calls: 42, windowDays: 7, bindProviders: ['qwen-token-plan-cn'], detected: { fallback: true } }
 check('官方有数 → 摘要不重复报实测行', summarizeText({ generatedAt: Date.now(), refreshMinutes: 10, notices: [], cards: [qwenOfficialCard, qwenMeasuredCard] }).includes('本实例实测，非官方余量'), false)
 check('官方变错误卡（Cookie 过期）→ 实测行必须回来', summarizeText({

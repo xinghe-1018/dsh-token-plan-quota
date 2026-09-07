@@ -243,13 +243,13 @@ function makeFetch(mode) {
         unit: 'Credits',
         estimated: undefined,
         veracity: 'verified',
-        remaining: 3620.407,
-        total: 10000,
-        usedPercent: 63.796,
-        remainingPercent: 36.204,
+        remaining: 1500,
+        total: 4000,
+        usedPercent: 62.5,
+        remainingPercent: 37.5,
         meters: [
-          { key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 10000, remaining: 3620.407, usedPercent: 63.796, remainingPercent: 36.204 },
-          { key: 'fiveHour', label: '5 小时窗口', unit: 'Credits', total: 3000 },
+          { key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 4000, remaining: 1500, usedPercent: 62.5, remainingPercent: 37.5 },
+          { key: 'fiveHour', label: '5 小时窗口', unit: 'Credits', total: 800 },
         ],
         items: [],
         error: null,
@@ -725,7 +725,7 @@ function findChip(node) {
   chip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('没读数的 5 小时窗口不出幽灵行', !panel.includes('5 小时窗口') && !panel.includes('tpq-meter'))
-  ok('主窗口照常显示（3,620.407 / 10,000 与已用%）', panel.includes('3,620') && panel.includes('63.8%'))
+  ok('主窗口照常显示（1,500 / 4,000 与已用%）', panel.includes('1,500') && panel.includes('62.5%'))
 }
 
 // 国际区 Moonshot：端点不回币种，unit 由区静态给 → 前端必须显 $，不能一律套 ¥。

@@ -21,13 +21,14 @@
 
 ### 0.1 已验证的漂移：手填 `providers` 与宿主真实路由不匹配（本机实测）
 
-`GET /token-plan-quota/summary` 与 `~/.dsh/settings.yaml` 对账结果（2026-09-06，本机）：
+`GET /token-plan-quota/summary` 与 `~/.dsh/settings.yaml` 的一次真实对账（2026-09-06；
+**余额与用量数字一律不记**，它们属于个人账号，且对结论没有任何加成）：
 
 | 事实 | 来源 |
 |---|---|
-| 本机**在用的供应商路由只有两条**：`qwen-token-plan-cn`、`minimax-cn`（`deepseek-v3.2/v4` 只是 Token Plan 网关上的模型名） | `settings.yaml` → `llm-pi-ai.providers` |
+| 这台实例**在用的供应商路由只有两条**：`qwen-token-plan-cn`、`minimax-cn`（`deepseek-v3.2/v4` 只是 Token Plan 网关上的模型名） | `settings.yaml` → `llm-pi-ai.providers` |
 | 四条凭据引用都在，且命名跟着路由走：`QWEN_TOKEN_PLAN_CN_API_KEY`、`MINIMAX_CN_API_KEY`、`DEEPSEEK_API_KEY`、`BAILIAN_CONSOLE_COOKIE` | `~/.dsh/.credentials.yaml`（只看键名，未取值） |
-| `deepseek-balance` 每 10 分钟真打一次 `api.deepseek.com` 并拿到 `remaining=40.74`，但它的 `bindProviders=['deepseek']` **没有任何在用路由对得上 → 这张卡在徽标和明细面板里都不可见**（`panelScope: current`） | summary 响应 `cards[].bindProviders` |
+| `deepseek-balance` 每 10 分钟真打一次 `api.deepseek.com` 并**拿到过非空余额**，但它的 `bindProviders=['deepseek']` **没有任何在用路由对得上 → 这张卡在徽标和明细面板里都不可见**（`panelScope: current`） | summary 响应 `cards[].bindProviders` |
 | `minimax-cn` 有路由、有 Key，却**没有任何数据源绑定** → 切到 MiniMax 模型时整枚徽标消失（README「已知边界」里那条，实为可改进项） | 同上 |
 
 结论：这不是"某个别名写错"，而是**数据源清单与实际供应商拓扑各写各的、必然漂移**——
@@ -74,7 +75,7 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 | **枚举当数字** | 智谱 `unit`：3=5 小时、6=周、1=天、5=分钟 | 预设声明 `unitEnum` 映射表，未识别的枚举值**不猜**，落到 `debug` 骨架里 |
 | **信封先判再取** | Moonshot `code==0 && status==true`；智谱 `code:200, success` | 已有 `envelopeOk` 机制（`httpEnvelopeOk` L1353），新家用 `okWhen` 声明，别新写一套 |
 | **数字可能是字符串** | Codex `individual_limit.{limit,used,remaining_percent}` | `toNumber` 已剥逗号/空白，够用；加一条单测锁住 |
-| **配置 ≠ 额度** | 千问 `quota-config` 给每个档位都躺着 `five_hour` 上限（个人版 standard＝3000），但 `usage` 只回 `per1Week*`——**这个套餐根本没有 5 小时窗口**。拿配置去拼一行「额度上限 3,000」就是把噪声当额度（2026-09-06 用户实拍打回） | **一条计量只在该窗口真回了读数时才存在**；档位配了却无读数只记 `extra.fiveHourConfiguredNoReading` 供 debug，前端再把"没有任何可说数字"的次级计量整行丢弃。接 GLM 多窗口家时同规则：`limits[]` 里没出现的 type/unit 组合不出条 |
+| **配置 ≠ 额度** | 千问 `quota-config` 给**每个档位都躺着**一个 `five_hour` 上限，但 `usage` 只回 `per1Week*`——**这个套餐根本没有 5 小时窗口**。拿配置去拼一行「额度上限 <那个配置值>」就是把噪声当额度（2026-09-06 用户实拍打回；具体数值属于个人账号，不记） | **一条计量只在该窗口真回了读数时才存在**；档位配了却无读数只记 `extra.fiveHourConfiguredNoReading` 供 debug，前端再把"没有任何可说数字"的次级计量整行丢弃。接 GLM 多窗口家时同规则：`limits[]` 里没出现的 type/unit 组合不出条 |
 | **别拿宿主 DOM 属性做交互判定** | `InputBar.tsx` 源码里有 `data-composer-card`/`data-input-scroll`，但**浏览器真正加载的产物里没有**（抓 `/assets/index-*.js` 直接 grep 验证过）→ 用"点哪里算宿主输入区"来豁免关面板必然漏 | 交互语义自己定，不依赖宿主实现细节：明细面板改成**常驻小窗**（取消「点外面就关」，只留徽标 toggle + Esc），从此不需要认识宿主输入区 |
 | **探测会产生费用** | xAI 探活会补一条真实对话消息 | **本插件永不做"猜测式探活"**；只用只读端点，`probe` 路由也只打配置好的源 |
 
@@ -233,22 +234,22 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
       `DEFAULTS.sources`**（那两条正是漂移源头）；`autoDetect: false` 时照旧用它们
 - [x] T2.7 测试：纯函数层 15 组（优先级、区映射、反例不许认错）＋接线层 13 组（假宿主三服务、
       幂等、凭据门控、用户覆盖优先、Cookie 掉线只留实测、老宿主静默退回、快照带 detected）
-- [x] T2.8 本机现场验收（2026-09-06 通过）：`~/.dsh/token-plan-quota.json` 已删掉 `sources`，
-      活路由 `detection` 显示 5 条在用路由全部有归属——`qwen-token-plan-cn` 按 host 开出官方余量卡
-      （`remaining=2117.76/10000`）＋实测兜底（有数时前端收起）、`minimax-cn` 落 `uncovered` →
-      `window:minimax-cn` 实测卡、`deepseek-official` 按路由名开出余额卡。
+- [x] T2.8 现场验收（2026-09-06 通过；**余额数字不记**）：`~/.dsh/token-plan-quota.json` 删掉 `sources` 后，
+      活路由 `detection` 显示 5 条在用路由全部有归属——`qwen-token-plan-cn` 按 host 开出官方余量卡（有数）
+      ＋实测兜底（有数时前端收起）、`minimax-cn` 落 `uncovered` → `window:minimax-cn` 实测卡、
+      `deepseek-official` 按路由名开出余额卡。
       顺带在这次验收里抓出并修掉两个真 bug：Cookie 源被写入 `bearerRef`（→ 官方卡误报"未配置凭据"）、
       代理路由按名字冒充别家（→ 同名两张卡且缓存互覆盖）。
 
-### 2.4 ②的本机验收基线（把 §0.1 的三个漂移当回归用例）
+### 2.4 ②的验收基线（把 §0.1 的三个漂移当回归用例）
 
-零配置（删掉 `~/.dsh/token-plan-quota.json` 里的 `sources`）之后，在这台实例上应当看到：
+零配置（删掉 `~/.dsh/token-plan-quota.json` 里的 `sources`）之后，这样一台实例应当看到：
 
 | 当前模型 | 期望徽标 | 判定依据 |
 |---|---|---|
 | `qwen3.8-flash`（route `qwen-token-plan-cn`，baseURL `token-plan.cn-beijing.maas.aliyuncs.com`） | Token Plan 余量（有 Cookie 走 `token-plan-console`，无 Cookie 退实测窗口） | baseURL host 命中千问 Token Plan 规则 |
-| `MiniMax-M2.5`（route `minimax-cn`，凭据 `MINIMAX_CN_API_KEY` 在） | **实测** 7 天窗口卡（C 档，官方无端点） | 路由在用 + 有凭据，但无官方端点 → 自动挂 `window:minimax-cn`。**今天这里是整枚徽标消失** |
-| 若日后加 `deepseek-official` 路由 | DeepSeek 官方余额 | 规则命中，且**只有真正有路由时才打 `api.deepseek.com`**——今天是无路由也照打、结果还看不见 |
+| `MiniMax-M2.5`（route `minimax-cn`，凭据 `MINIMAX_CN_API_KEY` 在） | **实测** 7 天窗口卡（C 档，官方无端点） | 路由在用 + 有凭据，但无官方端点 → 自动挂 `window:minimax-cn`。（修之前这里是整枚徽标消失，见 §0.1） |
+| 若加 `deepseek-official` 路由 | DeepSeek 官方余额 | 规则命中，且**只有真正有路由时才打 `api.deepseek.com`**——修之前是无路由也照打、结果还看不见 |
 
 ---
 

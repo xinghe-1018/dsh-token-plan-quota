@@ -82,13 +82,22 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 | Key 前缀 | 最后的线索（`sk-or-` → OpenRouter） |
 | 都没命中 | 挂 `window:<provider>` 实测源：徽标不空，只报本地 token/次数 |
 
+**本文里 `provider`、`路由 id`、`providers` 数组里的字符串是同一个东西**：宿主 `llm.listProviders()` 返回的
+`id`（比较时忽略大小写，`.` `_` `/` 一律当 `-`）。所以 `window:minimax-cn` 的实测卡只在路由 id 为
+`minimax-cn` 的模型下出现，检测自动挂的兜底卡也叫这个名字（`window:minimax-cn`）——两个写法指同一张卡。
+
 两条不变量：
 
-- **你写过的永远赢**。`sources` 已覆盖的路由，检测不再追加；凭据解析不到的源整个不开（不挂错误卡占地方）。
-  `autoDetect: false` 完全回到手写语义。
+- **你写过的永远赢，但它是一层叠加，不是替换**。`autoDetect: true`（默认）时，你写的 `sources` 先落地，
+  检测再补齐**你没管的部分**——不会因为多写了一条就把它不认识的卡全清掉。"已覆盖"只有三种精确含义：
+  ① 你某条源的 `providers` 里含这个路由 id → 该路由不再追加任何源；② 你有一条同名 `id` 的源 → 检测不再开
+  同名源（`skipped` 记 `id-taken-by-configured`）；③ 你写了 `{"id":"<源名>","enabled":false}` → 这个名字
+  永不再自动开（`skipped` 记 `disabled-by-config`）。除此之外，凭据解析不到的源整个不开（不挂错误卡占地方）。
+  `autoDetect: false` 才是"以你写的为唯一事实"。
 - **可解释**。每张自动开出的卡带 `detected: {by, rule, host, fallback}`，标题 tooltip 写
   「按 api.moonshot.ai 自动识别 · 区 international」；快照的 `detection` 块交代在用路由、开了什么、
-  谁因何被跳过、谁没被认出——排查"这家怎么不显示"只看这一处。老宿主没有 `llm` 服务时静默退回配置语义。
+  谁因何被跳过、谁没被认出——排查"这家怎么不显示"只看这一处（**它只在
+  `GET /token-plan-quota/summary` 的返回里，明细面板不显示这一坨**）。老宿主没有 `llm` 服务时静默退回配置语义。
 
 ## 界面
 
@@ -131,7 +140,7 @@ JSON 优先级更高）：
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `autoDetect` | `true` | 按宿主在用路由自动补齐数据源；`false` 完全回到手写 `sources` 语义。**关掉后什么都没写**时回落到内置两条：`deepseek-balance` + `token-plan-window`；只要写了 `sources`（哪怕 `"sources": []`）就以你写的为准 |
+| `autoDetect` | `true` | 按宿主在用路由自动补齐数据源。**写 `sources` 不会把它关掉**：你写的是一条叠加层，检测照样补齐你没管的路由，所以 `"sources": []` 只表示"我没额外要求"（与不写等价）。设 `false` 才是"以你写的为唯一事实"：此时什么都不写 → 回落到内置两条 `deepseek-balance` + `token-plan-window`；写 `"sources": []` → **一张卡都没有** |
 | `sources` | 无（交给检测） | 数据源清单，按顺序显示。内置源名（8 个）：`deepseek-balance`（DeepSeek 余额）、`token-plan-console`（千问控制台余量，Cookie）、`token-plan-window`（**千问本地实测账本**，非自建窗口）、`moonshot-balance`（Moonshot/Kimi 余额）、`openrouter-credits`（OpenRouter 余额）、`account-balance`（阿里云账户余额）、`fr-instances`（阿里云资源包实例列表）、`resource-package`（阿里云资源包额度列表）；或简写 `window:<provider>`（给任意供应商挂实测窗口）；或完全自定义对象（见[自定义源](#自定义源)） |
 | `moonshotRegion` | `china-mainland` | Moonshot 区：`china-mainland`（`api.moonshot.cn`，CNY）/ `international`（`api.moonshot.ai`，USD）。**两区 Key 不互通**，选错会 401（卡片会直接提示切区）；host 与币种成对切换，不做自动探测 |
 | `refreshMinutes` | `10` | 官方源的快照缓存分钟数：TTL = 分钟 × 60 秒，**下限 15 秒**，所以 `"refreshMinutes": 3` 就是每 3 分钟回源一次（想比 1 分钟更勤没有意义，秒级刷新请看 `pollSeconds`）。点面板「更新于」或带 `?fresh=1` 可强制回源 |
@@ -152,22 +161,28 @@ JSON 优先级更高）：
 
 ### 只想关掉某一张卡
 
-`sources` 的一项既可以写成内置源名（字符串），也可以写成对象——**选项只有对象形式带得上去**，所以想关掉某一家，
-要把那一项改成对象：
+`sources` 的一项既可以写成内置源名（字符串），也可以写成对象——**选项只有对象形式带得上去**，所以想关掉某一张卡，
+要把那一项改成对象。**这是一条排除项，不是整张清单的替换**：`autoDetect` 保持 `true`，其余卡照常补齐。
 
 ```json
 {
+  "autoDetect": true,
   "sources": [
-    { "id": "fr-instances", "enabled": false },
-    { "id": "moonshot-balance", "enabled": false }
+    { "id": "deepseek-balance", "enabled": false },
+    { "id": "fr-instances", "enabled": false }
   ]
 }
 ```
 
 - **对自动检测开出来的源同样有效**：写了 `{"id":"moonshot-balance","enabled":false}`，检测就不会再把这张卡补
   回来，诊断块的 `skipped` 里留一条 `disabled-by-config`——「没认出来」和「你关掉了」这两种情况得分得开。
-- **关的是这一条源，不是这个供应商**：同一路由的实测兜底窗口不受牵连（关掉 `token-plan-console`，
-  `token-plan-window` 照旧在）。连兜底窗口也不要，就点它的名关：`{"id":"window:<路由 id>","enabled":false}`。
+- **关的是这一条源，不是这个供应商**——但"这家还剩什么"取决于它在不在规则表里，这一条必须说白：
+  - **认得出的厂家**（DeepSeek / Moonshot / OpenRouter）各自只有一条官方源，关掉它**就没有这张卡**：
+    实测兜底窗口只挂在**认不出**的路由上，不会因此补上来。
+  - **千问是唯一的例外**：它同时有 `token-plan-console`（官方）与 `token-plan-window`（实测）两条预设，
+    关掉前者，后者照旧在。
+  - **认不出的厂家**（MiniMax 这类）本来就只有一张 `window:<provider>` 卡，要关它就点它的名：
+    `{"id":"window:minimax-cn","enabled":false}`（`<provider>` 就是路由 id，见上节）。
 - 不想逐张关，就把 `autoDetect` 设 `false` 之后自己列全清单。两种做法都行，**你写过的永远赢**。
 
 ### 凭据
@@ -314,13 +329,13 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面四步一次跑完
-node test/host.mjs                 # 341 项，离线
+node test/host.mjs                 # 344 项，离线
 node test/client.mjs               # 102 项，假 React/DOM/fetch
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 ```
 
-`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 341/102 项」这些写在 README
+`check-docs` 不是装饰：它把「配置表 17 个键、8 个数据源、声明 8 个出站主机、测试 344/102 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

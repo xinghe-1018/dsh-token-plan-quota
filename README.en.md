@@ -94,15 +94,27 @@ what produced "the card is queried but never displayed". Matching runs in confid
 | key prefix | Last resort (`sk-or-` → OpenRouter) |
 | nothing matched | Attach a `window:<provider>` measured source: the chip stays visible, reporting local tokens/requests only |
 
+**In this document `provider`, "route id" and the strings inside `providers` are the same thing**: the `id`
+returned by the host's `llm.listProviders()` (compared case-insensitively, with `.` `_` `/` all treated as `-`).
+So the `window:minimax-cn` card only appears for the model on route `minimax-cn`, and the fallback detection
+attaches is called exactly the same (`window:minimax-cn`) - one card, two spellings.
+
 Two invariants:
 
-- **Your configuration always wins.** Detection never touches a route already covered by a source you wrote,
-  and a source whose credential cannot be resolved is not opened at all (no error card taking up space).
-  `autoDetect: false` returns you to fully manual behaviour.
+- **Your configuration always wins - as a layer, not as a replacement.** With `autoDetect: true` (the default)
+  what you write lands first and detection then fills in **the parts you said nothing about**; adding one entry
+  never wipes the cards it did not mention. "Already covered" has exactly three meanings:
+  (1) one of your sources lists this route id in `providers` → detection adds nothing to that route;
+  (2) you have a source with the same `id` → detection will not open a second one (`skipped` records
+  `id-taken-by-configured`); (3) you wrote `{"id":"<source>","enabled":false}` → that name is never opened
+  automatically again (`skipped` records `disabled-by-config`). Apart from that, a source whose credential cannot
+  be resolved is not opened at all (no error card taking up space). Only `autoDetect: false` makes your list the
+  single source of truth.
 - **Explainable.** Every auto-opened card carries `detected: {by, rule, host, fallback}`; its tooltip says
   "identified from api.moonshot.ai · region international", and the snapshot's `detection` block lists live
   routes, what was opened, what was skipped and why, and which routes were not recognised - one place to
-  answer "why is this provider missing". On an older host without an `llm` service, detection degrades
+  answer "why is this provider missing" (**it is only in the `GET /token-plan-quota/summary` payload; the panel
+  does not render it**). On an older host without an `llm` service, detection degrades
   silently to the configured sources.
 
 ## Interface
@@ -157,7 +169,7 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `autoDetect` | `true` | Fill in sources from the host's live provider routes; `false` restores fully manual `sources` behaviour. **With detection off and nothing written**, it falls back to two built-ins: `deepseek-balance` + `token-plan-window`; as soon as you write `sources` (even `"sources": []`) what you wrote wins |
+| `autoDetect` | `true` | Fill in sources from the host's live provider routes. **Writing `sources` does not switch it off**: your entries are one extra layer and detection still covers the routes you said nothing about, so `"sources": []` merely means "I have no additional request" (identical to omitting it). Set `false` to make your list the single source of truth: with nothing written you get the two built-ins `deepseek-balance` + `token-plan-window`, and with `"sources": []` you get **no cards at all** |
 | `sources` | none (detection decides) | Ordered source list. Built-in names (8): `deepseek-balance` (DeepSeek balance), `token-plan-console` (Qwen console quota, cookie), `token-plan-window` (**Qwen local ledger** - not a custom window), `moonshot-balance` (Moonshot/Kimi balance), `openrouter-credits` (OpenRouter balance), `account-balance` (Aliyun account balance), `fr-instances` (Aliyun resource-pack instances), `resource-package` (Aliyun resource-package allowances); or the `window:<provider>` shorthand (a measured window for any vendor); or a custom object (see [Custom sources](#custom-sources)) |
 | `moonshotRegion` | `china-mainland` | `china-mainland` (`api.moonshot.cn`, CNY) or `international` (`api.moonshot.ai`, USD). **Keys do not work across regions**; a wrong region returns 401 and the card tells you to switch. Host and currency switch as a pair - there is no auto-probing |
 | `refreshMinutes` | `10` | Cache TTL for official sources in minutes: TTL = minutes × 60 s, **floor 15 s**, so `"refreshMinutes": 3` means one upstream call per 3 minutes (sub-minute polling is not what this key is for - see `pollSeconds`). The panel's "updated" line or `?fresh=1` forces a refetch |
@@ -179,13 +191,15 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 ### Turning one single card off
 
 An item of `sources` may be a built-in name (a string) or an object - **options only attach to the object form**,
-so to switch a vendor off, turn that item into an object:
+so to switch one card off, turn that item into an object. **This is an exclusion, not a replacement of the whole
+list**: leave `autoDetect` at `true` and every other card is still filled in.
 
 ```json
 {
+  "autoDetect": true,
   "sources": [
-    { "id": "fr-instances", "enabled": false },
-    { "id": "moonshot-balance", "enabled": false }
+    { "id": "deepseek-balance", "enabled": false },
+    { "id": "fr-instances", "enabled": false }
   ]
 }
 ```
@@ -193,9 +207,14 @@ so to switch a vendor off, turn that item into an object:
 - **It works on sources that detection opened too**: with `{"id":"moonshot-balance","enabled":false}` written,
   detection will not add that card back, and the `skipped` list keeps a `disabled-by-config` entry - so
   "not recognised" and "you switched it off" stay distinguishable.
-- **It switches off this source, not this vendor**: the measured fallback window on the same route is untouched
-  (switch off `token-plan-console` and `token-plan-window` stays). If you want that fallback gone too, name it:
-  `{"id":"window:<route id>","enabled":false}`.
+- **It switches off this source, not this vendor** - but what is left for that vendor depends on whether it is in
+  the rule table, and that has to be spelled out:
+  - **Recognised vendors** (DeepSeek / Moonshot / OpenRouter) have exactly one official source each, so switching
+    it off leaves **no card**: the measured fallback is only attached to routes detection could *not* recognise.
+  - **Qwen is the exception**: it carries both `token-plan-console` (official) and `token-plan-window`
+    (measured), so switching the first off leaves the second in place.
+  - **Unrecognised vendors** (MiniMax and friends) already have only a `window:<provider>` card; to drop that,
+    name it: `{"id":"window:minimax-cn","enabled":false}` (`<provider>` is the route id - see the section above).
 - Prefer a clean sweep? Set `autoDetect: false` and write the whole list yourself. Either way,
   **what you wrote always wins**.
 
@@ -365,7 +384,7 @@ see [`SECURITY.md`](SECURITY.md) for details.
 
 ```bash
 npm run check                       # all four steps below
-node test/host.mjs                  # 341 assertions, offline
+node test/host.mjs                  # 344 assertions, offline
 node test/client.mjs                # 102 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code

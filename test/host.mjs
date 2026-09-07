@@ -951,6 +951,23 @@ const onCfg = hostCfg()
 await applyAutoDetect(onCfg, kimiHost())
 check('对照组：同样的宿主没写这条就照常开出源', onCfg.sources.map(source => source.id), ['moonshot-balance'])
 
+// 文档写死的不对称：关掉"已认出"厂家的唯一源 = 这家没卡；实测兜底只挂在认不出的路由上。
+const twoVendorHost = () => fakeHost({
+  routes: [{ id: 'ds', name: 'DeepSeek' }, { id: 'minimax-cn', name: 'MiniMax' }],
+  profiles: {
+    ds: { baseURL: 'https://api.deepseek.com', apiKeyEnv: 'DEEPSEEK_API_KEY' },
+    'minimax-cn': { baseURL: 'https://api.minimaxi.cn/v1', apiKeyEnv: 'MINIMAX_CN_API_KEY' },
+  },
+  refs: { DEEPSEEK_API_KEY: 'sk-d', MINIMAX_CN_API_KEY: 'sk-m' },
+})
+const mixedOff = effectiveConfig({ sources: [{ id: 'deepseek-balance', enabled: false }], minIntervalMs: 0 }, ctxStub)
+await applyAutoDetect(mixedOff, twoVendorHost())
+check('关掉已认出厂家的唯一源，不补实测窗口', mixedOff.sources.map(source => source.id), ['window:minimax-cn'])
+check('排除项是叠加层：不会把别家自动卡清掉', mixedOff.sources.length, 1)
+const mixedOn = hostCfg()
+await applyAutoDetect(mixedOn, twoVendorHost())
+check('对照组：不写排除项时两家都有卡', mixedOn.sources.map(source => source.id).sort(), ['deepseek-balance', 'window:minimax-cn'])
+
 const qwenHost = () => fakeHost({
   routes: [{ id: 'qwen-token-plan-cn', name: 'Qwen' }],
   profiles: { 'qwen-token-plan-cn': { baseURL: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY' } },

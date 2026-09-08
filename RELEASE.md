@@ -62,33 +62,89 @@ curl -X PUT https://api.github.com/repos/xinghe-1018/dsh-token-plan-quota/topics
 
 ## 3. 发 npm
 
-### 3.1 自动化：推 tag，CI 发
+### 3.1 自动化：你只推一个 tag，CI 去发
 
-```bash
-node scripts/release.mjs --patch          # 或 --minor / --major / --version X.Y.Z；先加 --dry-run 看计划
+**先记住一句话：npm 的身份不在你电脑上。** 配好一次性前提之后，本机永远不需要 `npm adduser` /
+`npm login`，也不会再遇到 401 —— 发布是 GitHub 那台 CI 机器干的，你的手只到"推 tag"为止。
+
+```
+你的电脑                                    GitHub CI 机器                    npm 官网
+────────────────────────────────          ──────────────────────────────    ──────────
+npm run release -- --patch
+  1 核前置：工作区干净 / 在 main /
+           [Unreleased] 非空 / 版本没被占
+  2 改 package.json 版本
+  3 把 [Unreleased] 搬进 ## [X] - 日期
+    并补 compare 链接
+  4 git commit + git tag vX.Y.Z
+  5 本地跑 npm run check（不过就什么都不推）
+  6 git push origin main && git push origin vX.Y.Z
+                                        ──►  tag 推上去 = 触发 publish.yml
+                                              a 核 tag ↔ package.json ↔ CHANGELOG
+                                                三处一致（不一致直接拒）
+                                              b npm run check
+                                              c npm pack 扫包：有没有夹带截图
+                                                中间产物、有没有漏掉 README 的图
+                                              d npm publish --access public
+                                                                    ──────────►  上架
+                                              e 回读 registry 确认真上了
 ```
 
-它做四件事，任何一步不过就**不推**：核前置（工作区干净、在 main、`[Unreleased]` 非空、
-版本没被占用）→ 切 `package.json` 版本 + 把 `[Unreleased]` 正文搬进 `## [X] - 日期` 并补 compare 链接 →
-本地提交并打 tag（tag 先落本地，因为 `check-docs` 要能看见它）→ `npm run check` 全绿后才推 `main` 与 tag。
+#### 第 0 步：一次性前提（只做一次，二选一）
 
-tag 一推上去，`.github/workflows/publish.yml` 接手：核 tag↔`package.json`↔CHANGELOG 三处一致 →
-`npm run check` → `npm pack --dry-run` 扫一遍有没有夹带截图中间产物、有没有漏掉 README 引用的图 →
-`npm publish --access public` → 回读 registry 确认版本真的上了。
+**A. Trusted Publishing（推荐：不留任何密钥，包还带 provenance 签名）**
 
-**一次性前提**，二选一，只能你在 npmjs.com 上点（机器替不了）：
+1. 打开 <https://www.npmjs.com/package/dsh-token-plan-quota/access>
+2. 选 **Trusted publishers** → **Add trusted publisher**
+3. 选 GitHub，四个框照抄：
 
-| 方式 | 要做什么 | 结果 |
-|---|---|---|
-| **Trusted Publishing**（OIDC，免密钥，推荐） | npmjs.com → 本包 → Publishing access → Add trusted publisher：GitHub owner `xinghe-1018`、repo `dsh-token-plan-quota`、**workflow 文件名必须写 `publish.yml`** | 不需要任何 secret，包带 provenance 签名，可溯源到这次 CI run |
-| Automation token | npmjs.com → Access Tokens → Automation → 仓库 Settings→Secrets 加 `NPM_TOKEN` | 也能自动发，但没有 provenance；工作流检测到 secret 就自动改走这条 |
+   | 框 | 填 |
+   |---|---|
+   | Owner | `xinghe-1018` |
+   | Repository | `dsh-token-plan-quota` |
+   | Workflow filename | `publish.yml` ← **必须一字不差**，就是 `.github/workflows/` 下那个文件名 |
+   | Environment | 留空 |
 
-两个已知坑：
+4. 保存。**GitHub 这边什么都不用配**（没有 secret 要建）。
 
-- 两种前提都没配时，报错是 `404 Not Found - PUT https://registry.npmjs.org/<包名>`，看着像包名出问题，
-  其实是**没有身份**。去看 Actions 日志里 `id-token` 权限与那步的报错。
-- runner 自带的 npm 版本偏旧时，OIDC 发布会**假报 404 / "Access token expired"**。工作流里已有一步
-  `npm install -g npm@latest` 专门挡它；手动复现时也要先升 npm。
+**B. NPM_TOKEN（备选：OIDC 用不了时才走）**
+
+1. <https://www.npmjs.com/settings/tokens> → **Generate New Token** → 类型选 **Automation**
+   （`Read` 发不了；`Publish` 在有 2FA 时仍要 OTP，`Automation` 免交互）
+2. GitHub 仓库 → **Settings → Secrets and variables → Actions → New repository secret**
+   - Name：`NPM_TOKEN`（名字必须完全一样）
+   - Secret：刚生成的那串
+3. 完事。工作流检测到这个 secret 就自动改走 token，并且**不带 `--provenance`**
+   （token 模式下带它会报 `publisher is not trusted`）。
+
+#### 第 1 步：以后每次发版
+
+```bash
+npm run release -- --patch --dry-run   # 先看计划：版本号、CHANGELOG 怎么搬，不写任何东西
+npm run release -- --patch             # 真发（--patch / --minor / --major / --version X.Y.Z）
+```
+
+#### 第 2 步：确认发出去了
+
+1. 看流水线：<https://github.com/xinghe-1018/dsh-token-plan-quota/actions/workflows/publish.yml> 变绿；
+   最后一步 `verify it landed` 会自己去 registry 回读，红就是没上。
+2. 本地核一眼（**这条不需要登录**，谁都能查）：
+
+   ```bash
+   npm view dsh-token-plan-quota version --registry=https://registry.npmjs.org/
+   npm view dsh-token-plan-quota@0.4.5 --registry=https://registry.npmjs.org/   # 换成刚发的版本
+   ```
+
+3. 用了方案 A 的话，用户侧还能验签：`npm audit signatures`。
+
+#### 失败时最先看什么
+
+| 现象 | 真实含义 |
+|---|---|
+| `404 Not Found - PUT https://registry.npmjs.org/dsh-token-plan-quota` | **不是包名问题**，是没认证上：第 0 步没配、或 workflow filename 写错了 |
+| `Access token expired or revoked` + 404 | 同上；也可能是 runner 自带 npm 太旧 —— 工作流已有一步 `npm install -g npm@latest`，手动复现时也要先升 |
+| CI 里 `tag 与 package.json 不一致` | tag 打在了错误的 commit 上（比如打完 tag 又提交了修复）。要么移动 tag 重推，要么下一版 |
+| 本机 `npm publish` 报 E401 | 你在用旧的手动路径（见 §3.2）。自动化路径不需要本机登录 |
 
 ### 3.2 手动发布（应急或离线）
 

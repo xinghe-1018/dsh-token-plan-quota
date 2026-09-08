@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-09-08
+
 ### Added
 
 - **发布自动化**：`.github/workflows/publish.yml` 接 `v*` tag，在 CI 里核"tag ↔ `package.json` ↔
@@ -330,6 +332,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.6]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.2...v0.4.3

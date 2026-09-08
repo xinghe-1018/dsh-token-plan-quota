@@ -429,14 +429,14 @@ see [`SECURITY.md`](SECURITY.md) for details.
 
 ```bash
 npm run check                       # all four steps below
-node test/host.mjs                  # 371 assertions, offline
+node test/host.mjs                  # 373 assertions, offline
 node test/client.mjs                # 138 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 371/138 tests" - and checks them against the code and a real
+config table, 8 sources, 8 declared outbound hosts, 373/138 tests" - and checks them against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).
 

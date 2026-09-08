@@ -52,6 +52,13 @@ All notable changes to this project are documented here. The format follows
   发布步骤自己 `printf ... >> ~/.npmrc`，OIDC 路径保持 `.npmrc` 里没有 `_authToken` 键。
   `test/host.mjs` 三条新断言：`publish.yml`/`release.yml` 不许再出现 `registry-url:`、
   token 分支必须显式写 `_authToken`。
+- **publish 流水线不幂等，重跑永远发不出去**（v0.4.6 首跑撞上：`npm publish` 真把包传上去了，
+  `verify it landed` 却因为 `npm view` 读 runner 本地 `~/.npm/_cacache` 拿到旧快照，误报
+  60 秒查不到 → 整条 run 判失败 → 后面的 GitHub Release 步骤被跳过；下一次 tag 强推重跑，
+  `npm publish` 又被 registry "You cannot publish over the previously published versions"
+  挡下来，公告就永远建不出来）。两处一起改：publish 把这条 E403 当"其实已经发过了"继续往下走；
+  verify 换成 `curl -fsSL -H 'Cache-Control: no-cache' registry.npmjs.org/<pkg>` 打 HTTP，
+  绕开 npm 本地缓存。两条各一条断言锁进 `test/host.mjs`（371 → 373 项）。
 
 ## [0.4.5] - 2026-09-08
 

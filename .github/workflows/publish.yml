@@ -128,6 +128,16 @@ jobs:
           tail -n 15 /tmp/publish.log | sed 's/"/\&#34;/g' | while IFS= read -r line; do
             [ -n "$line" ] && echo "::notice::npm> $line"
           done
+          # 幂等：npm 一旦收下某个版本号就永远不能覆盖（哪怕之后 unpublish 也一样），
+          # 所以"publish 挂了 + registry 已经有这个版本"是可以合法出现的组合 —— 上一次
+          # run 34199864723 里 npm publish 已经真上传了 0.4.6、verify 因为本地 npm cache
+          # 读到旧快照误报"查不到"→ 步骤红、后续 GitHub Release 被跳过；重跑时 npm publish
+          # 又报 "cannot publish over previously published versions: 0.4.6" 再挂一次。
+          # 这条 grep 就是把这种情况当成"其实已经发过了，继续往下走"。
+          if [ "$rc" -ne 0 ] && grep -q 'You cannot publish over the previously published versions' /tmp/publish.log; then
+            echo "::notice::registry 已有 ${{ github.ref_name }} 这个版本（上一次 run 上传成功但后续步骤没跑完），继续走 verify"
+            rc=0
+          fi
           if [ "$rc" -ne 0 ]; then
             dump_annotations /tmp/publish.log
             echo "::error::npm publish 退出码 $rc（上面 30 行是完整日志）"
@@ -140,9 +150,18 @@ jobs:
         run: |
           set -euo pipefail
           ver="$(node -p "require('./package.json').version")"
+          # 用 HTTP 直查 registry，不要 `npm view` —— 后者会先读本地 npm cache
+          # （`~/.npm/_cacache`）；上一版 verify 就是这样被 runner 里那份"还没收到
+          # 0.4.6"的旧快照骗到，60 秒全 404，其实 registry 端已经有 dist-tags.latest=0.4.6。
+          # `curl -fsSH 'Cache-Control: no-cache'` 直接打 registry，走 CDN 的最新源，
+          # 一次就能拿到真相。
+          url="https://registry.npmjs.org/dsh-token-plan-quota"
           for i in 1 2 3 4 5 6; do
-            got="$(npm view "dsh-token-plan-quota@$ver" version 2>/dev/null || true)"
-            if [ "$got" = "$ver" ]; then echo "::notice::registry 已有 dsh-token-plan-quota@$ver"; exit 0; fi
+            body="$(curl -fsSL -H 'Cache-Control: no-cache' "$url" 2>/dev/null || true)"
+            if printf '%s' "$body" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.exit(j.versions && j.versions[process.argv[1]] ? 0 : 1)}catch{process.exit(1)}})' "$ver"; then
+              echo "::notice::registry 已有 dsh-token-plan-quota@$ver（第 $i 次查询）"
+              exit 0
+            fi
             sleep 10
           done
           echo "::error::发布后 60 秒内 registry 查不到 $ver"

@@ -1190,6 +1190,16 @@ ok('publish.yml 走 NPM_TOKEN 那条路时自己写 ~/.npmrc（补偿 registry-u
   /registry\.npmjs\.org\/:_authToken/.test(publishYml))
 ok('release.yml 的 setup-node 也不带 registry-url（同一条坑）',
   !/registry-url\s*:/.test(releaseYml))
+// 幂等：npm 一旦收下版本号就不能覆盖，publish 报 "cannot publish over" 时应该继续走 verify，
+// 别再让整条 run 挂在那里（真踩过：34199864723 上传成功但 verify 误红，重跑又被"不能覆盖"卡住，
+// GitHub Release 两次都建不出来）。
+ok('publish 步骤把"version 已在 registry"当成功继续（幂等）',
+  /cannot publish over the previously published versions/.test(publishYml))
+// verify 不能靠 `npm view` —— 它会先读 runner 上的 ~/.npm/_cacache，收到旧快照就假阳红；
+// 直接 curl registry HTTP + `Cache-Control: no-cache` 才是真相。
+ok('verify it landed 走 curl + registry HTTP，不用 npm view',
+  /registry\.npmjs\.org\/dsh-token-plan-quota/.test(publishYml)
+    && !/npm view "dsh-token-plan-quota@\$ver"/.test(publishYml))
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })

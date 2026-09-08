@@ -44,6 +44,14 @@ All notable changes to this project are documented here. The format follows
   真正的问题在盒模型，修好后功能完好，实测双击仍能清掉悬浮矩形回到锚定态）。
   三条回归锁进 `test/client.mjs`：`.tpq-panel` 必须是 border-box、`onDoubleClick: resetFloat`
   与 `resetFloat` 本体都必须在（均已反向验证会红）。
+- **OIDC 发布被 setup-node 的 `registry-url` 挡在门外**（首次真跑 publish.yml 时踩到）。
+  `actions/setup-node@v4` 只要给了 `registry-url: https://registry.npmjs.org`，就会往
+  `~/.npmrc` 写一行 `_authToken=${NODE_AUTH_TOKEN}`；npm 客户端**不展开 `${...}`**，于是 OIDC
+  那条本应"没 token、走 runner 注入"的路被这把字面量假钥匙挡住，返回 "Access token expired
+  or revoked"（真实原因完全无关）。修法是 setup-node 只留 `node-version`，token 路径下由
+  发布步骤自己 `printf ... >> ~/.npmrc`，OIDC 路径保持 `.npmrc` 里没有 `_authToken` 键。
+  `test/host.mjs` 三条新断言：`publish.yml`/`release.yml` 不许再出现 `registry-url:`、
+  token 分支必须显式写 `_authToken`。
 
 ## [0.4.5] - 2026-09-08
 

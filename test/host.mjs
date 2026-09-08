@@ -1180,6 +1180,16 @@ ok('publish.yml 的 contents 权限升到 write（GitHub Release 要写权限，
   /permissions:[\s\S]*?contents:\s*write[\s\S]*?id-token:\s*write/.test(publishYml))
 ok('GitHub Release 步骤排在 verify it landed 之后（没进 registry 就不该发公告）',
   publishYml.indexOf('name: verify it landed') < publishYml.indexOf('name: create GitHub Release'))
+// setup-node 的 registry-url 会往 ~/.npmrc 写 `_authToken=${NODE_AUTH_TOKEN}`，
+// 而 npm 不会展开 `${...}`，OIDC 路径就被这把假钥匙挡在门外（症状是"Access token
+// expired"式的 401/404，超误导）。这条闸门是踩坑之后加上的，别再被"看着更规范"
+// 的一句话改回去。
+ok('publish.yml 的 setup-node 不带 registry-url（OIDC 会假 401，见注释）',
+  !/registry-url\s*:/.test(publishYml))
+ok('publish.yml 走 NPM_TOKEN 那条路时自己写 ~/.npmrc（补偿 registry-url 的缺失）',
+  /registry\.npmjs\.org\/:_authToken/.test(publishYml))
+ok('release.yml 的 setup-node 也不带 registry-url（同一条坑）',
+  !/registry-url\s*:/.test(releaseYml))
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })

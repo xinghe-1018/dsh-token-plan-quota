@@ -32,9 +32,13 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
+        # 千万不要在这里加 registry-url！setup-node 会往 ~/.npmrc 写
+        #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+        # 这行 —— 而 npm 自己**不会**展开 `${...}`，于是 OIDC 发布时它拿着字面串
+        # "${NODE_AUTH_TOKEN}" 当 token，直接被 registry 401/404（症状超误导人：
+        # 报 "Access token expired or revoked"）。NPM_TOKEN 那条路下面手动写 .npmrc。
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       # runner 自带的 npm 可能不支持 OIDC 发布，症状是 404（见上面那条注释）。
       - name: bump npm on the runner
@@ -84,6 +88,10 @@ jobs:
           fi
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::notice::用 NPM_TOKEN 发布（无 provenance）"
+            # setup-node 上面故意没配 registry-url，那这一行的 .npmrc 就得自己写；
+            # 只在 token 路径下写，OIDC 路径下 ~/.npmrc 保持"没有 _authToken 键"，npm
+            # 才会走 runner 注入的 OIDC token。
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$HOME/.npmrc"
             npm publish --access public
           else
             echo "::notice::用 OIDC trusted publishing 发布（带 provenance）"

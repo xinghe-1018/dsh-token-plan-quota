@@ -153,7 +153,11 @@ function main() {
   // 没有它就永远红，于是"先自检再推"变成死循环。
   git('tag', '-a', `v${target}`, '-m', `${pkg.name} ${target}`)
   console.log('本地已提交并打 tag，开始全量自检…')
-  const check = spawnSync('npm', ['run', 'check'], { cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
+  // Windows 上 `npm` 是 `npm.cmd`，spawnSync 不带 shell 时找不到它（.cmd 不是可执行体）；
+  // 但 Node 24 起，`shell: true` + args 数组会打 DEP0190（args 只拼接不转义，可能被注入）。
+  // 我们 args 是空的，直接指到 npm.cmd 就绕开 shell，也绕开这条 deprecation。
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const check = spawnSync(npmBin, ['run', 'check'], { cwd: ROOT, stdio: 'inherit', shell: false })
   if (check.status !== 0) {
     console.error('\n自检没过 —— 没有推送任何东西。')
     console.error(`回退：git tag -d v${target} && git reset --soft HEAD~1`)

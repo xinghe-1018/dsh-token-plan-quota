@@ -122,6 +122,12 @@ jobs:
             set -e
           fi
           cat /tmp/publish.log
+          # 成功也把 npm 打的最后几行贴出来（`+ dsh-token-plan-quota@X.Y.Z` 那行 + provenance
+          # 回执）—— 上一版这里只在 rc≠0 时才 dump，结果 publish "success" 但 registry 上
+          # 什么都没有，光看步骤状态完全没线索。
+          tail -n 15 /tmp/publish.log | sed 's/"/\&#34;/g' | while IFS= read -r line; do
+            [ -n "$line" ] && echo "::notice::npm> $line"
+          done
           if [ "$rc" -ne 0 ]; then
             dump_annotations /tmp/publish.log
             echo "::error::npm publish 退出码 $rc（上面 30 行是完整日志）"

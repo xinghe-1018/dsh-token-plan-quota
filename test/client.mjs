@@ -1024,5 +1024,21 @@ function findChip(node) {
     /className:\s*"tpq-body",\s*style:\s*bodyStyle/.test(code))
 }
 
+/* 面板必须 border-box。拖拽/缩放存进 localStorage 的是 getBoundingClientRect 的 border box，
+ * 而 style.width/height 默认按 content box 解释 —— 于是每点一次标题栏（pointerdown 就会 detach
+ * 并存尺寸）面板永久胖 2px：实机反馈"每次点开明细，窗口就大一点"，实测六次点击 382→394，
+ * 加 border-box 后六次纹丝不动。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const panel = /\.tpq-panel\{[^}]*\}/.exec(code)
+  ok('.tpq-panel 规则存在', panel !== null)
+  ok('.tpq-panel 是 border-box（存 border box 却按 content box 套回＝每点一次大 2px）',
+    panel?.[0].includes('box-sizing:border-box') === true)
+  // 双击复位是明确要求保留的功能（能修 bug 就不删功能），这里钉住它还在。
+  ok('双击标题栏仍会清掉悬浮矩形、回到锚定态',
+    /onDoubleClick:\s*resetFloat/.test(code) === true
+      && /const resetFloat = \(\) => \{[\s\S]{0,80}saveFloatBox\(null\)[\s\S]{0,80}setFloatBox\(null\)/.test(code) === true)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

@@ -20,6 +20,19 @@ All notable changes to this project are documented here. The format follows
   前置会拦四件事：工作区不干净、不在 `main`、`[Unreleased]` 是空的、版本号或 tag 已被占用。
   先加 `--dry-run` 可以看计划而不写入任何东西。
 
+### Fixed
+
+- **每点一次标题栏，明细窗口就永久大一点**（实机反馈）。根因不在点击，在**量到的和套回去的
+  不是同一个盒**：拖拽/缩放存进 `localStorage` 的是 `getBoundingClientRect()` 的 border box，
+  而 `.tpq-panel` 没写 `box-sizing`，`style.width/height` 默认按 content box 解释 —— 于是每轮
+  加回 1px×2 边框。而标题栏的 `onPointerDown` 会先 detach 并存一次尺寸，所以"只是点了一下
+  额度明细标题"也会触发。实测连点六次 `382→384→386→388→390→392→394`；`.tpq-panel` 加
+  `box-sizing:border-box` 后六次稳定在 `380×434`。
+  **双击标题栏复位保留不动**（先试过删它，但那治不了这个 bug —— 单击同样会存尺寸；
+  真正的问题在盒模型，修好后功能完好，实测双击仍能清掉悬浮矩形回到锚定态）。
+  三条回归锁进 `test/client.mjs`：`.tpq-panel` 必须是 border-box、`onDoubleClick: resetFloat`
+  与 `resetFloat` 本体都必须在（均已反向验证会红）。
+
 ## [0.4.5] - 2026-09-08
 
 ### Fixed

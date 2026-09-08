@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-08
+
 ### Fixed
 
 - **徽标收成工具行里的一枚小胶囊**（实机反馈"效果太差"后的定案）。之前 0.4.4 的 312px 上限没治本：
@@ -44,7 +46,7 @@ All notable changes to this project are documented here. The format follows
   dock 必须在前（上一轮翻转时漏改），一直红着。按代码与 README（"输入框**工具行**里的徽标"）
   统一成工具行优先，测试同步改正。
 
-## [0.4.4] - 2026-09-07
+## [0.4.4] - 2026-09-08
 
 ### Added
 
@@ -85,7 +87,7 @@ All notable changes to this project are documented here. The format follows
 - 截图全部重拍（标签变了）。README 顶部那段 ASCII 示意图原来把余量条和「实测」画在同一枚徽标上，
   正好违反本插件"没分母就不画条"的立场——改成并排两行，一行官方、一行实测，把这条差异直接摆出来。
 
-## [0.4.3] - 2026-09-07
+## [0.4.3] - 2026-09-08
 
 ### Added
 
@@ -293,6 +295,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.5]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.1...v0.4.2

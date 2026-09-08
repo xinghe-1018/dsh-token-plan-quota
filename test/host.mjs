@@ -1134,6 +1134,52 @@ check('快照的 detection 块可诊断', [e2eSnap.detection.enabled, e2eSnap.de
 check('config 回显也带 detected（排查时能对上）', e2eSnap.config.sources[0].detected.by, 'fallback-window')
 check('detection 里没有密钥字段', JSON.stringify(e2eSnap.detection).includes('sk-'), false)
 resetInstanceState()
+
+/* --- CHANGELOG 抽取器（publish.yml 建 GitHub Release 用它拿正文） -------------- */
+// 这里只测纯函数（不 spawn node）：抽错节 = 发出去的公告正文挂到别的版本下面，
+// 是最难事后发现的一种漂。所有断言都对着真实 CHANGELOG 跑，不造假数据。
+// 用 fileURLToPath 而不是 import.meta.dirname —— 后者要 Node 20.11+，本仓 engines 写的是 >=20。
+const { extract } = await import('../scripts/extract-changelog-section.mjs')
+const changelogText = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
+const sec45 = extract(changelogText, '0.4.5')
+ok('抽取器拿到 0.4.5 这一节（非空）', typeof sec45 === 'string' && sec45.length > 200)
+ok('0.4.5 那节不带下一条的 ## 头', !sec45.includes('\n## ['))
+ok('0.4.5 那节不带 [Unreleased]（那是发布前的暂存区）', !sec45.includes('[Unreleased]'))
+ok('短版本号 0.4 不误命中 0.4.5（会退回 null）', extract(changelogText, '0.4') === null)
+ok('不存在的版本返回 null 而不是抛', extract(changelogText, '9.9.9') === null)
+ok('非 X.Y.Z 直接判 null（防被拼进正则当元字符）', extract(changelogText, 'unreleased') === null)
+ok('--heading 时首行就是节标题', extract(changelogText, '0.4.5', { heading: true }).startsWith('## [0.4.5] -'))
+// 别把 extract 的 CLI 分支跑起来 —— import 时如果 argv[1] 判定错，stdout 会被抢着打印，
+// 这里通过"import 后 passed 计数还在涨"来旁证：上面 7 条断言就是这次 import 的产物。
+ok('CLI 守卫：import 时 argv[1] 不是本文件，不触发 process.exit', true)
+
+/* --- 发布流水线的关键契约（三处文件之间的耦合，漂了就发不出去） ------------- */
+// release.yml：浏览器一键发版；publish.yml：tag push 触发 npm 发布 + 建 GitHub Release。
+// 这三步互相有硬约束 —— 版本一致、CHANGELOG 有该节、tag 存在 —— 任一条漂了都会在 CI
+// 才炸；在这里先红，比在 Actions 里对着 5 分钟前的 log 找原因便宜得多。
+const releaseYml = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+const publishYml = readFileSync(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8')
+const releaseMjs = readFileSync(new URL('../scripts/release.mjs', import.meta.url), 'utf8')
+ok('release.yml 有 workflow_dispatch，且只开 patch/minor/major 三个选项',
+  /on:\s*\n\s*workflow_dispatch/.test(releaseYml) && /options:\s*\n\s*-\s*patch\s*\n\s*-\s*minor\s*\n\s*-\s*major/.test(releaseYml))
+ok('release.yml 声明 contents: write（要往 origin 推 commit + tag）',
+  /permissions:\s*\n\s*contents:\s*write/.test(releaseYml))
+ok('release.yml 不复制发布逻辑，直接调 scripts/release.mjs',
+  /node scripts\/release\.mjs\s+--\$\{\{\s*inputs\.bump\s*\}\}/.test(releaseYml))
+ok('release.yml 用 fetch-depth: 0（check-docs 要能看见所有 tag）',
+  /fetch-depth:\s*0/.test(releaseYml))
+ok('release.mjs 在 CI 上补 git 身份（runner 上没配 user.email，`git tag -a` 会挂）',
+  /IS_CI[\s\S]*?git\('config',\s*'user\.name'/.test(releaseMjs))
+ok('release.mjs 用 HEAD:main 推（detached HEAD 下 `git push origin main` 会把旧 tip 又推一遍）',
+  /git\('push',\s*'origin',\s*'HEAD:main'\)/.test(releaseMjs))
+ok('publish.yml 建 GitHub Release：抽取 + softprops + 只在 tag push 时跑',
+  /name:\s*build release notes/.test(publishYml)
+    && /uses:\s*softprops\/action-gh-release@v2/.test(publishYml)
+    && /if:\s*github\.event_name\s*==\s*'push'/.test(publishYml))
+ok('publish.yml 的 contents 权限升到 write（GitHub Release 要写权限，npm 端不受影响）',
+  /permissions:[\s\S]*?contents:\s*write[\s\S]*?id-token:\s*write/.test(publishYml))
+ok('GitHub Release 步骤排在 verify it landed 之后（没进 registry 就不该发公告）',
+  publishYml.indexOf('name: verify it landed') < publishYml.indexOf('name: create GitHub Release'))
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })

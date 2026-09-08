@@ -19,6 +19,16 @@ All notable changes to this project are documented here. The format follows
   `## [X] - 日期` 并补 compare 链接、提交、打 tag、跑全量自检，全绿才推 `main` + tag。
   前置会拦四件事：工作区不干净、不在 `main`、`[Unreleased]` 是空的、版本号或 tag 已被占用。
   先加 `--dry-run` 可以看计划而不写入任何东西。
+- **浏览器一键发版**：`.github/workflows/release.yml` 接 `workflow_dispatch`，Actions 页面点
+  Run workflow → 选 `patch`/`minor`/`major` → 跑。跑的还是上面那段 `release.mjs`，逻辑不复制；
+  差别只在 runner 上 checkout 是 detached HEAD 且没配过 git 身份 —— 脚本看到 `GITHUB_ACTIONS=true`
+  会补 `user.name/email` 并把推的分支写成 `HEAD:main`。commit 里带 `[bot]` 署名，不冒名。
+- **tag 一落地自动开 GitHub Release**：`publish.yml` 在 `npm publish` + 回读 registry 之后
+  追加两步 —— 用 `scripts/extract-changelog-section.mjs` 从 CHANGELOG 抠出这一版的正文（逐行
+  扫，不用 `\s*\n` 那种会连吞下一节的正则；同一套代码在 `release.mjs` 里也踩过的坑），落成
+  `release-notes.md` 交给 `softprops/action-gh-release@v2` 的 `body_path`。抽错节等于把公告
+  挂到别的版本下面，8 条回归锁进 `test/host.mjs`。publish 失败（`verify it landed` 红灯）时
+  公告也不会建，registry 与 GitHub 上不会一个说发了一个说没发。
 
 ### Fixed
 

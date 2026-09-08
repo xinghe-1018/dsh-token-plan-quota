@@ -1,0 +1,51 @@
+name: release
+
+# 浏览器一键发版：在 Actions 页面点 "Run workflow" → 选 patch/minor/major → 跑。
+# 与本地 `npm run release` 走同一份 scripts/release.mjs，不复制逻辑。
+# 推完 tag 之后 publish.yml 接手（`v*` tag 触发），这一步只负责"切版本 + 打 tag"。
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: '版本切哪一位（0.4.5 → 0.4.6 选 patch）'
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+# 要往 origin 推 commit + tag；actions/checkout 的 persist-credentials（默认 true）
+# 会把 GITHUB_TOKEN 写进 remote，release.mjs 里的 `git push` 就直接用它。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: bump + tag + push
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 —— check-docs 会核 CHANGELOG 里的 compare 链接指向真实 tag，
+      # 浅克隆里 tag 全"不存在"，`npm run check` 那一步会假阳红。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: release ${{ inputs.bump }}
+        run: node scripts/release.mjs --${{ inputs.bump }}
+
+      # 只到"计划"这一层，让人先看清再手动跑一次不带 --dry-run 的。
+      # （GitHub Actions 的确认按钮没法插在中间，所以 dry-run 得走 publish.yml 的
+      # workflow_dispatch 入口 —— 那边默认就是 dry_run=true。）
+      - name: what just happened
+        if: success()
+        shell: bash
+        run: |
+          echo "::notice::tag 已推。publish.yml 会在同一个 Actions 列表里接手（跑全量 check → npm publish → 回读 registry → 建 GitHub Release）。"
+          echo "看 https://github.com/${GITHUB_REPOSITORY}/actions"

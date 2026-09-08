@@ -8,6 +8,10 @@
  * 推到 tag 之后就没这台机器的事了：`.github/workflows/publish.yml` 接手，
  * 在 CI 里再跑一遍全量检查才真发 npm。所以本地这一步的失败**不会**发出半个包。
  *
+ * 浏览器一键：`.github/workflows/release.yml` 用 `workflow_dispatch` 在 runner 上跑同一段
+ * 代码（不复制逻辑），差别只有两处 —— `GITHUB_ACTIONS=true` 时给 `git tag -a` 补上身份，
+ * 以及推用的凭据来自 actions/checkout 的 `persist-credentials` 默认注入的 `GITHUB_TOKEN`。
+ *
  * 三条硬前置（对齐"永不带脏发布"）：
  *  1. 工作区干净 —— 有未提交改动就停，避免把没写完的东西打上 release tag；
  *  2. `[Unreleased]` 有内容 —— 空版本不发；
@@ -20,6 +24,10 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+// GitHub Actions runner 上没有 `user.name/email`；`git tag -a` 会因此挂在最后一步。
+// 浏览器一键（release.yml）跟本地跑的是同一段代码，唯一差别就是这里补个身份。
+const IS_CI = process.env.GITHUB_ACTIONS === 'true'
 
 const run = (cmd, args, { capture = true } = {}) => {
   const r = spawnSync(cmd, args, { cwd: ROOT, encoding: capture ? 'utf8' : undefined, shell: false })
@@ -86,7 +94,9 @@ function main() {
   const blockers = []
   if (git('status', '--porcelain') !== '') blockers.push('工作区不干净：先提交或还原')
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
-  if (branch !== 'main') blockers.push(`当前在 ${branch}，release 只在 main 上打`)
+  // Actions runner 上 checkout 默认是 detached HEAD（`--abbrev-ref` 会得到 `HEAD`），
+  // 但 workflow_dispatch 触发时 `ref` 就是所选分支；这条闸门是给本地误操作准备的，CI 不适用。
+  if (branch !== 'main' && !IS_CI) blockers.push(`当前在 ${branch}，release 只在 main 上打`)
   if (unreleasedBody(changelog) === '') blockers.push('[Unreleased] 是空的：没有内容可发')
   if (changelog.includes(`## [${target}]`)) blockers.push(`CHANGELOG 已有 ## [${target}]`)
   if (git('tag', '--list', `v${target}`).trim() !== '') blockers.push(`tag v${target} 已存在`)
@@ -131,6 +141,12 @@ function main() {
 
   writeFileSync(changelogPath, withLink)
   writeFileSync(join(ROOT, 'package.json'), nextPkg)
+  if (IS_CI) {
+    // runner 里没配置过身份；不补的话 `git commit` 直接失败。
+    // 名字用 GitHub 官方那对（[bot] 邮箱），这样提交会挂在 Actions 图标下，不冒名。
+    git('config', 'user.name', 'github-actions[bot]')
+    git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
+  }
   git('add', 'package.json', 'CHANGELOG.md')
   git('commit', '-m', `chore(release): ${target}`)
   // tag 先打在本地：check-docs 会核 CHANGELOG 里的 compare 链接指向真实 tag，
@@ -145,7 +161,9 @@ function main() {
     process.exitCode = 1
     return
   }
-  git('push', 'origin', 'main')
+  // 用 `HEAD:main` 而不是 `main` —— actions/checkout 默认是 detached HEAD，本地分支指针
+  // 不会跟着我们的 commit 走，`git push origin main` 在 runner 上会把旧 tip 又推一遍。
+  git('push', 'origin', 'HEAD:main')
   git('push', 'origin', `v${target}`)
   console.log(`\n已推送 ${target} + tag v${target}。`)
   console.log('CI：Actions → publish → npm publish。看 https://github.com/xinghe-1018/dsh-token-plan-quota/actions')

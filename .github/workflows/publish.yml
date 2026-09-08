@@ -13,7 +13,10 @@ on:
         default: true
 
 permissions:
-  contents: read
+  # contents: write 是给 tag push 之后建 GitHub Release 用的（softprops/action-gh-release）。
+  # 对 npm OIDC 那条路没有副作用：npmjs 的 Trusted Publisher 只核 workflow 名 + ref，
+  # 不看这个 permission。
+  contents: write
   # OIDC trusted publishing 要这个：没有它 npm 会报一句很误导人的
   # "Access token expired or revoked" + 404，而不是"我没有身份"。
   id-token: write
@@ -100,3 +103,33 @@ jobs:
           done
           echo "::error::发布后 60 秒内 registry 查不到 $ver"
           exit 1
+
+      # 只有 registry 真的收到了这个版本才建 GitHub Release，否则 tag 上会挂一条"发出去了"
+      # 的说明但 npm 上根本没有 —— 那种不一致比没有更糟。
+      - name: build release notes from CHANGELOG
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          node scripts/extract-changelog-section.mjs "$ver" --heading > release-notes.md
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "npm: https://www.npmjs.com/package/dsh-token-plan-quota/v$ver"
+            echo ""
+            echo "安装：\`dsh plugin add dsh-token-plan-quota\`"
+          } >> release-notes.md
+          echo "----- release-notes.md -----"
+          cat release-notes.md
+
+      - name: create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          # 只有比现有 latest 新的 tag 才标 latest；回头补发旧版不会把 latest 抢走。
+          make_latest: 'true'

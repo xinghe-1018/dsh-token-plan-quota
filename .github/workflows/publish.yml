@@ -89,9 +89,16 @@ jobs:
           # 失败时 npm 会把真实原因写到 stderr —— 但 Actions 的 annotations 只显示
           # "exit code 1"，公开 API 也看不到 raw log。把整段日志按行贴成 ::error::，
           # 这样下次一挂就能直接看清是哪一步被拒（OIDC 没配、token 空、版本重了…）。
+          # npm notice 一大堆（tarball 清单），真正的原因只写在 `npm error` / `npm ERR!` 行；
+          # tail -30 会全是 notice，得先 grep 那两类行；一行都没抓到再退回 tail 兜底。
           dump_annotations() {
             local f="$1"
-            tail -n 30 "$f" | sed 's/"/\&#34;/g' | while IFS= read -r line; do
+            local picked
+            picked="$(grep -E '^npm (error|ERR!|warn)' "$f" | head -n 25 || true)"
+            if [ -z "$picked" ]; then
+              picked="$(tail -n 25 "$f")"
+            fi
+            printf '%s\n' "$picked" | sed 's/"/\&#34;/g' | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error::npm> $line"
             done
           }

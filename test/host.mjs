@@ -199,6 +199,9 @@ const shorthandCfg = effectiveConfig({ sources: ['window:minimax-cn'] }, ctxStub
 const miniSource = shorthandCfg.sources[0]
 check('简写自动展开成窗口源', [miniSource.kind, miniSource.type, miniSource.providers], ['window', 'local', ['minimax-cn']])
 ok('标签点名是哪个供应商', String(miniSource.label).includes('minimax-cn'))
+// 「实测」由徽标/卡头那颗 pill 标（client.js:639、:770），标签再写一遍就是同一枚控件里
+// 出现两次"实测"，还白占约 40px——那正是把宿主输入行挤折行的主因。别加回来。
+check('标签只写供应商名，不重复「实测」', [miniSource.label, miniSource.labelEn], ['minimax-cn', 'minimax-cn'])
 ok('口径说明写"未接入可核实的官方额度源"，不写"官方没有接口"这种证明不了的话',
   String(miniSource.sourceNote).includes('未接入可核实的官方额度源') && !String(miniSource.sourceNote).includes('没有可核实的官方额度接口'))
 recordUsage(shorthandCfg, 'minimax-cn', 'MiniMax-M2.5', { inputTokens: 900, outputTokens: 100 })

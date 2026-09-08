@@ -7,9 +7,10 @@
 供应商路由自动决定该开哪些源。
 
 ```
-┌ 输入框工具行 ─────────────────────────────────────────────────┐
-│ Token Plan ▓▓▓▓░ 12.3万 tok │ 42 tok/s  实测  剩5d  ← 点开看明细 │
-└───────────────────────────────────────────────────────────────┘
+输入框工具行里的徽标，跟随当前模型的供应商切换：
+
+  Token Plan ▓▓▓░ 79% 剩5d           官方给了分母 → 画条、报百分比
+  minimax-cn 1.3万 tok 实测 剩7天      没有官方分母 → 只报用了多少，绝不画条、绝不报百分比
 ```
 
 **① 徽标跟随当前模型的供应商切换**——这一家官方接口给真值，切到没有官方额度接口的那家就退回「实测」：
@@ -369,13 +370,13 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面四步一次跑完
-node test/host.mjs                 # 350 项，离线
-node test/client.mjs               # 102 项，假 React/DOM/fetch
+node test/host.mjs                 # 351 项，离线
+node test/client.mjs               # 116 项，假 React/DOM/fetch
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 350/102 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 351/116 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

@@ -169,7 +169,9 @@ function consoleCard(lang, now) {
 function measuredCard(lang, now, provider, calls, tokens) {
   return finalizeCard({
     id: `window:${provider}`,
-    label: lang === 'en' ? `${provider} (measured)` : `${provider}（实测）`,
+    // 与宿主同形：`window:<provider>` 的标签就是供应商名，「实测」由 pill 标
+    // （lib/index.js 的 shorthand 分支 + client.js:639/770）。
+    label: provider,
     metric: 'tokens',
     unit: 'tok',
     estimated: true,
@@ -226,7 +228,9 @@ function creditsPlanCard(lang, now) {
 function noHistoryCard(lang, provider) {
   return finalizeCard({
     id: `window:${provider}`,
-    label: lang === 'en' ? `${provider} (measured)` : `${provider}（实测）`,
+    // 与宿主同形：`window:<provider>` 的标签就是供应商名，「实测」由 pill 标
+    // （lib/index.js 的 shorthand 分支 + client.js:639/770）。
+    label: provider,
     metric: 'tokens',
     unit: 'tokens',
     estimated: true,

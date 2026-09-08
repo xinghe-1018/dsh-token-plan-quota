@@ -8,6 +8,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-07
+
+### Added
+
+- **明细面板标题栏加了关闭用的 ✕**（`aria-label` + tooltip，中英各一份）。此前只有"再点一次徽标"和
+  `Esc` 两条关闭路径——都在，但都得先知道这个习惯。测试锁住四件事：按钮在、带可读标签、
+  自己挡下 `pointerdown`（标题栏整条是拖拽把手，不挡就被 `beginDrag` 捕获），以及它没把拖拽把手替掉。
+- 两条回归锁：`test/host.mjs` 断言 `window:<provider>` 的标签只写供应商名；`test/client.mjs` 断言
+  `.tpq-chip` 的 `max-width` 上限存在且 **≤ 实测折行阈值 317px**（写死数字是为了有人放宽前先回去量一遍）。
+
+### Fixed
+
+- **徽标会把输入框那一行挤换行**（模型选择器被顶到第二行）。两层原因，缺一不可修：
+  ① flex item 的 `min-width` 默认 `auto`，徽标顶在自己的内容宽度上不让收缩；
+  ② 更关键——宿主那一行是 `flex-wrap: wrap`，**分行按各项的 base size 决定**，收缩只发生在分行之后，
+  所以光"允许收缩"救不了它。实测（输入列是固定宽的居中列，980/1150/1400 窗口都一样）：
+  徽标 ≤317px 一行，320px 起折行。现在上限取 312px，并给名字加了省略号（完整名一直在 `title` 里），
+  数字与「实测」pill 用 `flex:none` 保住——**能裁的只有供应商名**。
+- **同一枚徽标里出现两次「实测」**：`window:<provider>` 生成的标签是 `minimax-cn 实测`，
+  右边那颗 pill 又写一遍 `实测`。现在标签只写供应商名，「实测」由 pill 负责（徽标与面板卡头都有）。
+  顺带把重复掉的 ~40px 还回来：`minimax-cn` 全家桶的自然宽度从 345px 降到 296px，
+  常见供应商名**一行放得下且不截断**。
+
+- **英文界面里印着中文字符**：`formatTokens` 的单位写死「万/亿」，英文徽标会长成
+  `84.7万 tok … measured in5d` 这种半中半英。现在紧凑单位跟着界面语言走（中文 `2.3万` /
+  英文 `23K`，≥1e9 才用 `B`）。没有给 `formatTokens` 加 `copy` 参数——它有 14 个调用点，
+  漏一个就是同一屏两种单位并存；改成在 `pickLocale()` 里记一次语言风格。
+- **`pickLocale()` 让浏览器语言盖过了宿主语言**：原来是"两个来源里任一说 zh 就算 zh"，
+  于是**中文操作系统 + 英文界面**的用户会看到一枚中文徽标嵌在全英文界面里。
+  现在以宿主自己写的 `<html lang>` 为准，取不到才退回浏览器语言。
+
+### Changed
+
+- 截图全部重拍（标签变了）。README 顶部那段 ASCII 示意图原来把余量条和「实测」画在同一枚徽标上，
+  正好违反本插件"没分母就不画条"的立场——改成并排两行，一行官方、一行实测，把这条差异直接摆出来。
+
 ## [0.4.3] - 2026-09-07
 
 ### Added
@@ -216,6 +252,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.4]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.0...v0.4.1

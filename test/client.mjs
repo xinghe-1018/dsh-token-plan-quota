@@ -800,6 +800,28 @@ function findChip(node) {
     findChip(render()).props.onClick()
     return !JSON.stringify(render()).includes('额度明细')
   })())
+
+  // 标题栏那颗 ✕：常驻小窗的第三条关闭路径，也是唯一"看得见"的一条——
+  // 「再点徽标」和 Esc 都得先知道有这个习惯。
+  const findClass = (node, cls) => {
+    if (node === null || node === undefined || typeof node !== 'object') return undefined
+    if (String(node.props?.className ?? '').includes(cls)) return node
+    for (const child of node.children ?? []) {
+      const found = findClass(child, cls)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  findChip(render()).props.onClick()
+  const opened = await settle(render, 2)
+  const closeBtn = findClass(opened, 'tpq-close')
+  ok('面板标题栏有关闭按钮', closeBtn !== undefined)
+  ok('关闭按钮带可读标签（不只画个叉）', closeBtn?.props['aria-label'] === '关闭' && String(closeBtn?.props.title).includes('Esc'))
+  ok('关闭按钮自己挡 pointerdown（否则被标题栏拖拽吃掉）', typeof closeBtn?.props.onPointerDown === 'function')
+  ok('✕ 没取代拖拽把手（标题栏仍是拖拽区）',
+    String(findClass(opened, 'tpq-title')?.props?.title ?? '').includes('拖到任意位置悬浮'))
+  closeBtn.props.onClick()
+  ok('点 ✕ 关掉面板', !JSON.stringify(render()).includes('额度明细'))
 }
 
 // 实测卡即使被宿主错喂了分母与百分比，也绝不画余量条、绝不报百分比（「不估算」的最后一道闸）。
@@ -869,6 +891,61 @@ function findChip(node) {
     const rule = new RegExp(`\\.tpq-panel\\[data-${state}\\]\\{[^}]*\\}`).exec(code)
     ok(`手势态 data-${state} 规则存在且不含 animation 开关`, rule !== null && !rule[0].includes('animation'))
   }
+}
+
+// token 的紧凑单位跟着界面语言走：写死「万/亿」时英文界面会印出 `84.7万 tok`。
+{
+  const { api, registered } = await loadBundle()
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  // pickLocale() 在 apply() 里跑，所以 lang 要在 apply 之前翻。
+  globalThis.document.documentElement.lang = 'en-US'
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  findChip(await settle(render, 1)).props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('英文界面确实是英文（面板标题）', panel.includes('Quota detail'))
+  // 23400 这个数在两种单位下分别是 2.3万 / 23K —— 断言这一对，别去查"整屏有没有汉字"
+  // （测试 payload 的 sourceNote 本来就是中文，那样会误判）。
+  ok('英文界面：23400 → 23K', panel.includes('23K') && !panel.includes('2.3万'))
+  globalThis.document.documentElement.lang = 'zh-CN'
+  const zh = await loadBundle()
+  zh.api.apply(makeCtx(zh.registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  resetHooks()
+  const zhRender = () => {
+    beginRender()
+    return zh.registered[0].component()
+  }
+  findChip(await settle(zhRender, 1)).props.onClick()
+  const zhPanel = JSON.stringify(await settle(zhRender, 3))
+  ok('中文界面维持原样：23400 → 2.3万（不是 23K）', zhPanel.includes('2.3万') && !zhPanel.includes('23K'))
+}
+
+/* 徽标宽度硬上限：宿主输入行是 flex-wrap:wrap，**分行按各项的 base size 决定**，
+ * 所以"能收缩"救不了它——实测 317px 以内一行、320px 起把模型选择器挤到第二行。
+ * 这条是"别把输入行挤换行"的回归锁；要放宽前先量一遍真实阈值。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const rule = /\.tpq-chip\{[^}]*\}/.exec(code)
+  ok('.tpq-chip 规则存在', rule !== null)
+  const cap = /max-width:\s*min\((\d+)px/.exec(rule?.[0] ?? '')
+  ok('徽标有 max-width 硬上限（不是只写 min-width:0 就以为够了）', cap !== null)
+  if (cap !== null) ok(`徽标上限 ${cap[1]}px ≤ 实测折行阈值 317px`, Number(cap[1]) <= 317)
+  ok('整条链也允许收缩（min-width:0 + overflow:hidden）',
+    rule?.[0].includes('min-width:0') === true && rule?.[0].includes('overflow:hidden') === true)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

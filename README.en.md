@@ -8,9 +8,10 @@ web UI. Official APIs provide the numbers; providers without an official quota e
 decided from the provider routes you actually have.
 
 ```
-┌ composer tool row ──────────────────────────────────────────────┐
-│ Token plan ▓▓▓▓░ 123K tok │ 42 tok/s  measured  5d left  ← click for details │
-└─────────────────────────────────────────────────────────────────┘
+The chip in the composer tool row follows the active model’s provider:
+
+  Token plan ▓▓░ 79% 5d left         the vendor publishes a denominator → bar + percentage
+  minimax-cn 123K tok measured       no official denominator → what was used, never a bar or a percentage
 ```
 
 **① The chip follows the active model's provider** — one route reports an official true value, and switching to a
@@ -426,14 +427,14 @@ see [`SECURITY.md`](SECURITY.md) for details.
 
 ```bash
 npm run check                       # all four steps below
-node test/host.mjs                  # 350 assertions, offline
-node test/client.mjs                # 102 assertions, fake React/DOM/fetch
+node test/host.mjs                  # 351 assertions, offline
+node test/client.mjs                # 116 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 350/102 tests" - and checks them against the code and a real
+config table, 8 sources, 8 declared outbound hosts, 351/116 tests" - and checks them against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).
 

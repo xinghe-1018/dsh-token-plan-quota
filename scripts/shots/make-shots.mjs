@@ -224,13 +224,16 @@ async function main() {
    */
   const dismissOnboarding = async () => {
     const labels = [UI[langKey].dismissModal, '继续', 'Continue']
-    const title = UI[langKey].onboardingTitle
+    // 模态的标题**不能只按 --lang 取**：那句文案是宿主自己的 `pickLocale()` 决定的，
+    // 和浏览器语言不是一回事（实测英文套里宿主仍弹中文标题，于是"按英文标题找"根本找不到，
+    // 遮罩没摘掉，脚本在第一步就抛）。两种标题都当候选，跟按钮文案同一套处理。
+    const titles = [...new Set([UI[langKey].onboardingTitle, '内测声明', 'Internal Testing Notice'])]
     for (let attempt = 0; attempt < 6; attempt += 1) {
       if (await coveredByOverlay() === null) return true
       await page.evaluate(`(() => {
         const norm = s => (s || '').replace(/\\s+/g, '')
         const dlg = [...document.querySelectorAll('[class*="dialog" i]')].find(n => n.offsetParent !== null
-          && norm(n.innerText).startsWith(norm(${JSON.stringify(title)})))
+          && ${JSON.stringify(titles)}.some(t => norm(n.innerText).startsWith(norm(t))))
         if (!dlg) return false
         const btn = [...dlg.querySelectorAll('button')].find(n => n.offsetParent !== null
           && ${JSON.stringify(labels)}.some(l => norm(n.innerText).includes(norm(l))))
@@ -241,9 +244,9 @@ async function main() {
       if (await coveredByOverlay() === null) return true
       await page.evaluate(`(() => {
         const norm = s => (s || '').replace(/\\s+/g, '')
-        const title = norm(${JSON.stringify(title)})
+        const titles = ${JSON.stringify(titles)}.map(norm)
         for (const n of document.querySelectorAll('[class*="dialog" i]')) {
-          if (n.offsetParent === null || !norm(n.innerText).startsWith(title)) continue
+          if (n.offsetParent === null || !titles.some(t => norm(n.innerText).startsWith(t))) continue
           // 光藏 dialog 本身不够：它外面还有一层同模块的包裹（_root_xxx）照样压着徽标。
           // 但只能向上吞"除了这个模态没别的内容"的层 —— 一旦某层还包着别的东西就停，
           // 否则会把整个应用根节点藏掉：页面变一张白纸，检查却照样"通过"。
@@ -269,19 +272,28 @@ async function main() {
    * 待匹配串要和节点文本走同一个归一化（去空白）：`Qwen3.8 Flash` 这种带空格的名字，
    * 只剥节点文本不剥针，就永远匹配不上（`GPT-5` 没空格，所以这个坑藏了很久）。
    */
-  const deepClick = async match => await page.evaluate(`(() => {
-    // 取最后一个可见的 menu 容器：菜单是后挂载的，第一个往往是侧栏里别的 menu 类节点。
-    const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
-    const root = menus.length > 0 ? menus[menus.length - 1] : document
-    const cands = [...root.querySelectorAll('*')].filter(n => n.offsetParent !== null
-      && (n.innerText || '').replace(/\\s+/g, '').includes(${JSON.stringify(match.replace(/\s+/g, ''))}))
-    if (cands.length === 0) return false
-    const leaf = cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
-    for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter']) {
-      leaf.dispatchEvent(new PointerEvent(type, { bubbles: type.endsWith('over'), cancelable: true }))
+  const deepClick = async match => {
+    // 重试到点着为止：菜单是异步挂载的，固定 sleep 之后仍可能没渲染完
+    // （英文整套连跑时，GIF 刚关掉的旧菜单还会短暂留在 DOM 里，撞上过）。
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const done = await page.evaluate(`(() => {
+        // 取最后一个可见的 menu 容器：菜单是后挂载的，第一个往往是侧栏里别的 menu 类节点。
+        const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
+        const root = menus.length > 0 ? menus[menus.length - 1] : document
+        const cands = [...root.querySelectorAll('*')].filter(n => n.offsetParent !== null
+          && (n.innerText || '').replace(/\\s+/g, '').includes(${JSON.stringify(match.replace(/\s+/g, ''))}))
+        if (cands.length === 0) return false
+        const leaf = cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+        for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter']) {
+          leaf.dispatchEvent(new PointerEvent(type, { bubbles: type.endsWith('over'), cancelable: true }))
+        }
+        leaf.click(); return true
+      })()`)
+      if (done) return true
+      await sleep(250)
     }
-    leaf.click(); return true
-  })()`)
+    return false
+  }
 
   await dismissOnboarding()
   await sleep(600)
@@ -313,17 +325,35 @@ async function main() {
    * 走宿主自己的 selectModel 换模型：模型按钮 → 「模型」行 → 目标模型，
    * 再等徽标真的跟着换过去（这一步没换成就是白拍，所以断言在等待里）。
    */
+  /** 失败时把当前可见的菜单内容抓出来贴进报错——"点不到 X"这种信息不足以复盘。 */
+  const menuDump = async () => await page.evaluate(`(() => {
+    const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
+    return menus.slice(-3).map(m => (m.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 90))
+  })()`)
+  /**
+   * 依次试多个候选文案，点中任何一个就算成功。
+   * **为什么必须有这个**：宿主的界面语言由它自己的设置决定，和浏览器的 `--lang` 不是一回事
+   * ——英文套里插件徽标确实是英文（`pickLocale()` 读 navigator），但宿主的菜单仍是「模型 / 推理等级」。
+   * 只按 `--lang` 取一个词，就会在"宿主说中文"的那次加载上点空（英文整套连跑时反复翻车的地方）。
+   */
+  const deepClickAny = async candidates => {
+    for (const one of candidates) if (await deepClick(one)) return one
+    return null
+  }
   const switchModel = async (fromLabel, toLabel, expectChip) => {
     if (!await clickText(fromLabel)) throw new Error(`点不到模型按钮（应显示「${fromLabel}」）`)
     await sleep(700)
-    if (!await deepClick(UI[langKey].modelRow)) throw new Error(`点不到菜单里的「${UI[langKey].modelRow}」行`)
+    const rowLabels = [...new Set([UI[langKey].modelRow, '模型', 'Model'])]
+    if (await deepClickAny(rowLabels) === null) {
+      throw new Error(`点不到菜单里的模型行（试过 ${JSON.stringify(rowLabels)}）；当前可见菜单：${JSON.stringify(await menuDump())}`)
+    }
     await page.waitFor(`(() => {
       const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
       const root = menus[menus.length - 1]
       return root !== undefined && (root.innerText || '').includes(${JSON.stringify(toLabel)})
     })()`, { timeoutMs: 10_000, label: `二级菜单出现 ${toLabel}` })
     await sleep(600)
-    if (!await deepClick(toLabel)) throw new Error(`点不到 ${toLabel}`)
+    if (!await deepClick(toLabel)) throw new Error(`点不到 ${toLabel}；当前可见菜单：${JSON.stringify(await menuDump())}`)
     await page.waitFor(`(document.querySelector('.tpq-chip')?.innerText || '').includes(${JSON.stringify(expectChip)})`,
       { timeoutMs: 12_000, label: `徽标切到 ${expectChip}` })
     await sleep(700)
@@ -399,14 +429,9 @@ async function main() {
     const writeFrame = buffer => { writeFileSync(join(frameDir, `f${String(++frame).padStart(4, '0')}.jpg`), buffer) }
     const cast = await page.startScreencast(writeFrame, { format: 'jpeg', quality: 82, maxWidth: 1280, maxHeight: 860 })
     await sleep(700)
-    if (!await clickText('DeepSeek-V4-Flash')) throw new Error('点不到模型按钮')
-    await sleep(700)
-    if (!await deepClick(UI[langKey].modelRow)) throw new Error(`点不到菜单里的「${UI[langKey].modelRow}」行`)
-    await page.waitFor(`(() => { const r = document.querySelector('[class*="menu" i]'); return r !== null && /GPT-5/.test(r.innerText || '') })()`,
-      { timeoutMs: 10_000, label: '二级菜单出现 GPT-5' })
-    await sleep(600)
-    if (!await deepClick('GPT-5')) throw new Error('点不到 GPT-5')
-    await page.waitFor(`document.querySelector('.tpq-chip')?.innerText.includes(${JSON.stringify(UI[langKey].measured)}) === true`, { timeoutMs: 12_000, label: '徽标切到实测卡' })
+    // 走和 ⑤⑥⑦ 同一个换模型函数：那里面已经有重试和"失败时把菜单内容贴出来"的诊断，
+    // 这里再抄一份内联点击，等于让 GIF 这条路径永远拿不到它们（英文整套连跑时就是在这翻的车）。
+    await switchModel('DeepSeek-V4-Flash', 'GPT-5', UI[langKey].measured)
     await sleep(1600)
     await cast.stop()
     const after = await page.evaluate(`document.querySelector('.tpq-chip')?.innerText.replace(/\\s+/g,' ') ?? null`)

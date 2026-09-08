@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **发布自动化**：`.github/workflows/publish.yml` 接 `v*` tag，在 CI 里核"tag ↔ `package.json` ↔
+  CHANGELOG 三处一致" → 跑全量 `npm run check` → 扫 tarball（有没有夹带截图中间产物、有没有漏掉
+  README 引用的图）→ `npm publish --access public` → 回读 registry 确认版本真的上了。任一步失败
+  都发不出包。鉴权两种都支持：配了 npmjs 的 Trusted Publishing 就走 OIDC（带 provenance、零 secret），
+  配了 `NPM_TOKEN` 就自动改走 token。
+- `scripts/release.mjs`（`npm run release -- --patch`）：切版本、把 `[Unreleased]` 搬进
+  `## [X] - 日期` 并补 compare 链接、提交、打 tag、跑全量自检，全绿才推 `main` + tag。
+  前置会拦四件事：工作区不干净、不在 `main`、`[Unreleased]` 是空的、版本号或 tag 已被占用。
+  先加 `--dry-run` 可以看计划而不写入任何东西。
+
 ## [0.4.5] - 2026-09-08
 
 ### Fixed

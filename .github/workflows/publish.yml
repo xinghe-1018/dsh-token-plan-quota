@@ -1,0 +1,102 @@
+name: publish
+
+# 推 `v*` tag 即发布。版本切分（0.4.4 → 0.4.5）由人决定，机器只负责"确定要发了"之后的部分。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只跑到打包为止，不真发'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # OIDC trusted publishing 要这个：没有它 npm 会报一句很误导人的
+  # "Access token expired or revoked" + 404，而不是"我没有身份"。
+  id-token: write
+
+jobs:
+  publish:
+    name: npm publish
+    runs-on: ubuntu-latest
+    steps:
+      # check-docs 会核 CHANGELOG 里的 compare 链接指向真实 tag，浅克隆里 tag 全"不存在"。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # runner 自带的 npm 可能不支持 OIDC 发布，症状是 404（见上面那条注释）。
+      - name: bump npm on the runner
+        run: npm install -g npm@latest
+
+      - name: tag matches package.json version
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./package.json').version")"
+          # 手动触发时 ref 是分支名，没有 tag 可比；以 package.json 为准，且默认是 dry run。
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch：以 package.json 的 ${ver} 为准（ref=${GITHUB_REF_NAME}）"
+          elif [ "${GITHUB_REF_NAME#v}" != "$ver" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 package.json 的 ${ver} 不一致——拒绝发布"
+            exit 1
+          else
+            echo "::notice::准备发布 ${ver}（tag ${GITHUB_REF_NAME}）"
+          fi
+          grep -q "^## \[${ver}\]" CHANGELOG.md || { echo "::error::CHANGELOG 没有 ${ver} 这一节"; exit 1; }
+
+      - name: full gate (tests + manifest + README claims + submission)
+        run: npm run check
+
+      - name: tarball contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --dry-run 2>&1 | tee /tmp/pack.log
+          # 中间产物一旦被 files 白名单收进来就会进包（allowlist 压过 .gitignore，真栽过一次）。
+          if grep -Eq '_frames|_debug|\.shots-work' /tmp/pack.log; then
+            echo "::error::tarball 里有截图中间产物"; exit 1
+          fi
+          grep -q 'docs/images/panel-official-plus-meters.png' /tmp/pack.log || { echo "::error::tarball 里没有 README 引用的图"; exit 1; }
+
+      - name: publish
+        # 两种鉴权都支持：仓库里配了 NPM_TOKEN 就走 token；没配就走 OIDC trusted publishing。
+        # 注意 --provenance 只在 OIDC 下可用，用 token 时不能带（会报"publisher is not trusted"）。
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "dry run：跳过发布"
+            exit 0
+          fi
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice::用 NPM_TOKEN 发布（无 provenance）"
+            npm publish --access public
+          else
+            echo "::notice::用 OIDC trusted publishing 发布（带 provenance）"
+            npm publish --access public --provenance
+          fi
+
+      - name: verify it landed
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != true
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./package.json').version")"
+          for i in 1 2 3 4 5 6; do
+            got="$(npm view "dsh-token-plan-quota@$ver" version 2>/dev/null || true)"
+            if [ "$got" = "$ver" ]; then echo "::notice::registry 已有 dsh-token-plan-quota@$ver"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::发布后 60 秒内 registry 查不到 $ver"
+          exit 1

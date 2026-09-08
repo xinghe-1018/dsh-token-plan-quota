@@ -16,7 +16,7 @@
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
  *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）；
- *  10. 四张截图真实存在且 README 已引用，合成数据仍符合产品口径。
+ *  10. 十三张截图（中文 7 张 / 英文 6 张）真实存在且 README 已引用，合成数据仍符合产品口径。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -253,20 +253,25 @@ for (const rel of textFiles) {
   if (hasCjkChar && hasPuaChar) problems.push(`${rel} 同时含中日韩文字与私用区字符，是 GBK 误读 UTF-8 的典型残骸`)
 }
 
-/* 10) 四张截图：占位块必须已被真图取代，图必须真实存在且非零字节。
+/* 10) 截图物料：占位块必须已被真图取代，图必须真实存在且非零字节。
  *     截图是合成数据生成的（scripts/shots/），所以这里同时跑一次 fixture 自检——
- *     产品口径（实测卡不带百分比、百分比与 remaining/total 自洽、键 ⊆ publicCard 白名单）
- *     漂了就红，而不是悄悄拍出一张宿主永远发不出的图。 */
+ *     产品口径（实测卡不带百分比、百分比与 remaining/total 自洽、键 ⊆ publicCard 白名单、
+ *     英文套不混中文）漂了就红，而不是悄悄拍出一张宿主永远发不出的图。 */
 {
   const images = [
     'docs/images/badge-follows-model.gif',
     'docs/images/panel-official-plus-meters.png',
     'docs/images/floating-panel.png',
     'docs/images/cookie-fallback-measured.png',
+    'docs/images/state-deepseek-balance.png',
+    'docs/images/state-token-plan-credits.png',
+    'docs/images/state-no-history.png',
     'docs/images/en/badge-follows-model.gif',
     'docs/images/en/panel-official-plus-meters.png',
     'docs/images/en/floating-panel.png',
     'docs/images/en/cookie-fallback-measured.png',
+    'docs/images/en/state-deepseek-balance.png',
+    'docs/images/en/state-token-plan-credits.png',
   ]
   for (const rel of images) {
     const abs = join(root, rel)
@@ -278,9 +283,11 @@ for (const rel of textFiles) {
   if (zh.includes('截图位')) problems.push('README.md 仍留着「截图位」占位块')
   if (en.includes('Screenshots (4 to add before release)')) problems.push('README.en.md 仍留着截图占位块')
   // 两份 README 都得真的引到图，缺一张就是图文不符。
+  // 英文套少一张是**有意的**：「本实例还没调用过」那句说明宿主只有中文（lib/index.js:376）。
+  const minRefs = { 'README.md': 7, 'README.en.md': 6 }
   for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
     const refs = [...text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1])
-    if (refs.length < 4) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 4 张`)
+    if (refs.length < minRefs[name]) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 ${minRefs[name]} 张`)
     for (const ref of refs) {
       if (!existsSync(join(root, ref))) problems.push(`${name} 引用的图片不存在：${ref}`)
     }
@@ -289,8 +296,8 @@ for (const rel of textFiles) {
     const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')
     const whitelist = publicCardKeys()
     if (whitelist.length < 30) problems.push(`publicCard() 白名单只读出 ${whitelist.length} 个键，守卫可能失效`)
-    for (const variant of ['panel', 'float', 'cookieDrop', 'badgeSwitch']) {
-      for (const lang of ['zh', 'en']) assertFixture(makeSnapshot({ variant, lang }))
+    for (const variant of ['panel', 'float', 'cookieDrop', 'badgeSwitch', 'triptych']) {
+      for (const lang of ['zh', 'en']) assertFixture(makeSnapshot({ variant, lang }), { lang })
     }
   } catch (error) {
     problems.push(`截图合成数据自检失败：${error.message}`)

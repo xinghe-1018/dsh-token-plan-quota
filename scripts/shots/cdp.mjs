@@ -307,7 +307,7 @@ export class PageHandle {
     const offPaused = this.on('Fetch.requestPaused', async params => {
       const requestId = params.requestId
       try {
-        const made = options.respond(params.request)
+        const made = await options.respond(params.request)
         if (made !== null && made !== undefined) {
           counter.hits++
           options.log?.(`${made.via ?? 'fulfill'} ${params.request.url}`)
@@ -315,7 +315,9 @@ export class PageHandle {
             requestId,
             responseCode: 200,
             responseHeaders: [
-              { name: 'content-type', value: 'application/json' },
+              // 默认按 JSON 回（额度接口就是 JSON）；改写的 JS 包必须给真的 MIME，
+              // 否则浏览器拒绝执行模块，页面直接白屏。
+              { name: 'content-type', value: made.contentType ?? 'application/json' },
               { name: 'cache-control', value: 'no-store' },
             ],
             body: Buffer.from(made.body, 'utf8').toString('base64'),

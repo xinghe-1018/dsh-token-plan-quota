@@ -33,9 +33,22 @@ no official denominator means no bar and no percentage:
 
 ![The measured card after the console cookie expires](docs/images/en/cookie-fallback-measured.png)
 
-> Every balance, token count and date in those four images is **synthetic sample data**, not any real account
-> (this plugin never puts real numbers into the public repo). To reproduce or replace them:
-> [scripts/shots/README.md](scripts/shots/README.md).
+**⑤ Metered-by-balance routes are recognised too**: the DeepSeek balance is an official true value, but there is no
+"total" denominator to divide by ⇒ no bar and no percentage, just the amount left, topped up and granted:
+
+![Official balance card with no denominator, so no bar](docs/images/en/state-deepseek-balance.png)
+
+**⑥ A provider you have actually used shows its quota**: only when the official API really publishes a denominator
+does the card draw a bar and state a percentage and a reset date:
+
+![Official Token Plan quota card with a denominator, so it draws a bar](docs/images/en/state-token-plan-credits.png)
+
+> Every balance, token count and date in those six images is **synthetic sample data**, not any real account
+> (this plugin never puts real numbers into the public repo). The English set has one image fewer than the
+> Chinese one on purpose: the "this instance has no calls for that provider yet" note is currently only
+> emitted in Chinese by the plugin itself, and inventing an English sentence for a screenshot would put words
+> in the product's mouth that it never says. Tracked in [ROADMAP.md](ROADMAP.md).
+> To reproduce or replace them: [scripts/shots/README.md](scripts/shots/README.md).
 
 ## What this plugin does not do
 

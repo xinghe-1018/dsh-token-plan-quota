@@ -8,12 +8,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-07
+
 ### Added
 
-- `screenshots.json`（仓库根）：向插件市场声明 4 张截图，控制展示顺序。上游规范允许 1–8 张、
+- README 的**三种状态**三连图（`state-deepseek-balance` / `state-token-plan-credits` / `state-no-history`）：
+  同一取景（面板浮在聊天区左上角、底部徽标行进同一个裁切框），只差当前模型 —— 一张图同时给出
+  「当前模型 → 面板里那一张卡 → 徽标怎么报」这条链。为此 `fixture.mjs` 加了两个卡型：
+  官方 Credits 单窗口卡，和**字段缺席**的零记录实测卡（照 `lib/index.js:368-376` 的形状，
+  不是 `tokens: 0` —— 后者会拍出一张宿主永远发不出的「0 tok」）。
+  英文套只有前两张：那句解释文案宿主目前只发中文（`lib/index.js:376`），编一句英文等于拍假图。
+- `make-shots.mjs` 会补全假宿主的模型目录：徽标与面板都跟着当前模型的供应商走，
+  而 fixture 目录只有 DeepSeek 与 OpenAI 两家。做法是在浏览器侧改写那个客户端包里的一段常量
+  （`dsh web` 发的是预构建包，改宿主源码不重新构建不生效），锚点找不到就直接失败。
+- `screenshots.json`（仓库根）：向插件市场声明截图与展示顺序。上游规范允许 1–8 张、
   相对路径不得跳出插件目录；**不声明时市场会从 README 自动抽取**，声明只是取得顺序与选择权。
-  顺序把三张 PNG 放在 GIF 之前——万一某个店面不处理动图，前三张仍能正常呈现。
+  顺序把 PNG 放在 GIF 之前——万一某个店面不处理动图，前面的静态图仍能正常呈现。
   该文件只给目录站读（它读 GitHub 仓库），因此**不加入 npm 的 `files`**。
+- `check-docs.mjs` 规则 10 扩到十三张图，并新增两条口径检查：英文套的卡字段不得出现中文
+  （宿主双语字段除外）、零记录实测卡不得带本该缺席的字段。
 
 ### Changed
 
@@ -22,6 +35,15 @@ All notable changes to this project are documented here. The format follows
   compare 链接，并记录 PR #4581 与"fork 的 PR 需维护者批准工作流"。
 - `ROADMAP.md`：T3.9 勾选；两处过期计数按实测更正（`data/plugins/*.yml` 3196 → **3304** 条、
   `category: usage` 178 → **182** 条）。
+
+### Fixed
+
+- 截图流水线里两个**静默失败**：「内测声明」模态在 fixture 模式下根本关不掉（假宿主没有 settings 写入
+  通道，`WelcomeNoticeStore.acknowledge()` 永远判失败），那行「暂时无法保存确认状态」的错误正好压在徽标上，
+  于是图里"面板有了、徽标没了"而脚本一路绿；现在改为按模态标题定位后再点/摘除，并以
+  `elementFromPoint` 判定"没有浮层挡着徽标"作为唯一通过条件。
+- `deepClick`/`clickText` 只归一化了页面文本、没归一化待匹配串，带空格的名字
+  （`Qwen3.8 Flash`）永远点不到；`GPT-5` 没空格，所以这个坑藏了很久。
 
 ## [0.4.2] - 2026-09-07
 
@@ -194,6 +216,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.3]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.3.0...v0.4.0

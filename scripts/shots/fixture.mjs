@@ -89,6 +89,20 @@ function finalizeCard(card, allowPercent) {
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
+const MINUTE = 60_000
+
+/**
+ * 「没有流量」的吞吐块。三连图要拍的是静态额度状态，面板那行 `— · 近 60 秒 0 · 近 5 分 0/0`
+ * 必须和真实空载一致，不能让背景里飘着一串编造的高吞吐。
+ */
+function quietThroughput(now) {
+  const zero = {
+    tpm60: 0, out60: 0, calls60: 0, cacheRead60: 0,
+    tokens300: 0, calls300: 0, activeMs300: 0, activeOut300: 0,
+    genTps: 0, outTps60: 0, activeSeconds: 0,
+  }
+  return { ...zero, byProvider: [], lastAt: now - 40 * MINUTE, lastTps: 0, lastTpsAt: now - 40 * MINUTE }
+}
 
 /**
  * 一张官方钱卡：DeepSeek `/user/balance`（真值、无分母 ⇒ 无条）。
@@ -176,10 +190,63 @@ function measuredCard(lang, now, provider, calls, tokens) {
 }
 
 /**
+ * 官方 Credits 额度卡（单窗口、无 meters）：Token Plan 那种「剩余 X / Y · 已用 Z% · 周期重置」。
+ * 与 consoleCard 的区别是这里只有一个总窗口，所以面板里不会出现计量条列表。
+ * 数字与真实账号无关：4,480 / 6,000 是随手取的合成值 —— 但**余量必须 ≥70%**：
+ * 渐变条的配色是 `client.js:218-222` 写死的档位（≥70 绿 / 40–70 蓝 / <40 橙红），
+ * 取 69% 会拍出一条蓝条子，看着就像插件坏了。
+ */
+function creditsPlanCard(lang, now) {
+  return finalizeCard({
+    id: 'token-plan-credits',
+    label: lang === 'en' ? 'Token Plan' : 'Token Plan 余量',
+    metric: 'credits',
+    unit: 'Credits',
+    total: 6000,
+    remaining: 4480,
+    expiresAt: now + 7 * DAY + 2 * HOUR,
+    resetAt: now + 7 * DAY + 2 * HOUR,
+    items: [],
+    veracity: 'verified',
+    sourceNote: lang === 'en'
+      ? 'Qwen console data gateway (Cookie session, sec_token auto-fetched) · tokenplan/personal/api/v2'
+      : '千问AI平台控制台数据网关（Cookie 会话，sec_token 自动获取）· tokenplan/personal/api/v2',
+    bindProviders: ['qwen-token-plan-cn'],
+    updatedAt: now - 20_000,
+  }, true)
+}
+
+/**
+ * 「这个供应商本实例还没调用过」的实测卡 —— 逐字照 `lib/index.js:357-380` 在
+ * `startedAt === undefined` 分支产出的形状：tokens/calls/startedAt/resetAt/remainingDays
+ * **全部缺席**（不是 0）。这决定了两件事：徽标走 `cardValueText()` 的 `noData` 分支
+ * 显示「无官方额度数据」（`client.js:187`），面板只显示那句解释而不是「0 tok」。
+ * 写成 tokens:0 会拍出一个宿主永远不会发出的样子。
+ */
+function noHistoryCard(lang, provider) {
+  return finalizeCard({
+    id: `window:${provider}`,
+    label: lang === 'en' ? `${provider} (measured)` : `${provider}（实测）`,
+    metric: 'tokens',
+    unit: 'tokens',
+    estimated: true,
+    windowDays: 7,
+    items: [],
+    veracity: 'local',
+    detected: { by: 'fallback-window', fallback: true },
+    bindProviders: [provider],
+    sourceNote: lang === 'en'
+      ? 'Local ledger: this DSH instance only, no official denominator'
+      : '本实例实测账目：只覆盖经过本实例的调用，没有官方分母',
+    emptyReason: '本实例还没有该供应商的调用记录（实测窗口从经过本实例的第一次调用起算）',
+  }, false)
+}
+
+/**
  * 造一份完整 snapshot。
  * @param {object} options
  * @param {number} [options.now] 基准时间（相对时间全靠它，过几秒重拍不会「剩5d」变「剩4.9d」）。
- * @param {'panel'|'float'|'cookieDrop'|'badgeSwitch'} [options.variant]
+ * @param {'panel'|'float'|'cookieDrop'|'badgeSwitch'|'triptych'} [options.variant]
  * @param {'zh'|'en'} [options.lang]
  * @returns {object} 与 `/token-plan-quota/summary` 等形的 payload。
  */
@@ -211,6 +278,23 @@ export function makeSnapshot(options = {}) {
     cards.push(measuredCard(lang, now, 'openai', 1286, 847_000))
   }
 
+  /**
+   * 「三种状态」三连图：面板只留当前供应商那一张卡（`panelScope:'current'`，
+   * 判定在 `client.js:979`），所以这里整体换掉卡集 —— 官方钱卡 / 官方 Credits 卡 /
+   * 零调用实测卡，分别对应「按钱计费的也能识别」「用过的模型会显示额度」
+   * 「没用过的模型不显示额度」。吞吐同时清零：拍的是静态额度状态，
+   * 背景里不该飘着一串编造的高吞吐。
+   */
+  const triptych = variant === 'triptych'
+  if (triptych) {
+    cards.length = 0
+    cards.push(deepseekMoneyCard(lang, now), creditsPlanCard(lang, now))
+    // 第三张（零调用实测卡）只进中文套：`emptyReason` 是 `lib/index.js:376` 写死的中文，
+    // 宿主在英文界面下同样只会吐这一句。给英文套编一句英文文案，等于拍一张
+    // 宿主永远发不出的图 —— 宁可少一张。i18n 缺口记在 ROADMAP。
+    if (lang === 'zh') cards.push(noHistoryCard(lang, 'minimax-cn'))
+  }
+
   return {
     generatedAt: now,
     refreshMinutes: 5,
@@ -223,7 +307,7 @@ export function makeSnapshot(options = {}) {
       fileError: null,
       debug: false,
       showInstanceWindow: true,
-      panelScope: 'all',
+      panelScope: triptych ? 'current' : 'all',
       sources: cards.map(card => ({
         id: card.id, label: card.label, kind: 'single', type: 'http', action: null, version: null,
         params: {}, keywords: [], providers: card.bindProviders ?? [], region: null,
@@ -231,7 +315,7 @@ export function makeSnapshot(options = {}) {
       })),
     },
     stats: { calls: 5807, errors: 0, lastAttemptAt: now - 12_000 },
-    throughput: {
+    throughput: triptych ? quietThroughput(now) : {
       tpm60: 41_800, out60: 9_400, calls60: 14, cacheRead60: 21_600,
       tokens300: 196_500, calls300: 61, activeMs300: 41_200, activeOut300: 1_730,
       genTps: 42, outTps60: 156, activeSeconds: 41,
@@ -243,10 +327,13 @@ export function makeSnapshot(options = {}) {
     detection: {
       enabled: true, reason: null,
       routes: ['deepseek-official → api.deepseek.com', 'openai → api.openai.com'],
-      added: [
-        { id: 'deepseek-balance', providers: ['deepseek-official'], by: 'baseURL', region: null },
-        { id: 'token-plan-console', providers: ['qwen-token-plan-cn'], by: 'routeId', region: null },
-      ],
+      // 从卡集派生，别再手写一遍：换变体时这里最容易和 cards 对不上。
+      added: cards.filter(card => !card.estimated).map(card => ({
+        id: card.id,
+        providers: card.bindProviders ?? [],
+        by: card.id === 'deepseek-balance' ? 'baseURL' : 'routeId',
+        region: null,
+      })),
       skipped: [], uncovered: [],
     },
     notices: [],
@@ -258,17 +345,36 @@ export function makeSnapshot(options = {}) {
  * 出图前的自检：任何一条不过就不该拍照——合成物料最怕的就是「看着像真的但其实宿主发不出」
  * 和「把真实数据带回来」。
  * @param {object} snapshot makeSnapshot 的产物
+ * @param {{lang?: 'zh'|'en'}} [options] 传了 lang 才会跑对应语言的文案检查。
  * @returns {string[]} 全部通过的断言说明（抛错表示不通过）
  */
-export function assertFixture(snapshot) {
+export function assertFixture(snapshot, options = {}) {
   const checks = []
   const need = (label, cond) => {
     if (!cond) throw new Error(`fixture 自检失败：${label}`)
     checks.push(label)
   }
   const text = JSON.stringify(snapshot)
-  for (const banned of ['OMEN', '39.91', '9063', 'C:\\', 'D:\\', '/Users/', '.scratch']) {
+  // 真实痕迹：本机账号、真实余额，以及用户实拍图里出现过的真实额度值 ——
+  // 那三张图是真实账号，任何"照着抄一组数"的改动都必须被这里拦住。
+  for (const banned of ['OMEN', '39.91', '9063', '7943', '2026-09-14', 'C:\\', 'D:\\', '/Users/', '.scratch']) {
     need(`不含真实痕迹 ${JSON.stringify(banned)}`, !text.includes(banned))
+  }
+  if (options.lang === 'en') {
+    // 英文套的图里不能出现中文。宿主确实有几处写死的中文（`emptyReason` 就是），
+    // 遇到这种只能把那张卡从英文套里排除，**不能**为了凑图编一句宿主不会发的文案。
+    // 带 `xxxEn` 兄弟字段的（`label`/`sourceNote` 之类）按宿主的双语约定跳过 ——
+    // 那是宿主自己就同时带着两种语言，客户端才挑一次。
+    const han = /\p{Script=Han}/u
+    for (const card of snapshot.cards) {
+      for (const [key, value] of Object.entries(card)) {
+        if (typeof value !== 'string' || !han.test(value)) continue
+        if (card[`${key}En`] !== undefined) continue
+        throw new Error(`英文套里出现了中文：卡 ${card.id} 的 ${key} = ${JSON.stringify(value.slice(0, 24))}`
+          + '（这张卡不该进英文截图，而不是给它编一句英文）')
+      }
+    }
+    checks.push('英文套所有卡字段无中文（宿主单语字段除外）')
   }
   const allowed = new Set(publicCardKeys())
   for (const card of snapshot.cards) {
@@ -279,6 +385,14 @@ export function assertFixture(snapshot) {
       need(`实测卡 ${card.id} 不带 remainingPercent`, card.remainingPercent === undefined)
       need(`实测卡 ${card.id} 不带 usedPercent`, card.usedPercent === undefined)
       need(`实测卡 ${card.id} 不带 total（没有官方分母）`, card.total === undefined)
+      // 「本实例还没调用过」的卡必须和 `lib/index.js:368-369` 的 undefined 分支同形：
+      // 字段整个缺席，不是 0。写成 tokens:0 会拍出一个宿主永远发不出的样子
+      // （徽标会变成「0 tok」而不是「无官方额度数据」，见 client.js:187）。
+      if (card.emptyReason !== undefined) {
+        for (const key of ['tokens', 'calls', 'startedAt', 'resetAt', 'remainingDays']) {
+          need(`零记录实测卡 ${card.id} 不带 ${key}（宿主发的是字段缺席）`, card[key] === undefined)
+        }
+      }
     } else {
       need(`官方卡 ${card.id} 有 veracity`, typeof card.veracity === 'string')
       // 顶层百分比同样是 finalizeCard() 的派生值，必须与 remaining/total 复算一致：

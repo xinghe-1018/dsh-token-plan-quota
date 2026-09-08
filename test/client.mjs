@@ -17,11 +17,12 @@ function check(label, actual, expected) {
     console.log(`FAIL ${label}\n  expected ${JSON.stringify(expected)}\n  actual   ${JSON.stringify(expected === undefined ? actual : actual)}`)
   }
 }
-function ok(label, condition) {
+function ok(label, condition, context) {
   if (condition) passed += 1
   else {
     failed += 1
-    console.log(`FAIL ${label}`)
+    // 失败时把现场片段打出来：「X 没出现在输出里」这种断言不给上下文根本查不动（这次就是）。
+    console.log(`FAIL ${label}${context === undefined ? '' : `\n  现场 ${String(context).replace(/\\s+/g, ' ').slice(0, 900)}`}`)
   }
 }
 
@@ -337,7 +338,10 @@ async function loadBundle(fetchMode) {
   const injected = []
   const effects = []
   const dom = makeDom()
-  const declaredSlots = new Set(fetchMode === 'no-left' ? ['conversation.input.dock'] : ['conversation.input.left', 'conversation.input.dock'])
+  const declaredSlots = new Set(
+    fetchMode === 'no-left' ? ['conversation.input.dock']
+      : fetchMode === 'no-dock' ? ['conversation.input.left']
+        : ['conversation.input.left', 'conversation.input.dock'])
 
   globalThis.window = {
     __ModuleLoader__: {
@@ -437,15 +441,23 @@ async function settle(render, rounds = 4) {
       'https://cdn.jsdelivr.net/npm/@fontsource-variable/noto-sans-sc@5/index.css',
     ])
   check('只注册一个座位（首选成功就不重复）', registered.length, 1)
-  check('座位名', registered[0].options.name, 'conversation.input.left')
+  check('座位名（首选工具行座位：徽标有 312px 硬上限，不会再挤折那一行）', registered[0].options.name, 'conversation.input.left')
   check('座位 id', registered[0].options.id, 'token-plan-quota')
   ok('组件是函数', typeof registered[0].component === 'function')
 }
 
 {
-  const { api, registered, dom } = await loadBundle('no-left')
+  // 老外壳没有工具行座位时，退回通栏的 dock 座位——徽标宁可换个位置也不整个不显示。
+  const { api, registered } = await loadBundle('no-dock')
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), []))
+  check('只有工具行座位时注册在工具行', registered.map(entry => entry.options.name), ['conversation.input.left'])
+}
+
+{
+  // 只有 dock（没有工具行座位）时，仍注册在 dock。
+  const { api, registered } = await loadBundle('no-left')
   api.apply(makeCtx(registered, new Set(['conversation.input.dock']), []))
-  check('老外壳退到 dock 座位', registered.map(entry => entry.options.name), ['conversation.input.dock'])
+  check('只有 dock 座位时注册在 dock', registered.map(entry => entry.options.name), ['conversation.input.dock'])
 }
 
 {
@@ -480,7 +492,9 @@ async function settle(render, rounds = 4) {
   ok('明细里显示官方卡充值/赠款拆分', panel.includes('充值') && panel.includes('¥45.29'))
   ok('明细里显示官方接口来源标注（标题 tooltip）', panel.includes('官方接口') && panel.includes('/user/balance'))
   ok('明细里显示本实例实测用量', panel.includes('本实例实测用量'))
-  ok('明细里显示本实例 token 数（缩写格式）', panel.includes('1.01M') || panel.includes('1,010,000'))
+  // 1_010_000 在中文界面是 101.0万（中文阶梯不掺 M）；写成三元"或"会让两种单位都算过，
+  // 那正是这次要修的毛病，所以钉死成中文那一种。
+  ok('明细里显示本实例 token 数（中文缩写用万）', panel.includes('101.0万'))
   ok('明细里显示一行式吞吐摘要', panel.includes('吞吐') && panel.includes('近 5 分'))
   ok('明细里重试观测压缩为每供应商一行', panel.includes('自动重试×3') && panel.includes('固定间隔 60s × 10') && panel.includes('✓QUOTA'))
   ok('明细里不再渲染独立滑动吞吐子块（与顶部一行合并）', !panel.includes('滑动吞吐'))
@@ -553,9 +567,14 @@ function findChip(node) {
   dirStore.set({ ...dirStore.snapshot, current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' } })
   flat = JSON.stringify(await settle(render, 2))
   ok('模型=token plan → 徽标切到实测窗口卡', flat.includes('Token Plan 实测') && !flat.includes('DeepSeek 余额'))
-  ok('窗口卡数值带 tok 与实测角标', flat.includes('1.23M tok') && flat.includes('实测'))
-  ok('窗口卡显示剩余天数', flat.includes('剩5天'))
-  ok('窗口徽标带实测吞吐标签（最近单流速度，纯文本无图标）', flat.includes('42 tok/s'))
+  // 1_234_567 在中文界面是 123.5万，不是 1.23M —— 中文阶梯只用 万/亿，
+  // 中间插一个 M 会让同一行出现两套量纲（实机反馈"吞吐看不明白"）。
+  ok('窗口卡数值带 tok 与实测角标', flat.includes('123.5万 tok') && flat.includes('实测'))
+  // 胶囊只露「渐变条 + 余量数字（实测时带那颗 pill 标明口径）」：剩余天数、速度、重试都不再占徽标位，
+  // 收进 tooltip 与明细面板。pill 留在脸上是"这张卡不是官方余量"的即时信号，不算"详细内容"。
+  ok('胶囊不挂天数/速度/重试标签（详细内容交给面板）',
+    !flat.includes('tpq-tag') && !flat.includes('tpq-speed'))
+  ok('吞吐速度收进胶囊 tooltip（数字仍在 title 里，只是不占位）', flat.includes('42 tok/s'))
   ok('徽标无状态圆点、无表情符号', !flat.includes('tpq-dot') && !flat.includes('⚡'))
 
   // 点开 → panelScope=current：只列当前供应商的卡 + 本实例实测，DeepSeek 不再常驻。
@@ -568,7 +587,14 @@ function findChip(node) {
   ok('面板带右下角缩放手柄', panel.includes('tpq-resize') && panel.includes('拖拽调整面板大小'))
   ok('面板 portal 到 document.body（fixed 视口坐标系成立）', panel.includes('"portalTo":"body"'))
   ok('面板含吞吐一行（生成速度优先 + 60s/5min 汇总）', panel.includes('吞吐') && panel.includes('28.6k tok/s') && panel.includes('近 5 分'))
-  ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'))
+  // 每个数都带单位，且中文界面不再 万/M 混排（实机反馈："现在的吞吐看不明白了"）。
+  ok('吞吐的 token 数带 tok', panel.includes('2.3万 tok') && panel.includes('120.0万 tok'))
+  ok('近 5 分的调用数带单位，不写成裸除法', panel.includes('120.0万 tok / 12 次请求'))
+  // 聚合值之外不再逐家列速度：头部就是这一实例的总速度，重复一遍既冗余又常出现两家同速。
+  ok('吞吐只报聚合值，不列分供应商速度', !panel.includes('qwen-token-plan-cn 28.6k'))
+  ok('中文界面不再出现 1.20M 这种混排写法', !panel.includes('1.20M'))
+  ok('窗口卡一行摘要含用量与重置倒计时', panel.includes('窗口内已用') && panel.includes('剩5天后重置'), panel)
+  ok('实测卡的用量数字带单位（同屏别处都标了 tok，这里不能漏）', panel.includes('窗口内已用 7天 123.5万 tok'))
   ok('panelScope=current：DeepSeek 卡不再出现在面板', !panel.includes('DeepSeek 余额'))
   ok('panelScope=current：面板只列绑定卡，实测用量卡不进面板', panel.includes('Token Plan 实测') && !panel.includes('本实例实测用量'))
   ok('panelScope=current：无隐藏提示灰条', !panel.includes('已隐藏') && !panel.includes('未配置 AK/SK'))
@@ -897,7 +923,7 @@ function findChip(node) {
 {
   const { api, registered } = await loadBundle()
   const dirStore = makeStore({
-    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
     routable: true, groups: [], failures: [], status: 'ready', error: null,
   })
   // pickLocale() 在 apply() 里跑，所以 lang 要在 apply 之前翻。
@@ -915,6 +941,9 @@ function findChip(node) {
   findChip(await settle(render, 1)).props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('英文界面确实是英文（面板标题）', panel.includes('Quota detail'))
+  // 客户端必须真的消费 labelEn —— README 的 `label`/`labelEn` 那一行现在就是这么承诺的，
+  // 而它过去写着"当前界面不消费它"（英文界面因此整屏中文标签）。
+  ok('英文界面读卡片的 labelEn', panel.includes('DeepSeek balance') && !panel.includes('DeepSeek 余额'))
   // 23400 这个数在两种单位下分别是 2.3万 / 23K —— 断言这一对，别去查"整屏有没有汉字"
   // （测试 payload 的 sourceNote 本来就是中文，那样会误判）。
   ok('英文界面：23400 → 23K', panel.includes('23K') && !panel.includes('2.3万'))
@@ -946,6 +975,53 @@ function findChip(node) {
   if (cap !== null) ok(`徽标上限 ${cap[1]}px ≤ 实测折行阈值 317px`, Number(cap[1]) <= 317)
   ok('整条链也允许收缩（min-width:0 + overflow:hidden）',
     rule?.[0].includes('min-width:0') === true && rule?.[0].includes('overflow:hidden') === true)
+}
+
+/* 标题栏必须永远是一行：模型名折成两行会把标题撑高，右边的 ✕ 就错位、
+ * 看着像压在「额度明细」上（实机反馈）。所以 meta 只能省略号收尾，不能换行。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const meta = /\.tpq-title \.tpq-meta\{[^}]*\}/.exec(code)
+  ok('标题栏里的模型名有专门的收缩规则（不是共用面板体那条）', meta !== null)
+  ok('它走省略号而不是换行', meta?.[0].includes('white-space:nowrap') === true
+    && meta?.[0].includes('text-overflow:ellipsis') === true && meta?.[0].includes('min-width:0') === true)
+  const close = /\.tpq-close\{[^}]*\}/.exec(code)
+  ok('✕ 不给负外边距（负值会把它拽到面板圆角和边框上）',
+    close !== null && !/margin:\s*-\d/.test(close[0]) && close[0].includes('flex:none') === true)
+  const title = /\.tpq-title>span:first-child\{[^}]*\}/.exec(code)
+  ok('「额度明细」自己不会被挤扁或折行', title?.[0].includes('flex:none') === true
+    && title?.[0].includes('white-space:nowrap') === true)
+}
+
+/* 徽标座位：dock 必须排在工具行（input.left）之前。徽标带渐变条/速度/天数，和模型
+ * 选择器挤同一条工具行时，长模型名必然把右侧 trailing 组挤到第二行——换行取决于模型名的
+ * 内容宽度，CSS 量不到，所以 312px 上限治不了。会换行的内容按宿主插槽契约放 dock。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const seatsBlock = /const seats = \[[\s\S]*?\]/.exec(code)
+  ok('座位表存在', seatsBlock !== null)
+  const dockAt = seatsBlock?.[0].indexOf('conversation.input.dock') ?? -1
+  const leftAt = seatsBlock?.[0].indexOf('conversation.input.left') ?? -1
+  ok('工具行座位排在 dock 之前（首选工具行）', dockAt !== -1 && leftAt !== -1 && leftAt < dockAt)
+  // dock 是通栏行，徽标必须夹到输入卡片的居中列，否则孤零零贴在视口最左边（实机反馈"效果太差"）。
+  ok('dock 座位用专门的包裹组件（不是把裸徽标直接塞进通栏行）',
+    /const DockEntry = \(\) => React\.createElement\("div", \{ className: "tpq-dock" \}/.test(code))
+  ok('dock 包裹复刻卡片居中几何（max-width = 卡片宽 + side-clearance 内边距）',
+    /\.tpq-dock\{[^}]*--dsh-composer-side-clearance/.test(code)
+    && /\.tpq-dock>\.tpq\{[^}]*--dsh-composer-card-max-width/.test(code))
+}
+
+/* 锚定态面板朝上展开，标题栏（含 ✕）在面板顶端。徽标离屏幕顶不够高时（短窗口 / hero 居中态）
+ * 整块面板顶出视口、把 ✕ 裁掉。把面板体高度夹到徽标上方可用空间：底边不动、顶边往下挪，
+ * ✕ 永远落在 8px 视口边距内（等价于「把详细界面向下移动、给 ✕ 留空间」）。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('锚定态按徽标上方可用空间夹面板体高度',
+    /spaceAbove\s*=\s*r\.top/.test(code) && /bodyStyle\s*=\s*\{\s*maxHeight/.test(code))
+  ok('夹取仍保留 52vh/460 上限，只在上方空间不足时再收紧',
+    /Math\.min\(vh \* 0\.52, 460, spaceAbove\)/.test(code))
+  ok('夹取值真的透传到 .tpq-body（不是算了不用）',
+    /className:\s*"tpq-body",\s*style:\s*bodyStyle/.test(code))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

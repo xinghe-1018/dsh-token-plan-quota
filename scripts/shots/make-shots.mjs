@@ -185,6 +185,9 @@ async function main() {
   // 首屏：徽标必须挂上，挂不上后面全白拍，所以先断言再动手。
   await page.waitFor(`document.querySelector('.tpq-chip') !== null`, { timeoutMs: 30_000, label: '徽标挂载' })
   console.log('✅ 徽标已挂载：' + JSON.stringify(await page.evaluate(`document.querySelector('.tpq-chip').innerText.replace(/\\s+/g,' ')`)))
+  // 宿主语言决定图文种（插件跟着 `<html lang>` 走，不完全等于 --lang）。先打出来，
+  // 省得跑完四分钟才发现整套图是另一种语言。
+  console.log('   宿主界面语言 <html lang> = ' + JSON.stringify(await page.evaluate('document.documentElement.lang')) + `（--lang ${LANGUAGE[langKey]}）`)
 
   /**
    * 按可见文案点一个按钮（模态的确认按钮、模型按钮都靠它）。
@@ -341,6 +344,10 @@ async function main() {
     return null
   }
   const switchModel = async (fromLabel, toLabel, expectChip) => {
+    // expectChip 可以是候选数组：徽标的文案跟着**宿主**的语言走（pickLocale 认 <html lang>），
+    // 而宿主语言不完全等于浏览器的 --lang。只等一个词，就会在宿主恰好说中文的那次运行里
+    // 干等到超时（英文套第一次就是这么挂的）。
+    const expects = Array.isArray(expectChip) ? expectChip : [expectChip]
     if (!await clickText(fromLabel)) throw new Error(`点不到模型按钮（应显示「${fromLabel}」）`)
     await sleep(700)
     const rowLabels = [...new Set([UI[langKey].modelRow, '模型', 'Model'])]
@@ -354,8 +361,14 @@ async function main() {
     })()`, { timeoutMs: 10_000, label: `二级菜单出现 ${toLabel}` })
     await sleep(600)
     if (!await deepClick(toLabel)) throw new Error(`点不到 ${toLabel}；当前可见菜单：${JSON.stringify(await menuDump())}`)
-    await page.waitFor(`(document.querySelector('.tpq-chip')?.innerText || '').includes(${JSON.stringify(expectChip)})`,
-      { timeoutMs: 12_000, label: `徽标切到 ${expectChip}` })
+    // 徽标收成胶囊后**不显示卡名**（名字只在 tooltip 里），所以判断"跟过去了"不能只看可见文字：
+    // 只看 innerText 会永远等不到 `Token Plan`（三连图第一次就挂在这）。title 里一定带卡名。
+    await page.waitFor(`(() => {
+      const c = document.querySelector('.tpq-chip')
+      if (!c) return false
+      const hay = (c.innerText || '') + ' ' + (c.title || '')
+      return ${JSON.stringify(expects)}.some(x => hay.includes(x))
+    })()`, { timeoutMs: 12_000, label: `徽标切到 ${expects.join(' / ')}` })
     await sleep(700)
   }
   /**
@@ -431,7 +444,7 @@ async function main() {
     await sleep(700)
     // 走和 ⑤⑥⑦ 同一个换模型函数：那里面已经有重试和"失败时把菜单内容贴出来"的诊断，
     // 这里再抄一份内联点击，等于让 GIF 这条路径永远拿不到它们（英文整套连跑时就是在这翻的车）。
-    await switchModel('DeepSeek-V4-Flash', 'GPT-5', UI[langKey].measured)
+    await switchModel('DeepSeek-V4-Flash', 'GPT-5', [UI[langKey].measured, '实测', 'measured'])
     await sleep(1600)
     await cast.stop()
     const after = await page.evaluate(`document.querySelector('.tpq-chip')?.innerText.replace(/\\s+/g,' ') ?? null`)

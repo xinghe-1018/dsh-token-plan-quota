@@ -8,10 +8,11 @@ web UI. Official APIs provide the numbers; providers without an official quota e
 decided from the provider routes you actually have.
 
 ```
-The chip in the composer tool row follows the active model’s provider:
+The chip in the composer tool row is a small capsule that follows the active model’s provider
+(name / speed / days live in the tooltip):
 
-  Token plan ▓▓░ 79% 5d left         the vendor publishes a denominator → bar + percentage
-  minimax-cn 123K tok measured       no official denominator → what was used, never a bar or a percentage
+  ▓▓ 75%                  the vendor publishes a denominator → bar + percentage
+  123K tok  measured      no official denominator → what was used, never a bar or a percentage
 ```
 
 **① The chip follows the active model's provider** — one route reports an official true value, and switching to a
@@ -176,7 +177,7 @@ Two invariants:
   "label · remaining/total · used% · resets" - with its own thin gradient bar.
 - **The detail panel is a persistent window**: drag it by the title bar, resize with the bottom-right handle,
   position and size persist in `localStorage`, double-click the title to re-anchor.
-  **Clicking anywhere else never closes it** - only clicking the chip again or pressing `Esc` does.
+  **Clicking anywhere else never closes it** - only the `✕` in the title bar, clicking the chip again, or `Esc`.
   Dismiss-on-outside-click is dropdown semantics that conflicts with this, and identifying the host's input
   area via selectors is guaranteed to leak (the shipped web bundle does not even contain
   `data-composer-card`).
@@ -315,7 +316,7 @@ shows up as "the card stays empty", not as a failed start. This table is the aut
 |---|---|---|
 | `id` | required | Source identifier, also the cache key and the `probe?source=` argument. Two entries sharing an `id` share a cache and stack into two cards (the log warns); rename the second one |
 | `kind` | recommended | `single` (one reading - the default when omitted) / `list` (a list of resources) / `window` (measured window for this instance, no network) |
-| `label` / `labelEn` | title | `label` is the card title and falls back to the entry's `id` when omitted. `labelEn` ships in the snapshot but **the UI does not consume it today** (the panel title reads `label` only); it is reserved for host localisation |
+| `label` / `labelEn` | title | `label` is the card title and falls back to the entry's `id` when omitted. When the UI language is English the client **prefers `labelEn`** (panel card headers and meter rows) and only falls back to `label` - it never translates for you, so write `labelEn` on the entry if you want an English title |
 | `url` | `single` / `list` | Endpoint. With `url` present the source is HTTP; without `url` and not a built-in name, it is treated as an Aliyun OpenAPI **RPC** call (needs `action` + `version`) |
 | `method` | HTTP | Defaults to `GET` |
 | `headers` | HTTP | Extra request headers, merged over `accept: application/json` |
@@ -369,10 +370,11 @@ are kept strictly apart:
 - **Throughput (volume)**: `tpm60` / `tokens300` count all tokens including cache reads - the billing and
   transport view; `outTps60` is the average output speed over the last 60 seconds.
 
-The sliding window is persisted with the ledger, so the last five minutes survive a host restart. The chip's
-speed label uses only the row for the current model's provider, preferring the most recent single stream
-(within 90 seconds), then the 60-second output average, then the 5-minute generation speed; nothing is shown
-without recent activity.
+The sliding window is persisted with the ledger, so the last five minutes survive a host restart. Speed no
+longer takes room on the chip (the capsule shows only the bar and the remaining figure); it prefers the most
+recent single stream (within 90 seconds), then the 60-second output average, then the 5-minute generation
+speed, and is shown in the tooltip. The panel's throughput line reports **this instance's aggregate only** -
+it does not list a speed per provider; that data stays in the snapshot and via `action=status`.
 
 ## Read-only routes and the model tool
 
@@ -428,13 +430,13 @@ see [`SECURITY.md`](SECURITY.md) for details.
 ```bash
 npm run check                       # all four steps below
 node test/host.mjs                  # 351 assertions, offline
-node test/client.mjs                # 116 assertions, fake React/DOM/fetch
+node test/client.mjs                # 135 assertions, fake React/DOM/fetch
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 351/116 tests" - and checks them against the code and a real
+config table, 8 sources, 8 declared outbound hosts, 351/135 tests" - and checks them against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).
 

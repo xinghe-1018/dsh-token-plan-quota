@@ -86,16 +86,39 @@ jobs:
             echo "dry run：跳过发布"
             exit 0
           fi
+          # 失败时 npm 会把真实原因写到 stderr —— 但 Actions 的 annotations 只显示
+          # "exit code 1"，公开 API 也看不到 raw log。把整段日志按行贴成 ::error::，
+          # 这样下次一挂就能直接看清是哪一步被拒（OIDC 没配、token 空、版本重了…）。
+          dump_annotations() {
+            local f="$1"
+            tail -n 30 "$f" | sed 's/"/\&#34;/g' | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::npm> $line"
+            done
+          }
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::notice::用 NPM_TOKEN 发布（无 provenance）"
             # setup-node 上面故意没配 registry-url，那这一行的 .npmrc 就得自己写；
             # 只在 token 路径下写，OIDC 路径下 ~/.npmrc 保持"没有 _authToken 键"，npm
             # 才会走 runner 注入的 OIDC token。
             printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$HOME/.npmrc"
-            npm publish --access public
+            set +e
+            npm publish --access public >/tmp/publish.log 2>&1
+            rc=$?
+            set -e
           else
             echo "::notice::用 OIDC trusted publishing 发布（带 provenance）"
-            npm publish --access public --provenance
+            echo "::notice::发布前 ~/.npmrc 内容（应为空或无 _authToken 键）："
+            [ -f "$HOME/.npmrc" ] && cat "$HOME/.npmrc" || echo "  (没有 .npmrc 文件)"
+            set +e
+            npm publish --access public --provenance >/tmp/publish.log 2>&1
+            rc=$?
+            set -e
+          fi
+          cat /tmp/publish.log
+          if [ "$rc" -ne 0 ]; then
+            dump_annotations /tmp/publish.log
+            echo "::error::npm publish 退出码 $rc（上面 30 行是完整日志）"
+            exit "$rc"
           fi
 
       - name: verify it landed

@@ -1165,10 +1165,14 @@ function findChip(node) {
     /spaceAbove\s*=\s*anchorTop/.test(code) && /bodyStyle\s*=\s*\{\s*maxHeight/.test(code))
   ok('锚点被卸载/未布局时不照抄全 0 的 rect（面板不会跑到左上角）',
     /const detached = root\.current\.isConnected === false/.test(code)
-    && /anchorTop = detached \? Math\.round\(vh \* 0\.35\)/.test(code))
+    && /if \(detached\) anchorTop = Math\.round\(vh \* 0\.35\);/.test(code))
   ok('面板底边贴卡片上缘而不是徽标那一行（不再盖住输入框）',
-    /anchorTop = detached \? Math\.round\(vh \* 0\.35\)\s*\n\s*: \(cardRect !== null && cardRect\.height > 0 \? cardRect\.top : r\.top\)/.test(code)
+    /if \(cardRect !== null && cardRect\.height > 0\) anchorTop = cardRect\.top;/.test(code)
     && /bottom: `\$\{Math\.max\(MARGIN, vh - anchorTop \+ GAP\)\}px`/.test(code))
+  // 审查规范（Open Code Review 的 system 规则）明令禁止嵌套三元，锚点这段最容易写成
+  // 三层套娃，所以把它钉在源码上。
+  ok('锚点计算不用嵌套三元（审查规范：Ternary Expressions）',
+    !/anchorTop\s*=\s*[^\n]*\?[^\n]*\?/.test(code))
   ok('夹取仍保留 52vh/460 上限，只在上方空间不足时再收紧',
     /Math\.min\(vh \* 0\.52, 460, spaceAbove\)/.test(code))
   ok('夹取值真的透传到 .tpq-body（不是算了不用）',

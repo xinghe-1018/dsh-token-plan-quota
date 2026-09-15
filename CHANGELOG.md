@@ -10,6 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **按 Open Code Review 的规范自查后修掉一处违规**：面板锚点的 `anchorTop` 原先写成
+  嵌套三元（规范里 "Ternary Expressions: nested ternary expressions are not allowed"）。
+  改为顺序语句，并加一条源码断言把"锚点计算不许出现嵌套三元"钉住。
+  同一次审查还标出 `pickLocale()` 在渲染期改模块级 `uiEnglish` / `cjkTokenUnits`
+  —— 那是"渲染期副作用"，但它是"宿主异步写 `<html lang>`"那条时序 bug 的修法，
+  值只由 `<html lang>` 决定、同一帧内幂等，故保留并在此留痕。
+
+### Fixed
+
 - **Windows 上发布脚本的自检根本没跑**：`scripts/release.mjs` 用
   `spawnSync('npm.cmd', …, { shell: false })` 跑 `npm run check`，而 Node 24 起
   （CVE-2024-27980 的修复）拒绝在不带 shell 的情况下启动 `.cmd` —— 于是那步直接失败，

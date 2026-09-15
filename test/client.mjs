@@ -1335,5 +1335,69 @@ function findChip(node) {
     /if \(event\.key !== "Escape"\) return;[\s\S]{0,220}setDragBox\(null\);/.test(code))
 }
 
+/* 英文界面不得出现「我们自己写的」中文（审查第 6 条：硬编码中文绕过 COPY）。
+ * 宿主回的数据（label / sourceNote / notices）本来就是宿主语言，不在此列；
+ * 这里只查画面文案：官方接口、自动识别那几句、重试 tooltip、5h 窗口标签。 */
+{
+  const { api, registered } = await loadBundle('scope-all', 'en-US')
+  // 宿主已经把语言写下来了（假 DOM 默认写 zh-CN）：不覆写就会正确地出中文。
+  globalThis.document.documentElement.lang = 'en'
+  const dirStore = makeStore({
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  findChip(await settle(render, 1)).props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('英文界面：可信度标签 + 半角冒号（official API: …）', panel.includes('official API: DeepSeek'), panel.slice(0, 400))
+  ok('英文界面：自动检测的解释走英文', panel.includes('auto-detected via token-plan.cn-beijing.maas.aliyuncs.com'))
+  ok('英文界面：实测卡来源走英文', panel.includes('measured on this instance'))
+  ok('英文界面：重试 tooltip 走英文（failure code / retry #3）', panel.includes('failure code') && panel.includes('retry #3'))
+  for (const leaked of ['官方接口', '自动识别', '失败码', '次重试', '5h窗口']) {
+    ok(`英文界面没有漏网的中文文案「${leaked}」`, !panel.includes(leaked))
+  }
+}
+
+/* 画面文案只能住在 COPY 里 —— 这条把上面那次清扫固化成结构约束。
+ * 刻意留的两类白名单：
+ *   ① token 的「万/亿」单位由 cjkTokenUnits 门控（英文出 K/M/B，中文才有这两个字）；
+ *   ② ctx.logger 的诊断文案跟随全项目中文日志的约定，不进画面。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const zhBlock = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(code)
+  const enBlock = /\n      en: \{([\s\S]*?)\n      \},/.exec(code)
+  ok('COPY 有 zh / en 两份字典', zhBlock !== null && enBlock !== null)
+  const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zh = keysOf(zhBlock?.[1] ?? '')
+  const en = keysOf(enBlock?.[1] ?? '')
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [62, 62])
+  ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
+  ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
+
+  // 顺序要紧：先把注释剥掉，再剥字典与 CSS 模板串。反过来会让 CSS 的正则跨行吃掉
+  // 注释起始符，把半句中文注释当成代码留下（第一次跑就是这么误报的）。
+  const stripped = code
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/const COPY = \{[\s\S]*?\n    \};/, '')
+    .replace(/`[^`]*?\.tpq[^`]*?`/g, '')
+  const offenders = stripped.split('\n')
+    .map((line, index) => ({ line, no: index + 1 }))
+    .filter(({ line }) => /[\u3400-\u9fff]/u.test(line))
+    .filter(({ line }) => !/ctx\.logger/u.test(line))
+    .filter(({ line }) => !/toFixed\(\d\)\}[万亿]/u.test(line))
+  ok('COPY 之外没有进画面的中文字面量（要加先加进字典）', offenders.length === 0,
+    offenders.map(entry => `L${entry.no} ${entry.line.trim().slice(0, 90)}`).join(' ⏎ '))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

@@ -42,6 +42,19 @@ All notable changes to this project are documented here. The format follows
     「次」统一走 `copy.calls`（英文界面不再中英混排），`expiresAt` 按格式化结果判断而不是
     按字段存在判断（老写法会输出 `· null`）。
   - 手写 CJS 壳里的 `var module` / `var exports` 改 `const`（no-var）。
+- **审查采纳 · 第 6 条单独一轮：英文界面不再中英混排**。有 6 组会进画面的文案是硬编码
+  中文，绕过了 `COPY` 字典，宿主切英文时它们照样是中文：卡片可信度（`官方接口` /
+  `本实例实测` / `数据源`）、自动检测的可解释性文案（`按 {host} 自动识别`、
+  `按供应商名自动识别`、`按 Key 前缀自动识别`、`没匹配到官方额度接口，按本实例实测显示`、
+  `自动识别`）、重试 tooltip 的 `失败码` 与 `第 {n} 次重试`、摘要行的 `5h窗口`、
+  标题 tooltip 的 `区 {r}`，以及 `官方接口：来源` 那个全角冒号。现在中英各补 13 个键、
+  全部走字典，中文措辞逐字保持不变（`5h窗口 已用 1.23%` 这类既有断言一字未改地通过）。
+  两处**刻意保留**：`formatTokens` 的 `万` / `亿` 由 `cjkTokenUnits` 门控（英文出 K/M/B，
+  中文才有这两个字，本来就是按语言分的）；`ctx.logger` 的诊断文案跟全项目中文日志的约定，
+  不进画面。并把这次清扫固化成三把锁：`COPY` 的 zh / en 键集必须一一对应（62 = 62）、
+  剥掉字典与注释后源码里不得再有会进画面的中文（白名单只有上面那两处，注入一句硬编码
+  中文即报错）、以及一组真的用 `lang="en"` 渲染的回归用例（断言 `official API: …`、
+  `auto-detected via …`、`failure code`、`retry #3` 出英文，且那五句中文文案一律不在）。
 - **按 Open Code Review 的规范自查后修掉一处违规**：面板锚点的 `anchorTop` 原先写成
   嵌套三元（规范里 "Ternary Expressions: nested ternary expressions are not allowed"）。
   改为顺序语句，并加一条源码断言把"锚点计算不许出现嵌套三元"钉住。

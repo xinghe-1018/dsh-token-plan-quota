@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-09-15
+
 ### Fixed
 
 - **模型工具整条被宿主拒收**：`token_plan_quota` 的返回对象里 `estimated` / `remaining`
@@ -442,6 +444,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.7]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.3...v0.4.4

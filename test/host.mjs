@@ -22,6 +22,7 @@ const {
   querySource, buildStatus, invalidateSources,
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
+  toToolJson, buildQuotaTool,
 } = __internals
 
 let passed = 0
@@ -41,6 +42,39 @@ function ok(label, condition) {
   }
 }
 const ctxStub = { logger: { warn() {} }, get: () => undefined }
+
+/* ============================================ 0b. 工具返回值必须过宿主的无损 JSON 关
+ *
+ * 宿主在把工具结果交给模型之前会深走一遍「无损 JSON」，**显式的 undefined 属性、
+ * 稀疏数组、NaN / ±Infinity / -0 会让整条结果被拒收**（报
+ * `tool "token_plan_quota" returned invalid output: value is not lossless JSON`，
+ * 判定在 @deepseek-ai/dsh-util-values 的 walkJsonValue）。本卡片的字段大量是
+ * 「有才填」，所以 execute 出口必须先过 toToolJson。2026-09-09 在 dsh 0.1.2-rc.1
+ * 上就是这个原因整条被拒：`.cards.0.remaining` 是 undefined。
+ */
+ok('toToolJson 丢掉显式 undefined 属性',
+  JSON.stringify(toToolJson({ a: 1, b: undefined, c: { d: undefined, e: 2 } })) === '{"a":1,"c":{"e":2}}')
+ok('toToolJson 把 NaN / Infinity 收成 null、-0 收成 0',
+  JSON.stringify(toToolJson({ n: NaN, i: Infinity, z: -0 })) === '{"n":null,"i":null,"z":0}')
+ok('toToolJson 把数组里的洞补成 null（宿主按稠密数组校验）',
+  JSON.stringify(toToolJson([1, undefined, 3])) === '[1,null,3]')
+ok('toToolJson 打断循环引用，而不是让整条结果被拒',
+  (() => {
+    const a = { x: 1 }
+    a.self = a
+    const r = toToolJson(a)
+    return r.x === 1 && r.self === null
+  })())
+ok('toToolJson 输出可以原样 JSON 往返',
+  (() => {
+    const r = toToolJson({ cards: [{ id: 'x', remaining: undefined, total: 0 }], t: '文本' })
+    return JSON.stringify(JSON.parse(JSON.stringify(r))) === JSON.stringify(r)
+  })())
+const toolForShape = buildQuotaTool(() => ({ ...DEFAULTS }), {
+  logger: { warn() {} }, get: () => undefined, on: () => {}, effect: () => {},
+})
+ok('token_plan_quota 的 execute 出口套了 toToolJson',
+  /return toToolJson\(/.test(String(toolForShape.execute)))
 
 /* 全程把 DSH_HOME 指到一个**每进程唯一的临时目录**：真实 ~/.dsh 里可能有
  * token-plan-quota.json / .credentials.yaml，文件配置会盖掉各用例的行配置，

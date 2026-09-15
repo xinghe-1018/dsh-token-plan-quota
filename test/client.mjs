@@ -329,7 +329,7 @@ function makeFetch(mode) {
 
 /* ------------------------------------------------------ 装载 bundle */
 
-async function loadBundle(fetchMode) {
+async function loadBundle(fetchMode, navLanguage = 'zh-CN') {
   fetchCalls = []
   hookSlots = []
   hookIndex = 0
@@ -367,7 +367,7 @@ async function loadBundle(fetchMode) {
     throw new Error(`unexpected require(${id})`)
   }
   const factoryRunner = new Function('window', 'document', 'navigator', 'fetch', 'setInterval', 'clearInterval', 'require', `${source}; return window.__ModuleLoader__.spec`)
-  const spec = factoryRunner(globalThis.window, dom.document, { language: 'zh-CN' }, globalThis.fetch, globalThis.setInterval, globalThis.clearInterval, requireStub)
+  const spec = factoryRunner(globalThis.window, dom.document, { language: navLanguage }, globalThis.fetch, globalThis.setInterval, globalThis.clearInterval, requireStub)
 
   check('bundle 声明了自己的 id', spec.id, 'dsh-token-plan-quota')
   const api = spec.factory(requireStub)
@@ -465,6 +465,122 @@ async function settle(render, rounds = 4) {
   const noSlots = { get: () => undefined, effect: (fn) => { fn(); return () => {} } }
   api.apply(noSlots)
   check('没有 slots 服务时静默跳过', registered.length, 0)
+}
+
+{
+  // 0.1.2 的 client guard 把"fiber 能看见哪些服务"变成了硬声明：没在返回对象上声明
+  // inject 时，ctx.get("slots") 只会返回 undefined（直读 ctx.slots 则抛
+  // cannot get property "slots" without inject），徽标静默消失且不留日志。
+  // 上面的替身一直把服务直接递过来，照不出这个洞——这条断言就是那个回归的锁。
+  const { api } = await loadBundle('ok')
+  check('client 把 slots / sessions / modelDirectories 声明成 fiber 依赖', api.inject,
+    ['slots', 'sessions', 'modelDirectories'])
+}
+
+{
+  // 宿主切换会话时会把输入区整个卸载再重挂，每次重挂都回调一次 inject 工厂。
+  // 占位必须随 disposer 释放：早先是个只进不出的布尔闩锁，第二次重挂之后徽标就永久
+  // 消失（实机症状：上次启动还能看到，重启后所有历史会话都看不到）。
+  const { api, registered } = await loadBundle('ok')
+  const callbacks = []
+  const slots = {
+    inject: (name, callback) => { callbacks.push({ name, callback }); return () => {} },
+    register: (options, component) => { registered.push({ options, component }); return () => {} },
+  }
+  const ctx = { get: (name) => (name === 'slots' ? slots : undefined), effect: (fn) => { fn(); return () => {} } }
+  api.apply(ctx)
+  check('三个座位都登记了注入回调（数组顺序即偏好顺序）', callbacks.map(entry => entry.name),
+    ['conversation.input.right', 'conversation.input.left', 'conversation.input.dock'])
+  const left = callbacks.find(entry => entry.name === 'conversation.input.left')
+  const dock = callbacks.find(entry => entry.name === 'conversation.input.dock')
+  const disposeFirst = left.callback()
+  check('首次渲染注册一次', registered.length, 1)
+  left.callback()
+  check('占位未释放前重复渲染不重复注册', registered.length, 1)
+  disposeFirst()
+  const disposeSecond = dock.callback()
+  check('卸载后另一座位能接手', registered.length, 2)
+  check('接手座位是 dock', registered[1].options.name, 'conversation.input.dock')
+  disposeSecond()
+  check('再卸载后原座位也能接手', (left.callback(), registered.length), 3)
+}
+
+{
+  // 断线重连：宿主重建会话目录 store，而 `sessions.list.current` 还是同一个会话 id。
+  // 只按 id 变化重挂的写法永远等不到第二次 follow，modelWatch 停在 (null,null)，
+  // Badge 就把徽标整个藏空（实机反馈："长时间不看这个页面之后插件会消失"）。
+  const { api, registered } = await loadBundle('ok')
+  const dirs = [
+    makeStore({ current: { provider: 'deepseek', model: 'deepseek-chat' }, routable: true, groups: [], failures: [], status: 'ready', error: null }),
+    makeStore({ current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' }, routable: true, groups: [], failures: [], status: 'ready', error: null }),
+  ]
+  let calls = 0
+  const sessionsStore = makeStore({ current: 's1' })
+  api.apply(makeCtx(registered, new Set(['conversation.input.right']), [], {
+    sessions: { list: sessionsStore },
+    modelDirectories: {
+      directoryFor: () => ({ store: dirs[Math.min(calls, dirs.length - 1)], load: async () => { calls += 1 } }),
+    },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  let flat = JSON.stringify(await settle(render, 2))
+  ok('重连前：徽标跟着第一份目录 store 出 DeepSeek 卡', flat.includes('DeepSeek 余额'))
+  dirs[0].set({ ...dirs[0].snapshot, current: null })
+  flat = JSON.stringify(await settle(render, 2))
+  // 目录被重建的瞬间 provider 为 null —— 按已定口径**不许藏空**，退回全量显示。
+  ok('目录被重建的瞬间：徽标退回全量而不是藏空', flat.includes('tpq-chip') && flat.includes('DeepSeek 余额'))
+  sessionsStore.set({ current: 's1' })
+  flat = JSON.stringify(await settle(render, 3))
+  ok('同一个会话 id 的重新发布也要重挂目录（自愈）', flat.includes('Token Plan 实测'))
+}
+
+{
+  // 用户选定的位置：徽标跟随当前模型，就该贴在模型选择器左边（input.right 是 .trailing
+  // 里排在 model 座位之前的那一格，且是 list 座位，不会挤掉官方控件）。
+  const { api, registered } = await loadBundle('ok')
+  api.apply(makeCtx(registered, new Set([
+    'conversation.input.right', 'conversation.input.left', 'conversation.input.dock',
+  ]), []))
+  check('三格都在时只挂到模型选择器左边', registered.map(entry => entry.options.name),
+    ['conversation.input.right'])
+}
+
+{
+  // 宿主先渲染通栏行、再渲染工具行：只认"先到先得"会把徽标永久钉在最左边的通栏上
+  // （实机症状：位置不对）。更优座位后到时必须接手，并且把旧座位的注册释放掉。
+  const { api, registered } = await loadBundle('ok')
+  const released = []
+  const callbacks = []
+  const slots = {
+    inject: (name, callback) => { callbacks.push({ name, callback }); return () => {} },
+    register: (options, component) => {
+      const index = registered.push({ options, component }) - 1
+      return () => released.push(index)
+    },
+  }
+  const ctx = { get: (name) => (name === 'slots' ? slots : undefined), effect: (fn) => { fn(); return () => {} } }
+  api.apply(ctx)
+  const dock = callbacks.find(entry => entry.name === 'conversation.input.dock')
+  const left = callbacks.find(entry => entry.name === 'conversation.input.left')
+  const releaseDock = dock.callback()
+  check('通栏先到时先挂上', registered.map(entry => entry.options.name), ['conversation.input.dock'])
+  const releaseLeft = left.callback()
+  check('工具行后到时接手', registered.map(entry => entry.options.name),
+    ['conversation.input.dock', 'conversation.input.left'])
+  check('接手时释放掉通栏的注册', released, [0])
+  left.callback()
+  check('同一座位仍挂着时重复渲染不重复注册', registered.length, 2)
+  releaseLeft()
+  check('工具行卸载时释放自己的注册', released, [0, 1])
+  dock.callback()
+  check('空位之后通栏能接手', registered.length, 3)
+  check('接手座位是通栏', registered[2].options.name, 'conversation.input.dock')
+  void releaseDock
 }
 
 // 组件树渲染（假 fetch 落地后检查徽标与明细）
@@ -602,7 +718,13 @@ function findChip(node) {
 
   dirStore.set({ ...dirStore.snapshot, current: { provider: 'minimax-cn', model: 'MiniMax-M2.5' } })
   flat = JSON.stringify(await settle(render, 2))
-  ok('未绑定供应商 → 徽标整个隐藏', !flat.includes('tpq-chip'))
+  // 匹配不到当前路由就不出徽标，过去是**整个 0×0 隐藏**——用户只会以为插件又坏了
+  // （实机反馈："匹配不到就改成全量显示"）。现在退回全量选择，徽标与面板都不空。
+  ok('未绑定供应商 → 徽标退回全量显示而不是消失', flat.includes('tpq-chip') && flat.includes('DeepSeek 余额'))
+  // 面板在前一步就点开了，这里不能再点徽标——再点一下就关了。
+  const unmatchedPanel = JSON.stringify(await settle(render, 3))
+  ok('收敛后一张不剩 → 面板也退回全量', unmatchedPanel.includes('DeepSeek 余额')
+    && unmatchedPanel.includes('Token Plan 实测'))
 }
 
 // panelScope=all：面板恢复列全部源（含 DeepSeek 官方卡）。
@@ -963,6 +1085,29 @@ function findChip(node) {
   ok('中文界面维持原样：23400 → 2.3万（不是 23K）', zhPanel.includes('2.3万') && !zhPanel.includes('23K'))
 }
 
+// 语言在每次渲染时重取，不在 apply 时定一次：宿主的 locale 插件是异步写 <html lang> 的
+// （packages/client/locale/src/client/index.ts:149），动态插件的 apply 可能跑在它之前。
+// 那一刻 <html lang> 还是空的，pickLocale 只能退回浏览器语言——中文界面里徽标自己变成
+// 英文，而且除非重载否则永不纠正（实机反馈："插件变成英文了"）。
+{
+  const { api, registered } = await loadBundle('ok', 'en-US')
+  globalThis.document.documentElement.lang = ''
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {}))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  findChip(await settle(render, 1)).props.onClick()
+  const atApply = JSON.stringify(await settle(render, 3))
+  ok('apply 时 <html lang> 还没写：先按浏览器语言出英文', atApply.includes('Quota detail'))
+  globalThis.document.documentElement.lang = 'zh-CN'
+  const afterHostWrites = JSON.stringify(await settle(render, 3))
+  ok('宿主写下 zh-CN 后，下一次渲染就是中文', afterHostWrites.includes('额度明细')
+    && !afterHostWrites.includes('Quota detail'))
+}
+
 /* 徽标宽度硬上限：宿主输入行是 flex-wrap:wrap，**分行按各项的 base size 决定**，
  * 所以"能收缩"救不了它——实测 317px 以内一行、320px 起把模型选择器挤到第二行。
  * 这条是"别把输入行挤换行"的回归锁；要放宽前先量一遍真实阈值。 */
@@ -1016,8 +1161,14 @@ function findChip(node) {
  * ✕ 永远落在 8px 视口边距内（等价于「把详细界面向下移动、给 ✕ 留空间」）。 */
 {
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  ok('锚定态按徽标上方可用空间夹面板体高度',
-    /spaceAbove\s*=\s*r\.top/.test(code) && /bodyStyle\s*=\s*\{\s*maxHeight/.test(code))
+  ok('锚定态按输入卡片上缘的可用空间夹面板体高度',
+    /spaceAbove\s*=\s*anchorTop/.test(code) && /bodyStyle\s*=\s*\{\s*maxHeight/.test(code))
+  ok('锚点被卸载/未布局时不照抄全 0 的 rect（面板不会跑到左上角）',
+    /const detached = root\.current\.isConnected === false/.test(code)
+    && /anchorTop = detached \? Math\.round\(vh \* 0\.35\)/.test(code))
+  ok('面板底边贴卡片上缘而不是徽标那一行（不再盖住输入框）',
+    /anchorTop = detached \? Math\.round\(vh \* 0\.35\)\s*\n\s*: \(cardRect !== null && cardRect\.height > 0 \? cardRect\.top : r\.top\)/.test(code)
+    && /bottom: `\$\{Math\.max\(MARGIN, vh - anchorTop \+ GAP\)\}px`/.test(code))
   ok('夹取仍保留 52vh/460 上限，只在上方空间不足时再收紧',
     /Math\.min\(vh \* 0\.52, 460, spaceAbove\)/.test(code))
   ok('夹取值真的透传到 .tpq-body（不是算了不用）',

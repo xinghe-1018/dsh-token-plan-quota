@@ -8,6 +8,101 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **模型工具整条被宿主拒收**：`token_plan_quota` 的返回对象里 `estimated` / `remaining`
+  这类「有才填」的字段会被显式写成 `undefined`。宿主在把工具结果交给模型之前会按
+  「无损 JSON」深走一遍（判定在 `@deepseek-ai/dsh-util-values` 的 `walkJsonValue`），
+  显式 `undefined`、稀疏数组、循环引用、NaN / ±Infinity / `-0` 任一命中都会让
+  **整条结果**变成 `value is not lossless JSON`。在 dsh 0.1.2-rc.1 上实测：仅
+  `.cards.0.remaining` 一个 undefined 就让工具通道全灭（徽标本身不受影响，它走 HTTP 路由）。
+  新增 `toToolJson()` 在跨界前整形——丢字段而不是丢整条结果，非有限数收成 `null`、
+  `-0` 收成 `0`、数组的洞补成 `null`、循环引用截断；`execute` 出口统一套用。
+- **兼容声明在预发布线上自相矛盾**：`dsh.engines.dsh` 与 `dshhub.compatibility.dsh`
+  原写 `>=0.1.0-rc.5`，但按 semver 的预发布元组规则它**并不接纳** `0.1.2-rc.1`
+  （范围里必须有一个比较子带着同样的 `[major,minor,patch]` 元组）。改为逐线并列的
+  `^0.1.0-rc.5 || ^0.1.1-0 || ^0.1.2-0 || ^0.1.3-0`，与 `dsh-cost-meter` 同法。
+- **浏览器半边失败不留痕迹**：座位注册包在裸 `catch {}` 里，`ctx.get("slots")` 返回
+  `undefined` 时也是静默 `return`。徽标一旦因为宿主座位契约变动而不出现，控制台与
+  宿主日志两头都没有线索（本轮排查就因此多绕了一圈）。两处现在都走 `ctx.logger?.warn?.()`。
+  注意：client 侧的 `ctx.logger` 落到宿主的日志缓冲，**不出现在 DevTools 控制台**——
+  想在前台看到挂载结论，仍然只能靠徽标自己在不在。
+- **0.1.2 起徽标整个不挂载（本轮根因）**：动态浏览器插件的 fiber 只看得见**自己声明过**的
+  服务；没声明时 `ctx.get("slots")` 直接返回 `undefined`（直读 `ctx.slots` 则抛
+  `cannot get property "slots" without inject`，判定在 `cordis-client-runner` 的
+  `dynamicCordisContext`）。本插件的 `apply()` 于是走「无 slots 服务」分支静默退出——
+  不注册、不轮询、不留日志。现在在返回对象上声明 `inject: ["slots"]`（与
+  `dsh-client-ui-skill-explorer` / `dsh-git-graph` 同法）。`sessions` / `modelDirectories`
+  刻意**不**进这个列表：它们是可选依赖，列进去会让 fiber 无限等待 provider，缺一份就是
+  整个徽标停摆，比退回全量显示更糟。
+- **座位占位只进不出 + 更好的座位后到拿不到**：`slots.inject` 工厂在该座位每次渲染时
+  都会回调一次。原先是个 `let mounted = false` 的一次性闩锁——置位后既不随 disposer
+  复位，也不区分是哪个座位占着。两个实机症状都出自它：切换会话把输入区卸载重挂之后
+  徽标永久消失（"重启后所有历史会话都看不到"）；宿主先渲染通栏行、工具行后到时，
+  徽标被钉在视口最左边的通栏上（"位置不对"）。现在占位记名 + 卸载释放 + 按偏好迁移，
+  同一时刻仍只有一个座位挂着徽标。
+- **中文界面里徽标变成英文**：语言原先在 `apply()` 里 `pickLocale()` 定一次。宿主的 locale
+  插件是**异步**把 `zh-CN` 写进 `<html lang>` 的（`packages/client/locale/src/client/index.ts:149`），
+  而动态插件的 `apply` 可能跑在它之前——那一刻 `<html lang>` 还是空的，只能退回
+  `navigator.language`（操作系统语言），于是中文界面里徽标整屏英文，且不重载永不纠正。
+  现在徽标每次渲染都重取语言。
+- **面板不按当前模型收敛**：宿主默认 `panelScope:"current"`，但客户端的判定是
+  `watchActive && … && panelScope === "current"`，而 `watchActive` 依赖 `sessions` /
+  `modelDirectories` 两份服务。它们没进 `exports.inject` 声明，`ctx.get` 就返回
+  `undefined`，`watchActive` 恒为 `false`，面板于是**永远退回全量显示**（实机反馈：
+  「跟随当前模型，不要显示全部」）。现在三份服务一起声明。取舍写进代码注释与 README：
+  任一服务缺席（例如 profile 停用了模型选择插件）时 fiber 会一直等 provider，整个徽标
+  不出现，而不是退回全量。
+
+### Fixed（面板遮挡，本轮修好）
+
+- **面板被输入框遮挡**：实机探针证据 —— 面板 `position:'absolute'`、
+  父节点是工具行里一个无类名 DIV（**不是** `body`）、面板下缘的命中测试落在
+  `g9YjGG_card`。也就是 `canPortal` 为假，退回 CSS 锚定，被卡片的 `overflow` 沿上缘裁掉，
+  不是 z-index 问题。根因与 `slots` 同一类病：`react-dom` 确实在平台模块表里
+  （`packages/client/web/src/platform.ts:9`、种子表 `seed.ts:30` 也带着 `createPortal`），
+  但动态插件要用的平台模块必须在 **`dsh.client.external`** 里点名
+  （`packages/client/modules/src/index.ts:210`），而本插件的 `dsh.client` 只有 `platform`。
+  于是 `require("react-dom")` 抛错，被 `client.js` 那个 `try/catch` 静默吞掉，
+  `createPortal` 留成 `null`。修法是补 `dsh.client.external: ["react-dom"]`，
+  实机确认面板重新 portal 到 `body`，不再被卡片上缘裁掉。
+- **面板反过来盖住输入框**：portal 修好之后症状翻过来了 —— 探针量到 `position:fixed` +
+  `parent=BODY` + 面板下缘命中的是它**自己**，说明不是被遮，是它在遮别人：锚定底边只贴到
+  **徽标所在那一行**上方，而徽标在卡片底部的工具行里，486px 高的面板正好压在卡片和输入框上，
+  点开就打不了字。底边改为贴**输入卡片上缘**（`closest("[class*='_card']")`，取不到才退回
+  徽标上缘），面板体高度的可用空间也按卡片上缘算。
+- **面板跑到视口左上角**：断线重连后徽标可能被卸载或尚未布局，`getBoundingClientRect()`
+  全是 0，于是 `bottom = vh - 0 + 6 = vh + 6` 把整块面板顶出视口上沿，看着就是缩在左上角
+  （实机反馈："过一段时间，面板会出现在左上角"）。现在先判锚点可信度（`isConnected` +
+  退化 rect），不可信就退到「水平居中、上三分之一处」的悬浮位，保证面板始终完整可见、✕ 点得到。
+- **"模型未知"不再等于"徽标消失"**：`Badge` 里原先有一条早退 —— `watchActive` 为真但
+  `provider == null`（空白会话、切会话/重连的瞬间目录还没发布 `current`）就返回一个空的
+  `.tpq`。它才是"长时间挂机后消失""打开会话又消失"的正面原因：徽标不是没挂载，是自己
+  把内容清空了，而 0×0 看起来和"插件坏了"完全一样。按已定口径统一降级为全量显示，
+  等目录发布后订阅再把胶囊切回跟随当前模型。
+- **匹配不到当前路由就整个不显示**：`panelScope:"current"` 下按当前供应商收敛后一张卡
+  都不剩时，徽标与面板一起空掉（实机反馈："匹配不到就改成全量显示"）。现在两处都退回
+  全量：自定义路由、`providers` 写成通用名这类情况，至少还能看见别的源的余量。
+- **胶囊位置**：按用户选定，首选座位从 `conversation.input.left` 改为
+  `conversation.input.right` —— 徽标跟随当前模型供应商，就该贴在模型选择器左边
+  （`.trailing` 里排在 model 座位之前，且是 list 座位，不挤掉官方控件）。工具行左侧与
+  通栏行仍按优先级作为回退。
+
+### Fixed（长时间挂机后徽标消失，本轮修好）
+
+- **断线重连后徽标永久藏空**：模型观察原先只在 `sessions.list.current` **变化**时重挂目录
+  （`if (current === watchedSession) return`）。宿主重连后会重建目录 store，而会话 id 往往
+  没变 —— 于是等不到第二次 `follow()`，旧订阅又挂在已被替换的 store 上收不到发布，
+  `modelWatch` 停在 `(null, null)`，Badge 里 `watchActive && provider == null` 那条分支
+  就把徽标整个藏空（实机反馈："长时间不看这个页面之后插件会消失"）。现在两条口子自愈：
+  id 没变但已经看不到模型时照样重挂，外加一个与轮询同量级的兜底重挂（`MODEL_RETRY_MS`，
+  靠 `directory.load()` 把 current 拉回来）。
+
+### Added
+
+- 宿主测试补 6 项无损 JSON 回归闸：`toToolJson` 的四类畸变、JSON 往返一致性，
+  以及 `execute` 出口确已套用的源码断言。
+
 ## [0.4.6] - 2026-09-08
 
 ### Added

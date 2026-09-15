@@ -153,13 +153,27 @@ function main() {
   // 没有它就永远红，于是"先自检再推"变成死循环。
   git('tag', '-a', `v${target}`, '-m', `${pkg.name} ${target}`)
   console.log('本地已提交并打 tag，开始全量自检…')
-  // Windows 上 `npm` 是 `npm.cmd`，spawnSync 不带 shell 时找不到它（.cmd 不是可执行体）；
-  // 但 Node 24 起，`shell: true` + args 数组会打 DEP0190（args 只拼接不转义，可能被注入）。
-  // 我们 args 是空的，直接指到 npm.cmd 就绕开 shell，也绕开这条 deprecation。
-  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const check = spawnSync(npmBin, ['run', 'check'], { cwd: ROOT, stdio: 'inherit', shell: false })
-  if (check.status !== 0) {
+  // 自检不调 `npm`：Windows 上它是 npm.cmd，而 Node 24 起（CVE-2024-27980 的修复）
+  // spawnSync 拒绝在不带 shell 的情况下启动 .cmd —— 于是这一步**根本没跑**就返回非零，
+  // 报"自检没过"却拿不到任何原因（0.4.7 发布时实机撞上：手动 npm run check 全绿）。
+  // 直接用自己的 process.execPath 跑 `npm run check` 里那五步：跨平台都是真可执行体，
+  // 不碰 shell，也不触发 DEP0190。
+  const CHECK_STEPS = [
+    ['test/host.mjs'], ['test/client.mjs'],
+    ['scripts/check-manifest.mjs'], ['scripts/check-docs.mjs'], ['scripts/check-submission.mjs'],
+  ]
+  let checkFailed = null
+  for (const args of CHECK_STEPS) {
+    const step = spawnSync(process.execPath, args, { cwd: ROOT, stdio: 'inherit', shell: false })
+    if (step.status !== 0) {
+      checkFailed = { step: args[0], status: step.status, error: step.error ? step.error.message : null }
+      break
+    }
+  }
+  if (checkFailed !== null) {
     console.error('\n自检没过 —— 没有推送任何东西。')
+    if (checkFailed.error !== null) console.error(`  ${checkFailed.step} 连启动都失败：${checkFailed.error}`)
+    else console.error(`  失败的是 ${checkFailed.step}（exit ${checkFailed.status}）`)
     console.error(`回退：git tag -d v${target} && git reset --soft HEAD~1`)
     console.error('（修好后重跑本脚本，或直接 git push origin main && git push origin ' + `v${target}）`)
     process.exitCode = 1

@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows 上发布脚本的自检根本没跑**：`scripts/release.mjs` 用
+  `spawnSync('npm.cmd', …, { shell: false })` 跑 `npm run check`，而 Node 24 起
+  （CVE-2024-27980 的修复）拒绝在不带 shell 的情况下启动 `.cmd` —— 于是那步直接失败，
+  报「自检没过」却给不出任何原因，`main` 与 tag 都推不出去（0.4.7 发布时实机撞上，
+  当时手动 `npm run check` 全绿）。现在改成用自己的 `process.execPath` 依次跑
+  `npm run check` 那五步：跨平台都是真可执行体，不碰 shell，也不触发 DEP0190；
+  失败时会报出**具体是哪一步**，并区分「连启动都失败」和「退出码非零」。
+
 ## [0.4.7] - 2026-09-15
 
 ### Fixed

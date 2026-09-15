@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **发布流水线的 `verify it landed` 窗口从 60 秒拉到 6 分钟，失败时还会把 registry 当下的
+  `dist-tags` / `versions` 打出来**：v0.4.8 那次 `npm publish` 其实**已经成功**（OIDC trusted
+  publishing + provenance，退出码 0，回执 24 files / 2.3 MB / shasum 齐全），但 runner 在
+  60 秒里连续 6 次 `Cache-Control: no-cache` 查询都拿到旧文档 —— npm 自己还在传播 —— 于是
+  verify 判红，连带把后面的 GitHub Release 跳过了。同一步骤在 0.4.6 那次也被骗过一回，
+  那次根因是 runner 的本地 npm cache 旧快照：**症状一样、根因不一样**，而
+  "绕开客户端缓存"并不等于"服务端已经是新的"。所以这次既拉长窗口（24×15s）又在失败分支里
+  直接打印真相，不再靠事后翻 workflow 注解考古。
+
 ## [0.4.8] - 2026-09-15
 
 ### Fixed

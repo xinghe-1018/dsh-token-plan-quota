@@ -10,14 +10,44 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **审查采纳：`lib/client.js` 上 9 处真实缺陷**（Open Code Review 只扫这一个文件，
+  逐条对着源码核实后修的；每条都补了断言，client 侧从 168 项涨到 192 项）：
+  - **点「更新于」可能等于没点**：`load(fresh)` 原先「只要有请求在飞就搭车」，于是强制刷新
+    会静默复用那条没带 `?fresh=1` 的普通轮询（宿主侧 `?fresh=1` 与 `POST /refresh` 都会绕开
+    `cacheMs` 回源）。现在搭车规则改成**只允许新的搭旧的**，并且并发时后开的那条不会被
+    先结束的那条从 `inflight` 上摘掉。
+  - **面板底部那个按钮绕过缓存与 busy**：它直接 `POST /refresh`，不置 `busy`（按钮不会显示
+    「刷新中…」），回包也不写 `cache`，还会被并发轮询的旧结果盖回去。现在统一走
+    `reload(true)`；`busy` 改为按在飞条数收口；快照按 `generatedAt` 取胜，迟到的旧包不再
+    把新数字刷回旧数字。`/token-plan-quota/refresh` 路由宿主仍保留（外部脚本可用），
+    浏览器侧不再需要它。
+  - **5 小时窗口两头都不出**：`CardDetail` 的 `else` 分支里又抄了一遍同名 `const
+    extraMeters` / `hasFiveHourMeter`（只 `slice(1)`、没过滤读数），遮蔽了函数级那两份。
+    于是「补一行 5h」的判定看的是**原始** meters，而真正渲染的 `MeterRows` 用的是**过滤后**
+    meters —— 一个被当噪声滤掉的 5 小时窗口既不出条也不补行，信号凭空少一路。现在只留一份。
+  - **宿主字段形状一变就整枚徽标消失**：`recentThrottle` 用 `for (const row of card.retry ?? [])`，
+    `retry` 给成对象/字符串时 `??` 挡不住不可迭代值，抛在渲染里就是 React 把整枚徽标卸掉。
+    现在按 `Array.isArray` 取数，并加了脏字段行为用例（`retry` 是对象时徽标与面板照常）。
+  - **拖拽/缩放中途面板被卸载会漏绑监听**：手势解绑只挂在 `pointerup`/`pointercancel` 上，
+    而宿主换会话重挂座位、按 Esc 关面板时这两个事件都不会再来。现在 `bindGesture` 注册一个
+    幂等收口，卸载清理时调用它；**故意不跑 `onUp`**——那会把拖到一半的矩形写进 localStorage。
+    Esc 那条路径还顺手补上「关掉面板同时丢掉 `dragBox`」：那是 `pointerdown` 才有的临时冻结态，
+    留着的话下次打开会停在半路位置，且再也回不到锚定态。
+  - `row.lastRetry != null && row.lastRetry !== undefined` 后半是死条件（`!= null` 已含
+    `undefined`），删掉。
+  - 余量渐变条的百分比在徽标和明细卡里各抄一遍嵌套三元（改一漏一），收成
+    `remainingPercentOf(card)` 一份。
+  - `itemText` 是一路猜到底的三层嵌套三元，末分支遇到既无 `remaining` 也无 `tokens` 的条目会
+    印出「— / 2000」这种像数据被吃掉的行；改为按「这条有什么数字」早退分支，第三家硬编码的
+    「次」统一走 `copy.calls`（英文界面不再中英混排），`expiresAt` 按格式化结果判断而不是
+    按字段存在判断（老写法会输出 `· null`）。
+  - 手写 CJS 壳里的 `var module` / `var exports` 改 `const`（no-var）。
 - **按 Open Code Review 的规范自查后修掉一处违规**：面板锚点的 `anchorTop` 原先写成
   嵌套三元（规范里 "Ternary Expressions: nested ternary expressions are not allowed"）。
   改为顺序语句，并加一条源码断言把"锚点计算不许出现嵌套三元"钉住。
   同一次审查还标出 `pickLocale()` 在渲染期改模块级 `uiEnglish` / `cjkTokenUnits`
   —— 那是"渲染期副作用"，但它是"宿主异步写 `<html lang>`"那条时序 bug 的修法，
   值只由 `<html lang>` 决定、同一帧内幂等，故保留并在此留痕。
-
-### Fixed
 
 - **Windows 上发布脚本的自检根本没跑**：`scripts/release.mjs` 用
   `spawnSync('npm.cmd', …, { shell: false })` 跑 `npm run check`，而 Node 24 起

@@ -234,6 +234,12 @@ function makeFetch(mode) {
       const rest = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [lying, ...rest] }) }
     }
+    if (mode === 'bad-retry') {
+      // 宿主侧字段形状变了：`retry` 给成对象而不是数组。for...of 遇到不可迭代值会抛，
+      // 抛在渲染里就是整枚徽标被卸载（"胶囊又消失"的一种成因）。
+      const broken = SNAPSHOT.cards.map(card => ({ ...card, retry: { provider: 'deepseek', attempts: 2 } }))
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: broken }) }
+    }
     if (mode === 'meter-cap-only') {
       // 档位配了 5 小时上限、这个套餐却没回读数：次级计量没有可说的数，整行都不该出现。
       const capOnly = {
@@ -252,6 +258,10 @@ function makeFetch(mode) {
           { key: 'weekly', label: '7 天窗口', unit: 'Credits', total: 4000, remaining: 1500, usedPercent: 62.5, remainingPercent: 37.5 },
           { key: 'fiveHour', label: '5 小时窗口', unit: 'Credits', total: 800 },
         ],
+        // 控制台接口确实回了 5 小时用量百分比，只是那条窗口没有可展示的余量读数
+        // （所以计量行被滤掉）。这时摘要行必须把它补回来——修之前的判定用的是
+        // 未过滤的同名局部变量，两边都以为对方会显示，结果谁都没显示。
+        extra: { fiveHourTotal: 800, fiveHourUsedPercent: 1.23 },
         items: [],
         error: null,
         sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
@@ -329,7 +339,7 @@ function makeFetch(mode) {
 
 /* ------------------------------------------------------ 装载 bundle */
 
-async function loadBundle(fetchMode, navLanguage = 'zh-CN') {
+async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
   fetchCalls = []
   hookSlots = []
   hookIndex = 0
@@ -351,7 +361,9 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN') {
     },
   }
   globalThis.document = dom.document
-  globalThis.fetch = makeFetch(fetchMode)
+  // fetchImpl：用例要自己控制回包时序（挂住/迟到）时用；bundle 里的 fetch 是这个形参，
+  // 所以必须在装载前定好，装载后再改 globalThis.fetch 是不生效的。
+  globalThis.fetch = fetchImpl ?? makeFetch(fetchMode)
   globalThis.setInterval = () => 1
   globalThis.clearInterval = () => {}
 
@@ -873,6 +885,9 @@ function findChip(node) {
   chip.props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
   ok('没读数的 5 小时窗口不出幽灵行', !panel.includes('5 小时窗口') && !panel.includes('tpq-meter'))
+  // 这个窗口被当噪声滤掉后，MeterRows 不渲染它；判定「有没有它」必须用同一份**过滤后**的表，
+  // 否则两头都不出，5 小时用量这一路信号凭空消失（遮蔽同名 const 的那版就是这个症状）。
+  ok('被滤掉的 5 小时窗口由摘要行补回（不再两头都不出）', panel.includes('5h窗口 已用 1.23%'), panel)
   ok('主窗口照常显示（1,500 / 4,000 与已用%）', panel.includes('1,500') && panel.includes('62.5%'))
 }
 
@@ -1193,6 +1208,131 @@ function findChip(node) {
   ok('双击标题栏仍会清掉悬浮矩形、回到锚定态',
     /onDoubleClick:\s*resetFloat/.test(code) === true
       && /const resetFloat = \(\) => \{[\s\S]{0,80}saveFloatBox\(null\)[\s\S]{0,80}setFloatBox\(null\)/.test(code) === true)
+}
+
+/* 强制刷新（面板底部「更新于」）必须真的回源。老写法「只要有请求在飞就搭车」会让 fresh=1
+ * 静默复用那条 fresh=0 的请求——宿主侧这两条都会绕开 cacheMs 回源（见 lib/index.js），
+ * 所以症状就是"点了没反应"。并发的第二条也不能把新数字盖回旧数字：按 generatedAt 取胜。 */
+{
+  const baseAt = Date.now()
+  const moneyAt = (value, at) => ({
+    ...SNAPSHOT,
+    generatedAt: at,
+    cards: SNAPSHOT.cards.map(card => card.id === 'deepseek-balance' ? { ...card, remaining: value } : card),
+  })
+  const stale = moneyAt(11.11, baseAt)
+  const fresh = moneyAt(88.88, baseAt + 60_000)
+  let hang = false
+  const calls = []
+  const releases = []
+  const gatedFetch = async (url) => {
+    const link = String(url)
+    calls.push(link)
+    if (link.includes('fresh=0') && hang) {
+      await new Promise(resolve => { releases.push(resolve) })
+      return { ok: true, status: 200, json: async () => stale }
+    }
+    return { ok: true, status: 200, json: async () => (link.includes('fresh=1') ? fresh : stale) }
+  }
+  const { api, registered } = await loadBundle('ok', 'zh-CN', gatedFetch)
+  const dirStore = makeStore({
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const findByClass = (node, name) => {
+    if (node === null || typeof node !== 'object') return null
+    if (String(node.props?.className ?? '').includes(name)) return node
+    for (const kid of node.children ?? []) {
+      const hit = findByClass(kid, name)
+      if (hit !== null) return hit
+    }
+    return null
+  }
+  findChip(await settle(render)).props.onClick()
+  await settle(render, 2)
+  ok('起始画面是旧余额 ¥11.11', JSON.stringify(render()).includes('¥11.11'))
+  // 假 React 的 useEffect 每帧都跑：下一帧就是那条在飞的普通轮询。
+  hang = true
+  render()
+  ok('普通轮询已在飞（fresh=0）', calls.some(link => link.includes('fresh=0')))
+  const button = findByClass(render(), 'tpq-updated')
+  ok('面板底部有「更新于」按钮', button !== null && typeof button.props.onClick === 'function')
+  button.props.onClick()
+  await settle(render, 2)
+  ok('强制刷新不被在飞的普通轮询吃掉：另发一条 fresh=1', calls.some(link => link.includes('fresh=1')))
+  // 假 React 在 createElement 时就把 Chip 展开成 DOM 节点，所以断言看的是渲染出的 data-busy。
+  ok('新快照先到、旧请求未回 → 仍在「刷新中」（busy 按计数收，不被先结束那条掐掉）',
+    JSON.stringify(render()).includes('"data-busy":"1"'))
+  hang = false
+  releases.splice(0).forEach(release => release())
+  const done = JSON.stringify(await settle(render, 4))
+  ok('迟到的旧快照没把新数字盖回去（画面仍是 ¥88.88）', done.includes('¥88.88') && !done.includes('¥11.11'))
+  ok('两条请求都落地后 busy 归零', !done.includes('"data-busy":"1"'), done)
+}
+
+/* 脏字段不能把整枚徽标带走（宿主侧形状变了是常态，不是异常）。 */
+{
+  const { api, registered } = await loadBundle('bad-retry')
+  const dirStore = makeStore({
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const tree = JSON.stringify(await settle(render))
+  ok('retry 是非数组时徽标照常出（渲染没被抛错带走）', tree.includes('tpq-chip') && tree.includes('¥45.29'), tree)
+  findChip(await settle(render, 1)).props.onClick()
+  ok('retry 是非数组时面板照常开', JSON.stringify(await settle(render, 3)).includes('额度明细'))
+}
+
+/* 本轮 Open Code Review 修复里，靠行为测覆盖不到（卸载路径、宿主给脏字段）的几项钉在源码上。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('手写 CJS 壳不再用 var（no-var）', !/^\s+var\s+(module|exports)\s*=/m.test(code))
+  ok('余量百分比只留一份算法（徽标与明细卡共用同一个函数）',
+    (code.match(/remainingPercentOf\(/g) ?? []).length === 3
+      && !/isMeasured\(card\) \? null :/.test(code))
+  ok('手势监听有卸载收口（拖拽中途被卸掉不再漏绑）',
+    /const gestureRelease = React\.useRef\(null\)/.test(code)
+      && /React\.useEffect\(\(\) => \(\) => \{\s*const release = gestureRelease\.current/.test(code))
+  ok('retry 给成非数组不会炸掉整枚徽标',
+    /const rows = Array\.isArray\(card\?\.retry\) \? card\.retry : \[\]/.test(code)
+      && !/for \(const row of card\.retry \?\? \[\]\)/.test(code))
+  ok('没有恒真的死条件（lastRetry 判空只留一次）', !/lastRetry != null && lastRetry !== undefined/.test(code))
+  ok('「更新于」走 reload(true)（吃 busy 与 cache），不再绕过缓存直打 /refresh',
+    /onClick: \(\) => void reload\(true\)/.test(code) && !/request\(REFRESH/.test(code))
+  ok('items 明细行改成早退分支，不再一路嵌套三元猜到底', /const itemText = \(item\) => \{/.test(code))
+  // 搭车规则的可读版本：允许「新搭旧」，禁止「旧搭新」，也禁止把 fresh 参数当摆设。
+  ok('在飞请求只有更新鲜时才允许搭车（fresh 不再被忽略）',
+    /if \(cache\.inflight !== null && \(cache\.inflightFresh \|\| !wanted\)\) return await cache\.inflight;/.test(code))
+  ok('并发收口：后开的那条不会被先结束的那条摘掉',
+    /if \(cache\.inflight === run\) \{/.test(code))
+  ok('CardDetail 里 extraMeters 只有一份（同名遮蔽会让 5h 信号两头都不出）',
+    (code.match(/const extraMeters = /g) ?? []).length === 1
+      && (code.match(/const hasFiveHourMeter = /g) ?? []).length === 1)
+  // 同一个表达式里三家口径两种语言：老版第三行硬写了「次」，英文界面会中英混排。
+  ok('items 明细行的「次」走 copy.calls，不再硬编码', !/\$\{item\.calls\} 次/.test(code))
+  // Esc 是「手势中途被打断」的现实路径：临时冻结矩形必须跟着清，否则面板停在半路且回不到锚定态。
+  ok('Esc 关面板同时丢掉拖到一半的冻结矩形',
+    /if \(event\.key !== "Escape"\) return;[\s\S]{0,220}setDragBox\(null\);/.test(code))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

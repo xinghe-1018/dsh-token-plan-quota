@@ -88,6 +88,22 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
 `package.json` 的 `files` 显式列了 `docs`，而 allowlist 会压过 `.gitignore`，帧文件会直接被打进 npm 包。
 
+## 窄视口取景（QA 用，不是出图用）
+
+`--width` / `--height` 覆盖默认取景（1280×860），给 `workflow/QA-REPORT.md` 的视觉 QA 用：
+
+```bash
+node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 375 --out .shots-work/narrow
+node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out .shots-work/narrow
+```
+
+**非默认取景默认拒绝写入 `docs/`**：README 引用那批图、`check-docs.mjs` 第 10 项断言它们存在，
+用 375px 的裁切覆盖它们等于把产品证据悄悄换一种口径。确实要覆盖（例如你就是要换掉已发布的图）
+再加 `--allow-docs`。产物留在 `.shots-work/`，不要提交。
+
+窄视口下若报 `point-outside-viewport`：先判断是**布局问题**还是**取景问题**，
+别改流水线绕过去——那正是这一档要暴露的东西。
+
 ## 改图时注意的几条口径
 
 这些不是审美问题，是**产品立场**——图里画错就等于 README 打自己的脸：

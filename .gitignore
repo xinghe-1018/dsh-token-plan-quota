@@ -8,3 +8,7 @@ package-lock.json
 # 截图流水线的中间产物（合成 payload 快照、GIF 帧目录）：可重生成，不入库。
 # 必须在 docs/ 之外——package.json 的 files 显式列了 docs，allowlist 会压过 .gitignore。
 .shots-work/
+# Spec Kit 装进本项目的技能（DSH 集成写 .dsh/skills）：可由
+# `specify init --here --integration dsh` 重新生成，不入库。
+# .specify/ 相反——constitution/specs/templates 是本项目的规格资产，要入库。
+.dsh/

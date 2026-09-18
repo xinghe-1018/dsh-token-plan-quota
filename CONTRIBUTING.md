@@ -40,6 +40,24 @@ node scripts/check-manifest.mjs   # 清单自检（安装性、出站主机声�
 - 描述必须属实：README / `dshhub.summary` / issue 里写的数字与端点名，会被拿去和代码核。
   没验证过的字段名要写清"官方文档背书，未用真 Key 核对"。
 
+## 工程流程
+
+非平凡改动走 `Context → Plan → Implement → Review → QA → Ship → Retro`：**每个相位留下写下来的工件，
+人读过之后才进下一步**（没有工件 = 那一步没发生）。
+
+- 给 AI agent 的常驻指令：[`AGENTS.md`](AGENTS.md)（DSH 每个会话自动加载，一页以内）。
+- 完整流程与各相位模板：[`workflow/`](workflow/README.md)；判定口径的权威是
+  [`.specify/memory/constitution.md`](.specify/memory/constitution.md)。
+- 计划与需求：`.specify/`（Spec Kit）的 `/speckit-specify` → `/speckit-plan` → `/speckit-tasks`，
+  结构要求见 [`workflow/PLAN.md`](workflow/PLAN.md)（尤其**非目标**与**前提逐条核验**）。
+- 评审：[`workflow/REVIEW-CHECKLIST.md`](workflow/REVIEW-CHECKLIST.md) 三条 lens
+  （正确性 / 安全 / 计划一致性）——分开跑、只读、各出一份报告。
+- QA：[`workflow/QA-REPORT.md`](workflow/QA-REPORT.md)——功能 QA 加视觉 QA（用 `scripts/shots/`
+  那台造图机，`--width` 可出窄视口）。
+- 长会话过 40% 上下文时：[`workflow/SESSION-HANDOFF.md`](workflow/SESSION-HANDOFF.md)。
+
+小改动不必走完整流程：错别字 / 文案 / 依赖升级直接做，单文件修复写一段话计划即可。
+
 ## 结构速览
 
 | 文件 | 职责 |

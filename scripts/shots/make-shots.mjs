@@ -3,6 +3,7 @@
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
  *                                     [--shots 2,3,4,5,6,7] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
  *  - **合成数据**：图里绝不能出现真实余额（README 的立场靠这张图自证，漏一次就白洗过仓库），
@@ -14,7 +15,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
@@ -23,7 +24,7 @@ import { makeSnapshot, assertFixture } from './fixture.mjs'
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7], allowLive: false }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -33,7 +34,10 @@ function parseArgs(argv) {
     else if (arg === '--shots') out.shots = next().split(',').map(v => Number(v.trim())).filter(Boolean)
     else if (arg === '--edge') out.edge = next()
     else if (arg === '--ffmpeg') out.ffmpeg = next()
+    else if (arg === '--width') out.width = Number(next())
+    else if (arg === '--height') out.height = Number(next())
     else if (arg === '--allow-live') out.allowLive = true
+    else if (arg === '--allow-docs') out.allowDocs = true
     else if (arg === '-h' || arg === '--help') { out.help = true }
     else throw new Error(`未知参数：${arg}`)
   }
@@ -131,7 +135,7 @@ async function clipOf(page, selector, pad) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -146,6 +150,22 @@ async function main() {
    * 显式列了 `docs`，而显式 allowlist 会压过 `.gitignore`——放里面就会把几十 MB 的 GIF 帧
    * 一起打进 npm 包（`npm pack --dry-run` 实测抓到过一次）。
    */
+  /**
+   * 窄视口（或任何非默认取景）默认**不许**写进 docs/：那批图由 README 引用、由
+   * `check-docs.mjs` 第 10 项断言，用 375px 的裁切覆盖它们等于把产品证据悄悄换成另一种口径。
+   * 窄视口 QA 请输出到 `.shots-work/`（已 gitignore）；确实要覆盖 docs/ 就显式加 `--allow-docs`。
+   */
+  const viewport = { width: args.width, height: args.height }
+  if (![viewport.width, viewport.height].every(v => Number.isFinite(v) && v > 0)) {
+    throw new Error(`--width/--height 必须是正数（收到 ${args.width}×${args.height}）`)
+  }
+  if ((viewport.width !== 1280 || viewport.height !== 860) && args.allowDocs !== true) {
+    const relToDocs = relative(resolve('docs'), resolve(outDir))
+    if (relToDocs === '' || (!relToDocs.startsWith('..') && !isAbsolute(relToDocs))) {
+      throw new Error(`非默认取景 ${viewport.width}×${viewport.height} 拒绝写入 docs/：会覆盖 README 已引用的已发布图。窄视口 QA 用 --out .shots-work/narrow；确认要覆盖再加 --allow-docs。`)
+    }
+  }
+
   const workDir = join(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'), '.shots-work', langKey)
   mkdirSync(outDir, { recursive: true })
   mkdirSync(workDir, { recursive: true })
@@ -159,9 +179,9 @@ async function main() {
     return snapshot
   }
 
-  const browser = await launchEdge({ lang: LANGUAGE[langKey], edge: args.edge, width: 1280, height: 860 })
+  const browser = await launchEdge({ lang: LANGUAGE[langKey], edge: args.edge, width: viewport.width, height: viewport.height })
   const cdp = await Cdp.connect(browser.wsUrl)
-  const page = await cdp.openPage(`${args.url.replace(/\/$/, '')}/?fixture`, { width: 1280, height: 860, deviceScaleFactor: 2 })
+  const page = await cdp.openPage(`${args.url.replace(/\/$/, '')}/?fixture`, { width: viewport.width, height: viewport.height, deviceScaleFactor: 2 })
   /** 客户端包改写一次就缓存住：每次重载都重新拉 350 KB 没必要。 */
   let patchedBundle = null
   const hits = page.intercept({

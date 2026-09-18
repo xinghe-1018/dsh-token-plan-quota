@@ -52,6 +52,14 @@ jobs:
       - name: README claims match the code
         shell: bash
         run: bash scripts/ci-run.sh node scripts/check-docs.mjs
+      # 门禁自己的行为矩阵：fixture 的痕迹守卫不得假红、check-refs 的正则不得漏检。
+      # 放在这里而不是 test job：它不依赖平台矩阵，跑一次就够。
+      - name: guard behaviour matrices
+        shell: bash
+        run: bash scripts/ci-run.sh node test/guards.mjs
+      - name: living docs carry no line-number references
+        shell: bash
+        run: bash scripts/ci-run.sh node scripts/check-refs.mjs
       - name: packed tarball loads
         shell: bash
         run: |

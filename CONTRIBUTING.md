@@ -8,8 +8,11 @@
 ```bash
 node test/host.mjs      # 宿主半边：离线，回环 HTTP 例外
 node test/client.mjs    # 浏览器半边：假 React / 假 DOM / 假 fetch，不联网
-npm test                # 两个都跑
+node test/guards.mjs    # 门禁自己的行为矩阵（fixture 痕迹守卫 / 行号引用检测）
+npm test                # 前两个
 node scripts/check-manifest.mjs   # 清单自检（安装性、出站主机声明、许可证）
+node scripts/check-refs.mjs       # 活文档里不得出现 `文件:行号` 引用
+npm run check           # 上面全部 + 文档与投稿自检；**提交前跑这个**
 ```
 
 测试**必须能在 Linux/macOS/Windows 上跑**：不要写死平台路径，临时目录一律用
@@ -39,6 +42,18 @@ node scripts/check-manifest.mjs   # 清单自检（安装性、出站主机声�
 - 一个提交只做一件事。修 bug 的提交必须带**能重现该 bug 的回归测试**。
 - 描述必须属实：README / `dshhub.summary` / issue 里写的数字与端点名，会被拿去和代码核。
   没验证过的字段名要写清"官方文档背书，未用真 Key 核对"。
+
+### 提交门禁
+
+仓库带一个 pre-commit 钩子（`.githooks/pre-commit`），跑的就是 CI 那件事（`npm run check`，约 6 秒）。
+**默认不启用**——`core.hooksPath` 是**本地**仓库配置，一次改动静默改掉所有人的提交行为不合适。
+想启用是显式的一行：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+知道自己在做什么时跳过：`git commit --no-verify`。CI 仍然会在 push / PR 上跑同一件事。
 
 ## 工程流程
 

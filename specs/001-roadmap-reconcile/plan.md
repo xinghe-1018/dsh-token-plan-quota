@@ -28,12 +28,12 @@
 
 | # | 前提 | 怎么核 | 结论 |
 |---|---|---|---|
-| 1 | ②阶段已落地 | grep `autoDetect` → 11 处；`autoDetect: true` @`lib/index.js:44`；`applyAutoDetect()` @`:1189`；调用 @`:2245` | ✅ |
+| 1 | ②阶段已落地 | grep `autoDetect` → 11 处；`autoDetect: true`、`applyAutoDetect()` 及其调用点同在 `lib/index.js` | ✅ |
 | 2 | ①阶段 A 档已落地 | 列出 `PRESETS` 得 8 个键，含 `moonshot-balance`、`openrouter-credits`（§0 原记 6 个） | ✅ |
 | 3 | 版本计划与事实冲突 | `package.json` = `0.4.8`；`git tag` 到 `v0.4.8`；CHANGELOG 有 `[0.4.8]` 与 `[Unreleased]`；文档写 0.3/0.4/1.0 | ✅（冲突成立） |
 | 4 | `ROADMAP.md` 不在发布白名单 | `package.json#files` 里没有 ROADMAP | ✅ |
-| 5 | ~~门禁不看 ROADMAP 内容~~ | ❌ **修正**：`check-docs.mjs:222` 把 `ROADMAP.md` 纳入**编码护栏**（BOM / U+FFFD / GBK 私用区）→ 改动必须 UTF-8 无 BOM，且必须复跑 `npm run check` | ❌ → 已改设计 |
-| 6 | 改 ROADMAP 不影响 README | README.md:48 / README.en.md:52 是**链接引用**；`check-docs` 第 4 项只查链接目标存在，本次不动链接行 | ✅（实现后复验） |
+| 5 | ~~门禁不看 ROADMAP 内容~~ | ❌ **修正**：`check-docs.mjs` 把 `ROADMAP.md` 纳入**编码护栏**（BOM / U+FFFD / GBK 私用区）→ 改动必须 UTF-8 无 BOM，且必须复跑 `npm run check` | ❌ → 已改设计 |
+| 6 | 改 ROADMAP 不影响 README | 两份 README 里的 ROADMAP 是**链接引用**；`check-docs` 第 4 项只查链接目标存在，本次不动链接行 | ✅（实现后复验） |
 | 7 | "不做"的记录位置 | README 的 `## 明确不做的三类` 小节（**不是** `## 已知边界`） | ✅ |
 | 8 | `specs/` 不进包 | `files` 里没有 `specs` | ✅ |
 
@@ -63,7 +63,7 @@
 |---|---|---|
 | 文件顶部（`# ROADMAP` 之后、`## 0.` 之前） | 插入状态指针段；版本计划行改为与事实一致 | `package.json` 0.4.8 / `git tag v0.4.8` / CHANGELOG |
 | §1 标题下（`## 1. 阶段①` 之后） | 一行状态：**部分完成**（A 档已落地；B 档按决策不做，C 档走实测窗口） | `PRESETS` 含 `moonshot-balance` / `openrouter-credits`；README「明确不做的三类」；T1.6 `window:<provider>` 已 `[x]` |
-| §2 标题下（`## 2. 阶段②` 之后） | 一行状态：**已完成** | `lib/index.js:44` `autoDetect: true`、`:1189` `applyAutoDetect()`、`:2245` 调用点 |
+| §2 标题下（`## 2. 阶段②` 之后） | 一行状态：**已完成** | `lib/index.js` 的 `autoDetect: true`、`applyAutoDetect()` 及其调用点 |
 | §3 标题下（`## 3. 阶段③` 之后） | 一行状态：**已开源发布**（0.4.8 / tag v0.4.8），本文原定的 `1.0.0` 尚未 | CHANGELOG `[0.4.8]`；`npm pack --dry-run` 24 files |
 
 **复用检查**：README「明确不做的三类」已有该决策的权威表述 → 本次只**引用**，不另写一份，避免两处漂移。
@@ -110,7 +110,7 @@
 
 <!-- 发货后填。每条结论只落两个地方：AGENTS.md（反复出现的误解）或 workflow/PLAN.md（反复出现的盲点）。 -->
 
-- **错误的前提**：1 条。原写"门禁不校验 ROADMAP"，实测为假——`scripts/check-docs.mjs:222` 把
+- **错误的前提**：1 条。原写"门禁不校验 ROADMAP"，实测为假——`scripts/check-docs.mjs` 把
   `ROADMAP.md` 纳入**编码护栏**（BOM / U+FFFD / GBK 私用区）。收益：多出硬要求（UTF-8 无 BOM）与一次复跑，
   避免了改完被门禁拦下。
 - **计划里缺的**：
@@ -122,7 +122,7 @@
 - **agent 反复误解的（两条，都落在同一处文本）**：
   1. 把**档位（A/B/C）当成"做与不做"的判定**。它们描述的是"接这家需要什么形态 / 有没有官方端点"：
      C 档（无官方端点）→ 只做实测窗口（T1.6 `[x]`）；而 B 档里的**控制台 Cookie**（`BAILIAN_CONSOLE_COOKIE`）
-     恰恰是**已发布**能力（`lib/index.js:745`、`README.md:239/244-247`）。真正"不做"的只是 README 那三类：
+     恰恰是**已发布**能力（`lib/index.js` 的 `token-plan-console` 预设与 README 的 Cookie 配置小节）。真正"不做"的只是 README 那三类：
      **读取其它 CLI 的本地登录态 / 额外强凭据**。
   2. 修 L3-2 时只改了「C 档＝实测窗口」那半，把「B 档不做」那半留着——**同处多发现必须显式核对**，
      否则按一个 lens 收口关不掉另一个 lens 的同点发现（Lens 2 明确指出这一点）。

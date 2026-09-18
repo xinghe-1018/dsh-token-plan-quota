@@ -11,7 +11,7 @@
 
 | # | 流程 / 状态 | 期望 | 实际 | 结论 |
 |---|---|---|---|---|
-| 1 | 读者只看 ROADMAP 判断三阶段状态 | ①②③ 各自状态明确，且给出可 grep 的依据 | 顶部状态表 + 三处章节状态行；依据为 `lib/index.js:44/:1189/:2245`、`PRESETS` 键、registry+tag+CHANGELOG | 通过 |
+| 1 | 读者只看 ROADMAP 判断三阶段状态 | ①②③ 各自状态明确，且给出可 grep 的依据 | 顶部状态表 + 三处章节状态行；依据为 `lib/index.js` 的 `autoDetect` / `applyAutoDetect`、`PRESETS` 键、registry+tag+CHANGELOG | 通过 |
 | 2 | 版本计划与发布事实一致（SC-004） | 与 `package.json` / CHANGELOG / tag 零冲突 | `package.json`=`0.4.8`；registry `latest`=`0.4.8`；tag `v0.4.8`；CHANGELOG `[0.4.8] - 2026-09-15` | 通过 |
 | 3 | 可核验性（SC-001） | 每条"已落地"按文中位置 grep，100% 命中 | `autoDetect: true`→L44；`applyAutoDetect()`→L1189；调用→L2245；`PRESETS` 8 键含 `moonshot-balance`/`openrouter-credits` | 通过 |
 | 4 | 编码护栏 | 无 BOM / 无 U+FFFD / 无 GBK 私用区 | 前 3 字节 `35,32,82`（非 BOM）；U+FFFD 计数 0；`check-docs` 第 9 项 OK | 通过 |

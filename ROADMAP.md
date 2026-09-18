@@ -8,7 +8,7 @@
 | 阶段 | 状态 | 依据 |
 |---|---|---|
 | ① 适配更多平台 | **部分完成** | 已落地：A 档两家预设（T1.3 / T1.4 `[x]`——`moonshot-balance`、`openrouter-credits`；§0 记的 6 个预设现为 8 个）＋**既有控制台 Cookie 机制**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`，README 教用户粘贴 Cookie）。**尚未完成**：T1.4b（一源多请求）、T1.5 `glm-quota`（2026-09-06 主动推迟）、T1.8（真实 Key 逐家跑 `probe` 核对字段名——"字段名尚未用真实 Key 核对"就是这条）。不做的是 README `## 明确不做的三类`，其精确边界是**读取其它 CLI 的本地登录态 / 额外强凭据**（GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与 CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）——**不是"不用 Cookie"**。C 档（官方无额度端点）不是不做，而是只做实测窗口（T1.6 `[x]`）。**A/B/C 档描述的是"接这家需要什么形态 / 有没有官方端点"，不是做与不做的判定。** |
-| ② 零配置自动检测 | **已完成** | `lib/index.js:44` `autoDetect: true`、`:1189` `applyAutoDetect()`、`:2245` 调用点。下方设计段保留为决策记录。 |
+| ② 零配置自动检测 | **已完成** | `lib/index.js` 的 `autoDetect: true`、`applyAutoDetect()` 及其调用点（grep `autoDetect` 可见）。下方设计段保留为决策记录。 |
 | ③ 重写 README ＋ 开源准备 | **已开源发布** | registry `latest = 0.4.8`、本地 tag `v0.4.8`、`CHANGELOG.md` 的 `[0.4.8]`（2026-09-15）。本文原定的 `1.0.0` 尚未。 |
 
 版本计划（**原文，已被上表取代**）：① → `0.3.0`，② → `0.4.0`，③ → `1.0.0`（首个对外版本）。
@@ -187,8 +187,8 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 
 ## 2. 阶段②：零配置自动检测（"用哪个模型 → 自动看哪份余量"）
 
-> **状态：已完成**（2026-09-18 对账）。依据：`lib/index.js:44` `autoDetect: true`、`:1189` `applyAutoDetect()`、
-> `:2245` 调用点。下方的设计、语义与任务清单保留为决策记录。
+> **状态：已完成**（2026-09-18 对账）。依据：`lib/index.js` 的 `autoDetect: true`、`applyAutoDetect()`
+> 及其调用点（grep `autoDetect` 可见）。下方的设计、语义与任务清单保留为决策记录。
 
 **要解决的痛点**：现在用户必须自己写 `sources: [...]` 并且手填每个源的 `providers`，
 且填错一个字母徽标就静默不显示（§0.1 就是活例）。目标是**装完就开箱可用**。
@@ -372,7 +372,7 @@ profile.apiKeyEnv → resolveSecret() 有值？──否──→ 跳过该源�
 | 7 | 针对 ④ 补**实现**而不是补一段"做不到"：`enabled: false` 语义定为「关**这一条源**」——手写条目与自动检测同受约束（检测不再补回来，诊断记 `disabled-by-config`），但**不牵连**同路由的实测兜底窗口（关一条源 ≠ 关这个供应商；连兜底也不要就点名 `{"id":"window:<路由>","enabled":false}`）。不新增顶层黑名单键：**一个诉求只留一种写法** | `normalizeSources` 的 `disabledSources` ＋ `detect.js` `disabledPresets` ＋ `host.mjs` 三组带对照的测试 |
 | 8 | 仓库内**禁止用 Windows PowerShell 5.1 做文本往返**（`Get-Content`/`Set-Content`）：5.1 的 `Get-Content` 按 ANSI(GBK) 读 UTF-8，一次往返把中文变成乱码 + GBK 私用区字符并加 BOM，且**不可逆**（私用区无反向映射，本轮真的毁过一次 README，靠 `git checkout` 回滚重放）。改为：文本一律走文件工具或 Node | `check-docs` 第 9 条：BOM / U+FFFD / 「CJK + 私用区共存」三条码位护栏（码位判断，不用字面量——不然检查自身就是残骸） |
 | 9 | **`providers` 落空必须说出来**（2026-09-07 第三轮盲测撞出）：面板按 `bindProviders.includes(当前路由 id)` 过滤，而预设自带的名字是 `moonshot`/`deepseek-official` 这类通用串，不含用户真实路由 id——照文档"强制开一张卡"写出来的配置会**查得到却不露面**。文档改到位之后仍要加一条 warn：这类坑的表征与根因隔了三层，光靠文字让人自查不现实 | `warnUnboundSources`（去重、按归一化比较、不写 `providers` 的源保持安静）＋ 5 项测试；同轮把「`panelScope: current` 下阿里云三条永远不可见」第一次写进配置表 |
-| 10 | **README 的截图一律由合成数据生成**：真实余额不能进公开仓库（git 历史删不干净），所以 `scripts/shots/` 用 CDP 把同源 `/token-plan-quota/summary` 与 `/refresh` 换成 `fixture.mjs` 造的对象，再用宿主自带的 `?fixture` 模式（内存假宿主，自带种子会话与默认模型）拿到"有活会话"这个徽标挂载前提。**为什么不造假上游**：那需要模拟千问控制台网关的 Cookie/secToken 全套语义，是最容易写错、且一旦写进文档就会与真实上游长期不一致的部分；拦响应让真实数字根本进不到浏览器，跑图实例也不需要任何凭据。代价是依赖 summary 形状——已用 `publicCard()` 白名单在运行时比对锁死 | `cdp.mjs`/`fixture.mjs`/`make-shots.mjs` + 中文 7 张 / 英文 6 张图；`check-docs` 规则 10 守住"图存在且非零、占位串已消失、合成 payload 仍符合产品口径"（7 条破坏注入均已验证会红：4 条旧守卫 + 3 条新增）。**顺带记录两处真实 i18n 缺口**：① `formatTokens` 把「万/亿」写死，英文界面会显示 `84.7万 tok`；② 零记录实测卡那句说明（`lib/index.js:376`）只有中文，英文界面同样吐中文——所以英文套**主动少一张图**，`assertFixture` 现在会拦"英文套出现只有中文的卡字段"（宿主自带 `xxxEn` 双语字段的除外）。 |
+| 10 | **README 的截图一律由合成数据生成**：真实余额不能进公开仓库（git 历史删不干净），所以 `scripts/shots/` 用 CDP 把同源 `/token-plan-quota/summary` 与 `/refresh` 换成 `fixture.mjs` 造的对象，再用宿主自带的 `?fixture` 模式（内存假宿主，自带种子会话与默认模型）拿到"有活会话"这个徽标挂载前提。**为什么不造假上游**：那需要模拟千问控制台网关的 Cookie/secToken 全套语义，是最容易写错、且一旦写进文档就会与真实上游长期不一致的部分；拦响应让真实数字根本进不到浏览器，跑图实例也不需要任何凭据。代价是依赖 summary 形状——已用 `publicCard()` 白名单在运行时比对锁死 | `cdp.mjs`/`fixture.mjs`/`make-shots.mjs` + 中文 7 张 / 英文 6 张图；`check-docs` 规则 10 守住"图存在且非零、占位串已消失、合成 payload 仍符合产品口径"（7 条破坏注入均已验证会红：4 条旧守卫 + 3 条新增）。**顺带记录两处真实 i18n 缺口**：① `formatTokens` 把「万/亿」写死，英文界面会显示 `84.7万 tok`；② 零记录实测卡那句说明（`lib/index.js` 里零记录卡的文案字段）只有中文，英文界面同样吐中文——所以英文套**主动少一张图**，`assertFixture` 现在会拦"英文套出现只有中文的卡字段"（宿主自带 `xxxEn` 双语字段的除外）。 |
 | 11 | 缺口 ① 在 0.4.4 修掉了，但**修法值得记一笔**：`formatTokens` 有 14 个调用点，给它加 `copy` 参数意味着漏一个就是同一屏两种单位并存，所以改成 `pickLocale()` 里记一次语言风格（模块内变量，与 `copy` 同生命周期）。同一轮还修了 `pickLocale()` 本身：原来是"浏览器语言与 `<html lang>` 里任一说 zh 就算 zh"，于是**中文系统 + 英文界面**的用户会看到中文徽标——现在以宿主写的 `<html lang>` 为准，拿不到才退回浏览器语言。回归锁：`test/client.mjs` 用 23400 这个数断言中英各是 `23K` / `2.3万`（不去查"整屏有没有汉字"，测试 payload 的 sourceNote 本来就是中文，那样必误判）。 | 缺口 ② 仍未修：那是服务端文案，服务端不知道浏览器语言。正经修法是让它发**原因码**（`emptyReasonCode`）由前端本地化，代价是公开 payload 多一个字段。 |
 
 ---

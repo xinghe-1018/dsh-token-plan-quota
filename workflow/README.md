@@ -70,4 +70,7 @@
 
 - 本目录与 `AGENTS.md` 同一次改动里更新——它们描述的行为变了却不改，评审 Lens 3 会当发现处理。
 - Retro 的结论只落两个地方：反复出现的**误解** → `AGENTS.md` 加一行；反复出现的**盲点** → `PLAN.md` 加一行。
+- 本机 / 本仓库的**环境事实**（远端 SSH 别名、tag 与浅克隆、出图机前置、pwsh 写文件会加 BOM）记在
+  [`ENVIRONMENT.md`](ENVIRONMENT.md)，不往 `AGENTS.md` 里堆——后者每个会话都占上下文，而这类事实只在
+  「取远端 / 出图 / 写文件」几个分支上才需要。
 - 想把这套变成宪法级约束（让"必须核验前提""必须三 lens"不可绕过）需要 bump `.specify/memory/constitution.md` 的版本——目前没做，说了再做。

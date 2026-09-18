@@ -8,7 +8,7 @@
 
 - 宿主半边测试：`node test/host.mjs`
 - 浏览器半边测试：`node test/client.mjs`
-- **提交前提**：`npm run check`（host + client + check-manifest + check-docs + check-submission）
+- **提交前提**：`npm run check`（host + client + guards + check-manifest + check-docs + check-refs + check-submission）
 - 造 README 截图：`node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> --lang zh|en --out docs/images`
 - 发布：`node scripts/release.mjs`（完整流程见 RELEASE.md）
 
@@ -23,8 +23,6 @@
 - **"不做"的精确边界**是**读取其它 CLI 的本地登录态 / 额外强凭据**（见 README「明确不做的三类」）；
   **Cookie 是已发布能力**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`）。**A/B/C 档位描述"需要什么形态 /
   有没有官方端点"，不是做与不做的判定**——引用档位时不许合并、不许当结论用。
-- **机械检查也是代码**：新增或修改 `scripts/check-*.mjs` 时，必须给它做行为矩阵（应报 / 应放行 / 边界），
-  并证明它**能失败**——漏检或误报的检查比没有检查更糟（它给的是假安全感）。
 
 ## Do not touch
 

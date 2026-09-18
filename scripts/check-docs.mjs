@@ -61,10 +61,50 @@ for (const host of [...hosts].sort()) {
   if (!declared.has(host)) problems.push(`出站主机 ${host} 未声明在 dshhub.permissions.network`)
 }
 
-/* 4) 相对链接 */
+/* 4) 相对链接：README 里的相对链接必须指向**仓库内真的存在**的文件。
+ *
+ *    抽取与分类用下面的**单一实现**，第 4 项与 4b 共用。曾经两处各有一套正则，结果窄的那套
+ *    对带 title / 引用式 / HTML 三种写法完全隐形（002 的 Lens 1 与 Lens 2 各自独立报了同一处）
+ *    ——同一语义两处实现，改一处必忘一处。 */
+
+/** 抽取所有链接与图片目标（四种写法）。返回**原样片段**，归一化交给 `normalizeTarget`。
+ *  先剥掉代码围栏与行内代码：里面的链接是示例，不是对外声明。 */
+function extractLinkTargets(text) {
+  const stripped = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ')
+  const targets = []
+  for (const m of stripped.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])          // 图片
+  // 徽标惯用式 `[![alt](img.png)](url)`：先把图片扣掉，剩下的内联链接才算链接。旧实现两头都错：
+  // 既把外层 URL 当成图片目标，又让这个写法整个躲过检查。
+  for (const m of stripped.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])
+  for (const m of stripped.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])          // 引用式定义
+  for (const m of stripped.matchAll(/href="([^"]+)"/g)) targets.push(m[1])                 // HTML
+  return targets
+}
+
+/** 归一化：去 title、去尖括号、去片段与查询串、去 `./` 前缀，再把 `..` 解开。 */
+function normalizeTarget(raw) {
+  let t = raw.trim().replace(/\s+"[^"]*"$/, '')            // markdown 的 title 属性
+  if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
+  t = t.split('#')[0].split('?')[0].replace(/^\.\//, '')   // 片段 / 查询串 / ./ 前缀
+  return t === '' ? '' : posix.normalize(t)                // docs/../ROADMAP.md → ROADMAP.md
+}
+
+/** 目标分类：两个消费者共用，避免再次分叉。`escape` = 指向仓库外。 */
+function classifyTarget(raw) {
+  const target = normalizeTarget(raw)
+  if (target === '' || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) return { kind: 'skip', target }
+  if (target.startsWith('/') || target.startsWith('../')) return { kind: 'escape', target }
+  return { kind: 'relative', target }
+}
+
 for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
-  for (const link of new Set([...text.matchAll(/\]\((?!https?:|#|mailto:)([^)#\s]+)/g)].map(m => m[1]))) {
-    if (!existsSync(join(root, link))) problems.push(`${file} 的链接目标不存在：${link}`)
+  for (const raw of new Set(extractLinkTargets(text))) {
+    const { kind, target } = classifyTarget(raw)
+    if (kind === 'skip') continue
+    // 指向仓库外的目标一律报错：它本来就没有意义，顺带关掉"用存在性探测仓库外路径"那个面
+    // （002 的 Lens 2 F5 记为既存问题）。
+    if (kind === 'escape') problems.push(`${file} 的链接目标指向仓库外：${target}`)
+    else if (!existsSync(join(root, target))) problems.push(`${file} 的链接目标不存在：${target}`)
   }
 }
 
@@ -72,9 +112,9 @@ for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
  *     一个"仓库内存在但不随包发布"的目标，在 GitHub 上正常、在包页上 404（图片则是裂图），
  *     本地完全看不出来；上面第 4 项只查"仓库内存在"，管不到这一层。
  *
- *     为什么不用第 4 项那个正则：它只认内联 `](x)`，漏掉带 title 的 `[x](x "t")`、
- *     引用式 `[x][r]` + `[r]: x`、HTML `<a href="x">`——审阅（Lens 1/2）实测这三种在旧实现下
- *     CI 全绿。这里覆盖四种写法，并先剥掉代码围栏与行内代码里的示例。
+ *     抽取与分类和第 4 项共用同一套实现（`extractLinkTargets` + `classifyTarget`）。当初两边
+ *     各有一套正则，窄的那套只认内联 `](x)`，对带 title、引用式、HTML 三种写法完全隐形
+ *     ——002 的 Lens 1 与 Lens 2 各自独立报了同一处。两处实现必然分叉，所以只留一处。
  *     发布面也不能只按 `files` 字面算：`npm pack` 无论 files 怎么写都会带上 package.json、
  *     README*、LICENSE* 与 main 指向的文件（审阅实测 package.json 在 tarball 里而不在 files）。 */
 const pkgMeta = JSON.parse(read('package.json'))
@@ -88,22 +128,10 @@ const alwaysShipped = ['package.json', 'README.md', 'README.en.md', 'LICENSE', '
   .filter(v => typeof v === 'string' && v !== '')
 const publishedFiles = [...(fileList ?? []).filter(f => !f.startsWith('!')), ...alwaysShipped]
 const isPublished = target => publishedFiles.some(f => target === f || target.startsWith(f.replace(/\/$/, '') + '/'))
-const normalizeTarget = (raw) => {
-  let t = raw.trim().replace(/\s+"[^"]*"$/, '')      // markdown 的 title 属性
-  if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
-  t = t.split('#')[0].split('?')[0].replace(/^\.\//, '')  // 片段 / 查询串 / ./ 前缀
-  return t === '' ? '' : posix.normalize(t)          // docs/../ROADMAP.md → ROADMAP.md
-}
 for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['README.en.md', en]])) {
-  const stripped = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ')
-  const targets = []
-  for (const m of stripped.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])        // 图片
-  for (const m of stripped.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1]) // 内联链接（徽标式的外层也在此）
-  for (const m of stripped.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])         // 引用式定义
-  for (const m of stripped.matchAll(/href="([^"]+)"/g)) targets.push(m[1])                // HTML
-  for (const raw of new Set(targets)) {
-    const target = normalizeTarget(raw)
-    if (target === '' || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue
+  for (const raw of new Set(extractLinkTargets(text))) {
+    const { kind, target } = classifyTarget(raw)
+    if (kind !== 'relative') continue
     if (!isPublished(target)) {
       problems.push(`${file} 的链接目标不随包发布：${target}（改成绝对链接，或加进 package.json#files）`)
     }

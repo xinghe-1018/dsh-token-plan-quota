@@ -346,6 +346,27 @@ export function makeSnapshot(options = {}) {
 }
 
 /**
+ * 用户实拍图里出现过的真实值 —— 那三张图是真实账号，任何"照着抄一组数"的改动都必须被拦住。
+ * `assertFixture` 逐个叶值比对它。
+ */
+const BANNED_TRACES = ['OMEN', '39.91', '9063', '7943', '2026-09-14', 'C:\\', 'D:\\', '/Users/', '.scratch']
+
+/**
+ * 时钟量级的整数（13 位毫秒时间戳）。快照里有 10 个字段由 `now` 派生，它们**不是**真实痕迹，
+ * 只是"现在几点"。豁免它们的唯一理由是量级：真实痕迹（余额、Credits、token 数、计数）
+ * 都远在 1e12 以下，而毫秒时间戳都在 1e12 以上。
+ */
+const isClockMillis = value => Number.isInteger(value) && Math.abs(value) >= 1e12
+
+/** 收集所有叶值（字符串 / 数字 / 其它标量），用于逐值比对。 */
+function collectLeaves(node, out = []) {
+  if (Array.isArray(node)) for (const item of node) collectLeaves(item, out)
+  else if (node !== null && typeof node === 'object') for (const value of Object.values(node)) collectLeaves(value, out)
+  else out.push(node)
+  return out
+}
+
+/**
  * 出图前的自检：任何一条不过就不该拍照——合成物料最怕的就是「看着像真的但其实宿主发不出」
  * 和「把真实数据带回来」。
  * @param {object} snapshot makeSnapshot 的产物
@@ -358,11 +379,20 @@ export function assertFixture(snapshot, options = {}) {
     if (!cond) throw new Error(`fixture 自检失败：${label}`)
     checks.push(label)
   }
-  const text = JSON.stringify(snapshot)
+  // 逐叶比对，而不是 `JSON.stringify(整个对象).includes(...)`：快照里有 10 个由 `now` 派生的
+  // 13 位毫秒时间戳，整段字符串扫描会让 `updatedAt = now - 12000 = 1789716077943` 这种值
+  // 巧合命中 4 位禁用串（`7943`）——实测每轮 check-docs（10 张快照）约 3.7% 的概率因此假红，
+  // 而 CI 每个 PR 都跑这条检查。假红训练人忽略红灯，比漏检更坏，所以收窄到「值」这一层。
+  // 证据与行为矩阵见 specs/003-guardrails-and-doc-hygiene/plan.md 前提 1 与测试计划 T1。
+  const allLeaves = collectLeaves(snapshot)
   // 真实痕迹：本机账号、真实余额，以及用户实拍图里出现过的真实额度值 ——
   // 那三张图是真实账号，任何"照着抄一组数"的改动都必须被这里拦住。
-  for (const banned of ['OMEN', '39.91', '9063', '7943', '2026-09-14', 'C:\\', 'D:\\', '/Users/', '.scratch']) {
-    need(`不含真实痕迹 ${JSON.stringify(banned)}`, !text.includes(banned))
+  for (const banned of BANNED_TRACES) {
+    const hit = allLeaves.find(value => (typeof value === 'string'
+      ? value.includes(banned)
+      : typeof value === 'number' && !isClockMillis(value) && String(value).includes(banned)))
+    need(`不含真实痕迹 ${JSON.stringify(banned)}${hit === undefined ? '' : `（命中 ${JSON.stringify(hit)}）`}`,
+      hit === undefined)
   }
   if (options.lang === 'en') {
     // 英文套的图里不能出现中文。宿主确实有几处写死的中文（`emptyReason` 就是），

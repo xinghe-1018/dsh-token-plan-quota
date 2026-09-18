@@ -21,7 +21,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
 
@@ -68,19 +68,42 @@ for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
   }
 }
 
-/* 4b) 发布面链接：README 里的相对链接目标必须**随包发布**。npm 包页只渲染包内文件——
- *     一个"仓库内存在但不随包发布"的链接，在 GitHub 上正常、在包页上 404，本地完全看不出来；
- *     上面第 4 项只查"仓库内存在"，管不到这一层。图片引用交给第 10 项，这里排除。 */
-const publishedFiles = JSON.parse(read('package.json')).files ?? []
+/* 4b) 发布面链接：README 里的每个链接与图片目标都必须**随包发布**。npm 包页只渲染包内文件——
+ *     一个"仓库内存在但不随包发布"的目标，在 GitHub 上正常、在包页上 404（图片则是裂图），
+ *     本地完全看不出来；上面第 4 项只查"仓库内存在"，管不到这一层。
+ *
+ *     为什么不用第 4 项那个正则：它只认内联 `](x)`，漏掉带 title 的 `[x](x "t")`、
+ *     引用式 `[x][r]` + `[r]: x`、HTML `<a href="x">`——审阅（Lens 1/2）实测这三种在旧实现下
+ *     CI 全绿。这里覆盖四种写法，并先剥掉代码围栏与行内代码里的示例。
+ *     发布面也不能只按 `files` 字面算：`npm pack` 无论 files 怎么写都会带上 package.json、
+ *     README*、LICENSE* 与 main 指向的文件（审阅实测 package.json 在 tarball 里而不在 files）。 */
+const pkgMeta = JSON.parse(read('package.json'))
+const fileList = pkgMeta.files ?? null
+if (fileList === null) {
+  notices.push('README 发布面检查跳过：package.json 没有 files 字段，无法判断哪些文件随包发布')
+} else if (fileList.some(f => f.startsWith('!') || /[*?[\]{}]/.test(f))) {
+  notices.push('README 发布面检查可能不准：files 里含否定项或 glob，本检查只做字面/目录前缀比对')
+}
+const alwaysShipped = ['package.json', 'README.md', 'README.en.md', 'LICENSE', 'LICENCE', pkgMeta.main, pkgMeta.types]
+  .filter(v => typeof v === 'string' && v !== '')
+const publishedFiles = [...(fileList ?? []).filter(f => !f.startsWith('!')), ...alwaysShipped]
 const isPublished = target => publishedFiles.some(f => target === f || target.startsWith(f.replace(/\/$/, '') + '/'))
-for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
-  const links = [...text.matchAll(/!?\[[^\]]*\]\(([^)\s]+)\)/g)]
-    .filter(m => !m[0].startsWith('!'))
-    .map(m => m[1])
-  for (const link of new Set(links)) {
-    if (/^(https?:|mailto:|#)/.test(link)) continue
-    const target = link.split('#')[0].replace(/^\.\//, '')
-    if (target === '') continue
+const normalizeTarget = (raw) => {
+  let t = raw.trim().replace(/\s+"[^"]*"$/, '')      // markdown 的 title 属性
+  if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
+  t = t.split('#')[0].split('?')[0].replace(/^\.\//, '')  // 片段 / 查询串 / ./ 前缀
+  return t === '' ? '' : posix.normalize(t)          // docs/../ROADMAP.md → ROADMAP.md
+}
+for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['README.en.md', en]])) {
+  const stripped = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ')
+  const targets = []
+  for (const m of stripped.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])        // 图片
+  for (const m of stripped.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1]) // 内联链接（徽标式的外层也在此）
+  for (const m of stripped.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])         // 引用式定义
+  for (const m of stripped.matchAll(/href="([^"]+)"/g)) targets.push(m[1])                // HTML
+  for (const raw of new Set(targets)) {
+    const target = normalizeTarget(raw)
+    if (target === '' || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue
     if (!isPublished(target)) {
       problems.push(`${file} 的链接目标不随包发布：${target}（改成绝对链接，或加进 package.json#files）`)
     }

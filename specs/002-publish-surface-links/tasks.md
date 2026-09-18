@@ -4,23 +4,23 @@
 
 ## Phase 1 — 修链接
 
-- [ ] **T001** 从 `package.json.repository` 取仓库 URL（不手打），把 `README.md` 与 `README.en.md` 里
+- [x] **T001** 从 `package.json.repository` 取仓库 URL（不手打），把 `README.md` 与 `README.en.md` 里
       5 个目标的相对链接改为绝对 `https://github.com/<owner>/<repo>/blob/main/<path>`：
       `ROADMAP.md`、`scripts/shots/README.md`、`SECURITY.md`、`CONTRIBUTING.md`、`RELEASE.md`
-- [ ] **T002** 复核：两份 README 的违规相对链接数 = 0（SC-001）；同义链接形态一致（FR-005）
+- [x] **T002** 复核：两份 README 的违规相对链接数 = 0（SC-001）；同义链接形态一致（FR-005）
 
 ## Phase 2 — 加防线
 
-- [ ] **T003** `scripts/check-docs.mjs` 新增检查：README（中英两份）的每个**相对链接**，其目标必须被
+- [x] **T003** `scripts/check-docs.mjs` 新增检查：README（中英两份）的每个**相对链接**，其目标必须被
       `package.json#files` 覆盖（目录条目展开为其下所有文件）；放行 `^https?:` / `^mailto:` / `^#`；
       排除图片引用（交给第 10 项）；报错格式 `文件 的链接目标不随包发布：<link>`
-- [ ] **T004** SC-002 证伪：用**修复前的** `files` 组合跑新检查逻辑，必须报红并指名 5 条
+- [x] **T004** SC-002 证伪：用**修复前的** `files` 组合跑新检查逻辑，必须报红并指名 5 条
       （证明它不是"永远通过"的装饰检查）
 
-## Phase 3 — 验收
+## Phase 3 — 验收（可证伪性实测：还原修复前 README 后 check-docs exit=1，逐条指名 10 处违规）
 
-- [ ] **T005** `npm run check` 全绿；`npm pack --dry-run` 仍 **24 files**（FR-004 / SC-003）
-- [ ] **T006** 一个提交：`fix(docs): README 不再链接到不随包发布的文件，并加发布面检查`
+- [x] **T005** `npm run check` 全绿；`npm pack --dry-run` 仍 **24 files**（FR-004 / SC-003）
+- [x] **T006** 一个提交：`fix(docs): README 不再链接到不随包发布的文件，并加发布面检查`
 
 ## 依赖
 

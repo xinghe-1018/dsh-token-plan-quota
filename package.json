@@ -1,7 +1,7 @@
 {
   "name": "dsh-token-plan-quota",
   "version": "0.4.8",
-  "description": "DeepSeek Harness Web 插件：输入框工具行的额度徽标，跟随当前模型供应商切换，零配置按在用路由自动开源。官方真值来源：DeepSeek /user/balance、Moonshot 开放平台、OpenRouter credits、阿里云 BssOpenApi（AK/SK）、千问 Token Plan 控制台网关（Cookie）；官方无额度接口的供应商显示明确标注「实测」的本实例窗口。含模型工具 token_plan_quota。",
+  "description": "DeepSeek Harness Web 插件：输入框工具行里的额度徽标，跟随当前模型供应商切换。做它的起因是阿里云 / 千问 Token Plan 有额度却没有公开的额度接口——本插件内置了它的控制台数据网关（Cookie）契约。官方真值来源：DeepSeek /user/balance、Moonshot 开放平台、OpenRouter credits、阿里云 BssOpenApi（AK/SK）、千问 Token Plan 控制台网关（Cookie）；没有官方额度接口的供应商显示明确标注「实测」的本实例窗口。含模型工具 token_plan_quota。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -24,7 +24,7 @@
   "dshhub": {
     "schemaVersion": 1,
     "displayName": "dsh-token-plan-quota",
-    "summary": "跟随当前模型供应商的额度徽标：官方接口给真值（DeepSeek、Moonshot、OpenRouter、阿里云费用中心、千问 Token Plan 控制台），没有官方额度接口的供应商显示标注「实测」的本实例消耗窗口。不折算 Credits、不估算余量。零配置自动识别在用路由，附 token_plan_quota 模型工具。",
+    "summary": "输入框工具行的额度徽标，跟随当前模型供应商切换。补上了生态里缺的那块：阿里云 / 千问 Token Plan 有额度、却只有控制台数据网关（Cookie 会话）可走，本插件内置了它的契约；DeepSeek、Moonshot、OpenRouter、阿里云费用中心走官方接口给真值。没有官方额度接口的供应商只报标注「实测」的本实例窗口——不折算 Credits、不估算余量。零配置自动识别在用路由，附 token_plan_quota 模型工具。",
     "categories": [
       "费用",
       "Web UI",

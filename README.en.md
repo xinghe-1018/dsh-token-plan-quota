@@ -2,10 +2,21 @@
 
 [中文](README.md) | [English](README.en.md)
 
-A quota chip in the composer toolbar of the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-web UI. Official APIs provide the numbers; providers without an official quota endpoint show a clearly-labelled
-**measured** view of what this instance actually consumed. **Zero configuration** - which sources to open is
-decided from the provider routes you actually have.
+**A quota chip in the composer tool row of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
+"how much is left on the vendor I am actually using".**
+
+It exists for a specific reason: **Aliyun / Qwen Token Plan does have a quota, but no public quota API** - it is
+only reachable through the console data gateway (a Cookie session), so comparable plugins generally stay away
+from it. This plugin embeds that contract, and also wires up the vendors that do have official endpoints
+(DeepSeek, Moonshot, OpenRouter, Aliyun BSS) as true values.
+
+Three rules, at a glance:
+
+| Rule | Behaviour |
+|---|---|
+| **Official endpoint → true value** | With a denominator: remaining bar + percentage. Without one: numbers only - a DeepSeek balance has no "total", so no bar. |
+| **No official endpoint → labelled "measured"** | Only what passed through *this instance* (tokens / calls). No Credits conversion, no extrapolation, **never a bar, never a percentage**. |
+| **Zero configuration** | The sources to open are decided from the provider routes you actually have; no `sources`, no `providers`. |
 
 ```
 The chip in the composer tool row is a small capsule that follows the active model’s provider
@@ -117,12 +128,12 @@ the host logs a warning - you are not left guessing in front of an empty panel.
 
 ### How this differs from neighbouring plugins
 
-The ecosystem already has related plugins (`dsh-cost-meter` covers nine coding plans plus cost estimates;
-`dsh-token-monitor` does per-request cost accounting). The difference is the accounting stance: this plugin
-reports **only official truth or explicitly-labelled measurement, never conversions or estimates**, the chip
-**follows the current model's provider**, and it ships the Qwen Token Plan console-quota contract that the
-others do not. If you want a cost dashboard, pick that one; if you want "how much is left on the provider I
-am using right now", pick this one.
+The ecosystem already has related plugins, mostly in the **cost-tracking / spend-estimation** direction
+(`dsh-cost-meter`, `dsh-token-monitor`). This plugin does not compete there: its stance is **only official truth
+or explicitly-labelled measurement, never conversions or estimates**, the chip **follows the current model's
+provider**, and it ships the **Aliyun / Qwen Token Plan console-quota contract** - a vendor that has a quota but
+no public API, which is precisely why this plugin exists. Want a cost dashboard? Take the former. Want "how much
+is left on the provider I am using right now"? Take this one.
 
 ## Zero-configuration detection
 
@@ -439,9 +450,18 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 379/207 tests" - and checks them against the code and a real
+config table, 8 sources, 8 declared outbound hosts, 379/207 tests plus 80 guards assertions" - and checks them
+against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).
+
+This repository also runs on a written engineering loop. Those directories live in the repo but are **not
+published in the npm package**: `specs/` (three specification cycles: roadmap reconciliation, publish-surface
+links, gate hardening), `workflow/` (phase templates and the three review lenses), `AGENTS.md` (standing
+instructions for coding agents) and `.specify/` (Spec Kit specs and the constitution). Read them via absolute
+links: [workflow](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/workflow/README.md),
+[AGENTS.md](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/AGENTS.md),
+[constitution](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/.specify/memory/constitution.md).
 
 Tests are cross-platform (temp directories come from `os.tmpdir()` and never touch a real `~/.dsh`); CI runs
 node 20/22 across ubuntu/windows/macos plus a "the published tarball loads" smoke test

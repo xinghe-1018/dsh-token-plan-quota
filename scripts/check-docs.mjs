@@ -12,7 +12,7 @@
  *   3. 预设与字体 CDN 的每个出站主机都在 `dshhub.permissions.network` 里；
  *   4. README 里的相对链接指向的文件真实存在；
  *   4b. README 的相对链接目标必须**随包发布**（包页只渲染包内文件：否则 GitHub 正常、npm 上 404）；
- *   5. README 声称的测试项数与实跑结果一致（数字不许漂）；
+ *   5. README 声称的测试项数与实跑结果一致（数字不许漂）——host / client / guards **三个套件都核**；
  *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
@@ -112,16 +112,19 @@ for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['READM
 }
 
 /* 5) 测试项数 */
+// **三个套件都要核**。这里曾经只有 host / client，`test/guards.mjs` 不在列表里——
+// 代价实测过：它的用例数在评审修复中从 32 涨到 80，而 README 里那句"32 项"因为没人守，
+// 刚写完就漂了。凡是**写在 README 里、又能从实跑得到**的数字，就必须进这个列表。
+const SUITES = ['host', 'client', 'guards']
 const counts = {}
-for (const suite of ['host', 'client']) {
+for (const suite of SUITES) {
   const out = execFileSync(process.execPath, [join(root, 'test', `${suite}.mjs`)], { encoding: 'utf8' })
   const match = /(\d+) passed, (\d+) failed/.exec(out)
   if (match === null) problems.push(`test/${suite}.mjs 没给出可解析的结果行`)
   else if (match[2] !== '0') problems.push(`test/${suite}.mjs 有 ${match[2]} 项失败`)
   else counts[suite] = Number(match[1])
 }
-for (const [suite, text] of [['host', zh], ['client', en]]) {
-  void text
+for (const suite of SUITES) {
   const claimed = [...zh.matchAll(new RegExp(`test/${suite}\\.mjs\\s+#?\\s*(\\d+) 项`, 'g'))].map(m => Number(m[1]))
     .concat([...en.matchAll(new RegExp(`test/${suite}\\.mjs\\s*\\n?\\s*#\\s*(\\d+) assertions`, 'g'))].map(m => Number(m[1])))
   for (const value of claimed) {
@@ -360,7 +363,7 @@ if (problems.length > 0) {
   process.exitCode = 1
 } else {
   console.log(`check-docs: OK（配置键 ${tally.keys}、数据源 ${tally.sources}、出站主机 ${tally.hosts}、`
-    + `host ${counts.host} 项 / client ${counts.client} 项，中英 README 与代码一致）`)
+    + `host ${counts.host} 项 / client ${counts.client} 项 / guards ${counts.guards} 项，中英 README 与代码一致）`)
 }
 // 跳过的检查要出声，不然"绿"里混着"这条其实没跑"。
 for (const notice of notices) console.log(`  note: ${notice}`)

@@ -11,6 +11,7 @@ node test/client.mjs    # 浏览器半边：假 React / 假 DOM / 假 fetch，�
 node test/guards.mjs    # 门禁自己的行为矩阵（fixture 痕迹守卫 / 行号引用检测）
 npm test                # 前两个
 node scripts/check-manifest.mjs   # 清单自检（安装性、出站主机声明、许可证）
+node scripts/check-docs.mjs       # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs       # 活文档里不得出现 `文件:行号` 引用
 npm run check           # 上面全部 + 文档与投稿自检；**提交前跑这个**
 ```

@@ -33,21 +33,15 @@
 
 ## 写文本文件
 
-- **本机的 `pwsh` 实际是 Windows PowerShell 5.1**（实测 `$PSVersionTable.PSVersion` = 5.1.26100.9444，
-  `PSEdition` = Desktop），不是 PowerShell 7。所以：
-  - `Set-Content -Encoding utf8` / `Add-Content -Encoding utf8` 会写出 **BOM**。本轮实测：用
-    `git show … | Set-Content -Encoding utf8` 落地的临时副本，`node --check` 直接报
-    `Invalid or unexpected token`（BOM 顶掉了 shebang）。`check-docs.mjs` 第 9 项（编码护栏）就是
-    这条的机械化版本。**写仓库里的文本用 Node 或文件工具，不要用 pwsh。**
-  - 不带 `-Encoding` 读 UTF-8 文件会按 **ANSI(GBK)** 解码：同一个 `AGENTS.md`（4575 字节），
-    Node 读出 2598 字符，pwsh 读出 3055 字符。**别用 pwsh 做文本度量或内容断言**——
-    它"看起来正常"可能只是显示层的巧合。
-  - 含中文的 double-quoted 字符串里反引号是转义符：`"```"` 当场 `Unexpected token`（本轮踩到）。
-    拼中文 / 反引号文本用 single-quoted 字符串，或干脆别在 pwsh 里拼。
+- **用 Node 或文件工具写仓库里的文本，不要用 pwsh。** 机制与实测数字（本机 `pwsh` 实为
+  Windows PowerShell 5.1、`Set-Content -Encoding utf8` 会加 BOM、不带 `-Encoding` 读 UTF-8 会按
+  GBK 解码、含中文的 double-quoted 字符串里反引号是转义符）记在**全局 `$DSH_HOME/AGENTS.md`
+  的「本机环境事实（工具与文本）」**——那是跨仓库都成立的事实，写两处就会各漂各的。
+  本仓库只关心后果：BOM / GBK 残骸会触发 `check-docs.mjs` 第 9 项（编码护栏）红灯。
 - 本机 `core.autocrlf = true`，但 `.gitattributes` 里 `* text=auto eol=lf` 压过它：落地的文本仍是 LF。
   shell 脚本（`.githooks/pre-commit`、`scripts/*.sh`）依赖这一条——CRLF 会让 shebang 失效。
 
 ## 门禁耗时
 
-- `npm run check` 在本机约 **6 秒**（host 379 项 + client 207 项 + guards + 三个自检）。这就是
-  pre-commit 钩子可以直接跑全套、不必挑子集的依据。
+- `npm run check` 在本机约 **6 秒**（host 379 项 + client 207 项 + guards 32 项 + 四个自检：
+  manifest / docs / refs / submission）。这就是 pre-commit 钩子可以直接跑全套、不必挑子集的依据。

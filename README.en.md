@@ -428,11 +428,14 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ## Development
 
 ```bash
-npm run check                       # all four steps below
+npm run check                       # all seven steps below
 node test/host.mjs                  # 379 assertions, offline
 node test/client.mjs                # 207 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 32 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
+node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
+node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row

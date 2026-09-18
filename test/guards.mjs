@@ -2,19 +2,26 @@
  * 门禁自身的行为矩阵（离线，不联网）。
  * 运行：node test/guards.mjs
  *
- * 为什么单独一个文件：`AGENTS.md` 与 `workflow/PLAN.md` 都要求"新增或修改机械检查必须做行为矩阵，
- * 并证明它能失败"。矩阵只写在规格文档里会随会话结束而失去约束力，所以这里让两条最容易出错的
- * 门禁各带一份**常驻**矩阵：
+ * 为什么单独一个文件：`workflow/PLAN.md`（产出方）与 `workflow/REVIEW-CHECKLIST.md`（校验方）
+ * 都要求"新增或修改机械检查必须做行为矩阵，并证明它能失败"。矩阵只写在规格文档里会随会话结束
+ * 失去约束力，所以这里让三处最容易出错的门禁各带一份**常驻**矩阵：
  *
- *  - `assertFixture()` 的痕迹守卫（`scripts/shots/fixture.mjs`）——它曾经因**时钟巧合**假红
- *    （见下面 CASE_CLOCK_COINCIDENCE 与 specs/003-guardrails-and-doc-hygiene/plan.md 前提 1）；
- *  - `findLineRefs()` 的行号引用检测（`scripts/check-refs.mjs`）——它靠正则，正则最容易
- *    在"该认的没认"与"不该认的认了"两端同时出错。
+ *  - `assertFixture()` 的痕迹守卫（`scripts/shots/fixture.mjs`）——它曾因**时钟巧合**假红；
+ *  - `findLineRefs()` 的行号引用检测（`scripts/check-refs.mjs`）——靠正则，而正则最容易在
+ *    "该认的没认"与"不该认的认了"两端同时出错；这里额外钉住它**不得退化成二次方**；
+ *  - `classifyTarget()` / `extractLinkTargets()`（`scripts/link-targets.mjs`）——越界判定含
+ *    平台语义（Windows 把 `\` 也当路径分隔符），且"要不要碰文件系统"必须**只由分类决定**。
  *
  * 两类用例都必须在场：**应报**（不报 = 漏检 = 假安全感）与**应放行**（报了 = 假红 = 训练人忽略红灯）。
  */
+import { execFileSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
+import { classifyTarget, extractImageTargets, extractLinkTargets, normalizeTarget } from '../scripts/link-targets.mjs'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 let passed = 0
 let failed = 0
@@ -43,13 +50,20 @@ function accepts(label, fn) {
     console.log(`FAIL ${label}\n  期望放行，实际抛错：${error.message}`)
   }
 }
+const ms = (fn, input) => {
+  const t = process.hrtime.bigint()
+  fn(input)
+  return Number(process.hrtime.bigint() - t) / 1e6
+}
 
 /** 固定基准时间：相对时间全靠它，断言就不会随"跑的那一刻"变。 */
 const FIXED_NOW = 1_789_000_000_000
 /**
- * 本轮实测到的冲突时刻：此刻 `updatedAt = now - 12000 = 1789716077943`，
- * 它的十进制写法里恰好含有禁用串 `7943`。旧实现把整段 JSON 当字符串找子串，于是**假红**。
- * 这个数字不是编的——它是穷举出来的第一个命中点（plan.md 前提 1）。
+ * 实测到的冲突时刻：此刻 `throughput.byProvider[1].lastAt = now - 26_000 = 1789716077943`，
+ * 它的十进制写法里恰好含禁用串 `7943`。旧实现把整段 JSON 当字符串找子串，于是**假红**。
+ *
+ * 归因别写错（003 的 Lens 3 纠正过我一次）：**不是** `updatedAt`/`lastAttemptAt`
+ * （`now - 12_000`），那两个在这个 now 上都不含 `7943`。下面有一条自证断言钉住这一点。
  */
 const CASE_CLOCK_COINCIDENCE = 1_789_716_103_943
 const VARIANTS = ['panel', 'float', 'cookieDrop', 'badgeSwitch', 'triptych']
@@ -65,11 +79,19 @@ for (const variant of VARIANTS) {
 }
 
 // 应放行 2：时钟巧合时刻——这是本文件存在的主要理由，回归它比回归什么都重要。
-accepts('fixture 放行时钟巧合时刻（updatedAt 含 7943）',
+accepts('fixture 放行时钟巧合时刻（byProvider[1].lastAt 含 7943）',
   () => assertFixture(makeSnapshot({ now: CASE_CLOCK_COINCIDENCE, variant: 'panel', lang: 'zh' })))
-// 前提自证：那个时刻的快照 JSON 里**确实**含禁用串。不然上一条会因为"这里根本不冲突"而空转。
-ok('前提：时钟巧合时刻的快照 JSON 确实含 7943',
-  JSON.stringify(makeSnapshot({ now: CASE_CLOCK_COINCIDENCE, variant: 'panel', lang: 'zh' })).includes('7943'))
+// 前提自证：那个时刻的快照 JSON 里**确实**含禁用串，且来源就是那一个字段。
+// （只断言"含 7943"会让归因错误被固化——Lens 3 的 M1 就是这么来的。）
+{
+  const snap = makeSnapshot({ now: CASE_CLOCK_COINCIDENCE, variant: 'panel', lang: 'zh' })
+  ok('前提：时钟巧合时刻的快照确实含 7943', JSON.stringify(snap).includes('7943'))
+  ok('前提：命中来源是 throughput.byProvider[1].lastAt（now - 26000）',
+    String(snap.throughput.byProvider[1].lastAt) === String(CASE_CLOCK_COINCIDENCE - 26_000)
+    && String(snap.throughput.byProvider[1].lastAt).includes('7943'))
+  ok('前提：now - 12000（updatedAt / lastAttemptAt）在这个时刻并**不**含 7943',
+    !String(CASE_CLOCK_COINCIDENCE - 12_000).includes('7943'))
+}
 
 // 应报：真实余额写进**卡里**（放在 whitelist 内的键上，以免被别的断言抢先拦下）。
 rejects('fixture 拦卡内真实余额 remaining=7943', () => {
@@ -90,7 +112,31 @@ rejects('fixture 拦数值形态的真实余额 7943', () => {
   snap.probe = 7943
   assertFixture(snap, { lang: 'zh' })
 })
+// 应报：对象 **key** 里的痕迹。旧实现（整段 JSON 找子串）覆盖 key，逐叶扫描容易把它漏掉——
+// 003 的 Lens 2 F7 指出的正是这个收窄。
+rejects('fixture 拦对象 key 里的真实痕迹', () => {
+  const snap = makeSnapshot({ now: FIXED_NOW, variant: 'panel', lang: 'zh' })
+  snap.OMEN = 1
+  assertFixture(snap, { lang: 'zh' })
+})
 
+// 应报：`Date` / `BigInt` —— 逐叶扫描与 `JSON.stringify` **不同构**，这两类最容易溜掉（Lens 1）。
+rejects('fixture 拦 Date 对象里的真实日期', () => {
+  const snap = makeSnapshot({ now: FIXED_NOW, variant: 'panel', lang: 'zh' })
+  snap.probe = new Date('2026-09-14T00:00:00Z')
+  assertFixture(snap, { lang: 'zh' })
+})
+rejects('fixture 拦 BigInt 里的真实值', () => {
+  const snap = makeSnapshot({ now: FIXED_NOW, variant: 'panel', lang: 'zh' })
+  snap.probe = 7943n
+  assertFixture(snap, { lang: 'zh' })
+})
+// 应报：≥1e12 但**超出时钟区间**且含禁用串——豁免必须有上界（Lens 1 的"声明比代码宽"）。
+rejects('fixture 拦超出时钟区间的巨整数 17943999999999', () => {
+  const snap = makeSnapshot({ now: FIXED_NOW, variant: 'panel', lang: 'zh' })
+  snap.probe = 17943999999999
+  assertFixture(snap, { lang: 'zh' })
+})
 // 应放行：时钟量级的整数豁免（它们只是"现在几点"，不是痕迹）。
 for (const clock of [CASE_CLOCK_COINCIDENCE - 12_000, 7_939_999_999_999]) {
   accepts(`fixture 放行时钟量级整数 ${clock}`, () => {
@@ -122,6 +168,101 @@ acceptsRef('行号 放行 纯锚点引用', '见 plan.md 的「## 2. 阶段②�
 // 应报：检测器自身不能静默失效——围栏剥掉之后，围栏之外的那条仍要认出来。
 ok('行号 围栏外的引用不被围栏豁免连带吞掉',
   findLineRefs('```\nlegend\n```\n见 lib/index.js:44\n').length === 1)
+
+// 围栏：`~~~` 也算围栏（合法 CommonMark），且**不受正文里游离三反引号的奇偶影响**（Lens 1 的 HIGH）。
+acceptsRef('行号 放行 ~~~ 围栏内的引用', '~~~\n见 lib/index.js:44\n~~~\n')
+{
+  const text = '正文提到 ``` 一次（不构成围栏）。\n见 ROADMAP.md:12\n\n```text\n见 lib/index.js:44\n```\n'
+  const hits = findLineRefs(text).map(h => h.match)
+  ok('行号 围栏奇偶：散文里的引用照报', hits.includes('ROADMAP.md:12'))
+  ok('行号 围栏奇偶：围栏内的示例照放行', !hits.includes('lib/index.js:44'))
+}
+// 认的形态：扩展名表要够宽，且 GitHub permalink 的 `#L` 行锚同样是会腐烂的引用。
+rejectsRef('行号 报 扩展名表里的 .ts', '见 lib/index.ts:44')
+rejectsRef('行号 报 GitHub permalink 的行锚', '见 lib/index.js#L44')
+acceptsRef('行号 放行 裸 #L44（没有文件部分）', '见 #L44')
+acceptsRef('行号 放行 无扩展名文件 LICENSE:5（不在范围内：加它会与 9:00 撞车）', 'LICENSE:5')
+
+/* ---------- 三、链接目标的抽取与分类 ---------- */
+
+const kind = raw => classifyTarget(raw).kind
+// 应放行：对外链接 / 协议相对 / 片段 —— 一律不探测文件系统。
+ok('分类 跳过 对外 URL', kind('https://example.com/x') === 'skip')
+ok('分类 跳过 协议相对（合法对外写法，不得假红）', kind('//example.com/x') === 'skip')
+ok('分类 跳过 纯片段', kind('#section') === 'skip')
+ok('分类 跳过 mailto', kind('mailto:a@b.c') === 'skip')
+// 应报成 escape：任何会走到仓库之外的形态。
+ok('分类 仓库外 上级目录', kind('../x') === 'escape')
+ok('分类 仓库外 裸 `..`（旧实现漏判，Lens 2 F1）', kind('..') === 'escape')
+ok('分类 仓库外 `a/../..` 归一后是 `..`', kind('a/../..') === 'escape')
+ok('分类 仓库外 绝对路径', kind('/abs/path') === 'escape')
+ok('分类 反斜杠 一律非法（平台无关，Lens 2 F1/F6）', kind('..\\..\\..\\Windows\\win.ini') === 'backslash')
+// 应放行成 relative：仓库内相对路径。
+ok('分类 仓库内 相对路径', kind('docs/x.md') === 'relative')
+ok('分类 仓库内 `a/../b.md` 仍在仓库内', kind('a/../b.md') === 'relative')
+
+// 不变式：**只有** relative 才允许调用方去 existsSync。所以只要判成 relative，
+// 它的归一化结果就必须确实留在仓库内（不含 `..`、不以 `/` 开头、不含反斜杠）。
+for (const raw of ['..', '../x', 'a/../..', '/x', '//h/x', '..\\..\\w', 'a\\b', './a', 'a/b', 'a/../../b', '%2e%2e/x', '', '#f', 'h://x', 'docs/../ROADMAP.md']) {
+  const { kind: k, target } = classifyTarget(raw)
+  if (k !== 'relative') continue
+  ok(`不变式 relative 必须留在仓库内：${JSON.stringify(raw)} -> ${JSON.stringify(target)}`,
+    !target.startsWith('/') && !target.includes('\\') && !normalizeTarget(target).split('/').includes('..'))
+}
+
+// 抽取：四种写法一个都不能漏，示例一个都不能误认。
+ok('抽取 内联', extractLinkTargets('[x](a.md)').includes('a.md'))
+ok('抽取 带 title（原样保留，交给 normalizeTarget 剥）', extractLinkTargets('[x](a.md "t")').includes('a.md "t"'))
+ok('抽取 引用式', extractLinkTargets('[x][r]\n[r]: a.md').includes('a.md'))
+ok('抽取 HTML', extractLinkTargets('<a href="a.md">x</a>').includes('a.md'))
+ok('抽取 图片', extractLinkTargets('![x](a.png)').includes('a.png'))
+ok('抽取 徽标式：取到外层 URL，且不把内层图片当目标丢掉',
+  JSON.stringify(extractLinkTargets('[![alt](i.png)](url)')) === JSON.stringify(['i.png', 'url']))
+ok('抽取 围栏内的示例不认', extractLinkTargets('```\n[x](a.md)\n```').length === 0)
+ok('抽取 行内代码里的示例不认', extractLinkTargets('`[x](a.md)`').length === 0)
+ok('图片只取图片', JSON.stringify(extractImageTargets('[x](a.md) ![y](b.png)')) === JSON.stringify(['b.png']))
+// 链接文字含方括号：旧第 4 项认得，把 label 字符类收窄会把它弄丢（Lens 1 实测的**收窄**）。
+ok('抽取 链接文字含方括号', extractLinkTargets('[see note [1]](docs/a.md)').includes('docs/a.md'))
+ok('抽取 图片文字含方括号', extractImageTargets('![shot [1]](docs/a.png)').includes('docs/a.png'))
+// 引用式定义允许最多 3 个前导空格（CommonMark 的列表缩进形态）。
+ok('抽取 缩进的引用式定义', extractLinkTargets('  [r]: docs/a.md').includes('docs/a.md'))
+// 散文里偶然出现的 `](` 不算链接（左侧同一行内没有 `[`）。
+ok('抽取 散文中孤立 ]( 不算链接', extractLinkTargets('随手写 ](x) 这种').length === 0)
+
+/* ---------- 五、入口判定不得静默失效 ---------- */
+
+// 为什么要有这一组：`check-refs.mjs` 的 `main()` 靠"是不是入口"决定跑不跑。早先的实现直接比
+// `resolve(process.argv[1])` 与 `import.meta.url` 的字符串，而 Node 的 ESM 加载器把入口解析成
+// **realpath**——工作目录是 junction / symlink 时两者不等，`main()` 被静默跳过：**无输出、退出码 0**，
+// 于是 `npm run check`、pre-commit、CI 全绿而门禁一次都没跑（评审 Lens 1 的 HIGH，用 junction 实测复现）。
+// 现在改比 realpath。这里至少钉住"直接运行必须有输出"——那一类失败的表现就是**什么都没有**。
+{
+  let out = ''
+  let status = 0
+  try {
+    out = execFileSync(process.execPath, ['scripts/check-refs.mjs'], { cwd: ROOT, encoding: 'utf8' })
+  } catch (error) {
+    // 门禁报红是合法结果，但**必须有输出**。注意它把违规写到 **stderr**（`console.error`），
+    // 所以两边都要收——只收 stdout 会让这条用例在"门禁正在报红"时假失败。
+    out = String(error.stdout ?? '') + String(error.stderr ?? '')
+    status = error.status ?? 1
+  }
+  ok(`check-refs.mjs 直接运行会输出东西（status=${status}）`, out.includes('check-refs:'))
+}
+
+/* ---------- 四、不得退化成二次方 ---------- */
+
+// 003 的 Lens 2 实测：修之前 `'a.' × 40000` 在 findLineRefs 上要 7.8 s、`'![' × 40000` 在
+// extractLinkTargets 上要 10.9 s（Θ(n²)）。门禁挂在 pre-commit 上，所以"文档内容能拖死检查"
+// 本身就是缺陷。这里用很松的 1000 ms 上限（修好后实测 ~0 ms，余量约三个数量级）钉住它，
+// 避免 CI 负载波动造成假红。
+for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 [', '[']]) {
+  const input = unit.repeat(40_000)   // 约 80 KB
+  const refsMs = ms(findLineRefs, input)
+  const linksMs = ms(extractLinkTargets, input)
+  ok(`线性 findLineRefs（${label} 80 KB）< 1000 ms，实测 ${refsMs.toFixed(1)} ms`, refsMs < 1000)
+  ok(`线性 extractLinkTargets（${label} 80 KB）< 1000 ms，实测 ${linksMs.toFixed(1)} ms`, linksMs < 1000)
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

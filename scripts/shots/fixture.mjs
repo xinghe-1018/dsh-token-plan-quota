@@ -352,17 +352,35 @@ export function makeSnapshot(options = {}) {
 const BANNED_TRACES = ['OMEN', '39.91', '9063', '7943', '2026-09-14', 'C:\\', 'D:\\', '/Users/', '.scratch']
 
 /**
- * 时钟量级的整数（13 位毫秒时间戳）。快照里有 10 个字段由 `now` 派生，它们**不是**真实痕迹，
- * 只是"现在几点"。豁免它们的唯一理由是量级：真实痕迹（余额、Credits、token 数、计数）
- * 都远在 1e12 以下，而毫秒时间戳都在 1e12 以上。
+ * 时钟量级的整数（毫秒时间戳）。快照里有 **10–16 个**字段由 `now` 派生（随变体而变），
+ * 它们**不是**真实痕迹，只是"现在几点"。
+ *
+ * 豁免必须**两头都有界**，缺一不可：
+ *  - **下界** `1e12`：真实痕迹（余额、Credits、token 数、计数）都远在其下；
+ *  - **上界** `1e13`：毫秒时间戳落在 2001-09 ~ 2286-11 这个区间里。
+ * 没有上界时，像 `17943999999999` 这种 ≥1e12 **且十进制含禁用串**的数字会被一起豁免——
+ * 评审 Lens 1 报的就是这个"声明比代码宽"。
  */
-const isClockMillis = value => Number.isInteger(value) && Math.abs(value) >= 1e12
+const isClockMillis = value => Number.isInteger(value) && Math.abs(value) >= 1e12 && Math.abs(value) < 1e13
 
-/** 收集所有叶值（字符串 / 数字 / 其它标量），用于逐值比对。 */
+/**
+ * 收集所有"该拿去比对的值"：叶标量 **加上对象 key**，并把 `Date` / `BigInt` 折成字符串。
+ *
+ * 为什么这么折：旧实现是 `JSON.stringify(整个对象).includes(banned)`，它与"走内存值"**不同构**——
+ * 逐叶扫描会漏掉 key、漏掉 `Date`（没有自有可枚举属性）、并对 `BigInt` 静默放行
+ * （旧实现反而因为 `JSON.stringify` 对 BigInt 抛错而"报红"）。评审 Lens 1 三条实测都指这里。
+ * 结论：守卫面只许变宽或不变——key 一起收、`Date` 折 ISO 串、`BigInt` 折十进制串。
+ */
 function collectLeaves(node, out = []) {
   if (Array.isArray(node)) for (const item of node) collectLeaves(item, out)
-  else if (node !== null && typeof node === 'object') for (const value of Object.values(node)) collectLeaves(value, out)
-  else out.push(node)
+  else if (node instanceof Date) out.push(node.toISOString())
+  else if (typeof node === 'bigint') out.push(String(node))
+  else if (node !== null && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      out.push(key)
+      collectLeaves(value, out)
+    }
+  } else out.push(node)
   return out
 }
 
@@ -380,9 +398,11 @@ export function assertFixture(snapshot, options = {}) {
     checks.push(label)
   }
   // 逐叶比对，而不是 `JSON.stringify(整个对象).includes(...)`：快照里有 10 个由 `now` 派生的
-  // 13 位毫秒时间戳，整段字符串扫描会让 `updatedAt = now - 12000 = 1789716077943` 这种值
-  // 巧合命中 4 位禁用串（`7943`）——实测每轮 check-docs（10 张快照）约 3.7% 的概率因此假红，
-  // 而 CI 每个 PR 都跑这条检查。假红训练人忽略红灯，比漏检更坏，所以收窄到「值」这一层。
+  // 13 位毫秒时间戳，整段字符串扫描会让 `throughput.byProvider[1].lastAt = now - 26000` 在
+  // `now = 1789716103943` 时取到 1789716077943，巧合命中 4 位禁用串（`7943`）。
+  // 实测（新旧守卫在同一 now 上配对，模拟 10000 轮 check-docs）：旧守卫整轮假红 1.54%
+  // （95% CI 1.32–1.80%；两批合计 187/13000），新守卫 0/13000。CI 每个 PR 都跑这条检查——
+  // 假红训练人忽略红灯，比漏检更坏，所以收窄到「值」这一层。
   // 证据与行为矩阵见 specs/003-guardrails-and-doc-hygiene/plan.md 前提 1 与测试计划 T1。
   const allLeaves = collectLeaves(snapshot)
   // 真实痕迹：本机账号、真实余额，以及用户实拍图里出现过的真实额度值 ——

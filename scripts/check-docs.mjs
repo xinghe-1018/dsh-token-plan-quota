@@ -21,9 +21,10 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, posix, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
+import { classifyTarget, extractImageTargets, extractLinkTargets } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const read = file => readFileSync(join(root, file), 'utf8')
@@ -63,47 +64,19 @@ for (const host of [...hosts].sort()) {
 
 /* 4) 相对链接：README 里的相对链接必须指向**仓库内真的存在**的文件。
  *
- *    抽取与分类用下面的**单一实现**，第 4 项与 4b 共用。曾经两处各有一套正则，结果窄的那套
- *    对带 title / 引用式 / HTML 三种写法完全隐形（002 的 Lens 1 与 Lens 2 各自独立报了同一处）
- *    ——同一语义两处实现，改一处必忘一处。 */
-
-/** 抽取所有链接与图片目标（四种写法）。返回**原样片段**，归一化交给 `normalizeTarget`。
- *  先剥掉代码围栏与行内代码：里面的链接是示例，不是对外声明。 */
-function extractLinkTargets(text) {
-  const stripped = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ')
-  const targets = []
-  for (const m of stripped.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])          // 图片
-  // 徽标惯用式 `[![alt](img.png)](url)`：先把图片扣掉，剩下的内联链接才算链接。旧实现两头都错：
-  // 既把外层 URL 当成图片目标，又让这个写法整个躲过检查。
-  for (const m of stripped.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) targets.push(m[1])
-  for (const m of stripped.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])          // 引用式定义
-  for (const m of stripped.matchAll(/href="([^"]+)"/g)) targets.push(m[1])                 // HTML
-  return targets
-}
-
-/** 归一化：去 title、去尖括号、去片段与查询串、去 `./` 前缀，再把 `..` 解开。 */
-function normalizeTarget(raw) {
-  let t = raw.trim().replace(/\s+"[^"]*"$/, '')            // markdown 的 title 属性
-  if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
-  t = t.split('#')[0].split('?')[0].replace(/^\.\//, '')   // 片段 / 查询串 / ./ 前缀
-  return t === '' ? '' : posix.normalize(t)                // docs/../ROADMAP.md → ROADMAP.md
-}
-
-/** 目标分类：两个消费者共用，避免再次分叉。`escape` = 指向仓库外。 */
-function classifyTarget(raw) {
-  const target = normalizeTarget(raw)
-  if (target === '' || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) return { kind: 'skip', target }
-  if (target.startsWith('/') || target.startsWith('../')) return { kind: 'escape', target }
-  return { kind: 'relative', target }
-}
+ *    抽取与分类是**单一实现**（`./link-targets.mjs`），第 4 项、4b 与第 10 项共用。曾经两处各
+ *    有一套正则，结果窄的那套对**引用式**与 **HTML** 两种写法完全隐形，而**代码围栏里的示例**
+ *    又被它误报成声明（002 的 Lens 1/Lens 2 各自独立报过同一处）——同一语义两处实现必有一处先忘。
+ *    现在连"要不要碰文件系统"也只由 `classifyTarget` 说了算：**只有 `relative` 才允许 existsSync**。 */
 
 for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
   for (const raw of new Set(extractLinkTargets(text))) {
     const { kind, target } = classifyTarget(raw)
     if (kind === 'skip') continue
-    // 指向仓库外的目标一律报错：它本来就没有意义，顺带关掉"用存在性探测仓库外路径"那个面
-    // （002 的 Lens 2 F5 记为既存问题）。
+    // 指向仓库外 / 含反斜杠的一律报错。前者本来就没意义，顺带关掉"用存在性探测仓库外路径"那个面
+    // （002 的 Lens 2 F5 记为既存问题；003 的 Lens 2 进一步指出旧判定漏了裸 `..` 与 `\` 形态）。
     if (kind === 'escape') problems.push(`${file} 的链接目标指向仓库外：${target}`)
+    else if (kind === 'backslash') problems.push(`${file} 的链接目标含反斜杠，不是合法仓库路径：${target}`)
     else if (!existsSync(join(root, target))) problems.push(`${file} 的链接目标不存在：${target}`)
   }
 }
@@ -357,10 +330,16 @@ for (const rel of textFiles) {
   // 英文套少一张是**有意的**：「本实例还没调用过」那句说明宿主只有中文（lib/index.js:376）。
   const minRefs = { 'README.md': 7, 'README.en.md': 6 }
   for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-    const refs = [...text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1])
+    const refs = extractImageTargets(text)
     if (refs.length < minRefs[name]) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 ${minRefs[name]} 张`)
     for (const ref of refs) {
-      if (!existsSync(join(root, ref))) problems.push(`${name} 引用的图片不存在：${ref}`)
+      // 与第 4 项同一条规矩：只有 `relative` 才碰文件系统。旧写法直接 `join(root, ref)` + existsSync，
+      // 于是 `![x](../../../../Windows/win.ini)` 也能拿来当"仓库外某个文件是否存在"的神谕
+      // （003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
+      const { kind, target } = classifyTarget(ref)
+      if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
+      else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
+      else if (kind === 'relative' && !existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
     }
   }
   try {

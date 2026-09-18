@@ -36,7 +36,7 @@
 ### Functional Requirements
 
 - **FR-001**: `README.md` 与 `README.en.md` 中，**不随包发布**的目标 MUST 用绝对链接（指向 GitHub）
-- **FR-002**: `scripts/check-docs.mjs` MUST 新增机械检查：README 的每个相对链接，其目标必须被 `package.json#files` 覆盖
+- **FR-002**: `scripts/check-docs.mjs` MUST 新增机械检查：README 的每个相对链接**与图片目标**必须被 `package.json#files` 覆盖；MUST 覆盖内联、带 title、引用式、HTML 四种写法，并剥除代码围栏与行内代码里的示例；发布面按 npm 实际会带的文件算（`files` ∪ package.json / README* / LICENSE* / main）
 - **FR-003**: 新检查 MUST 可证伪——在"修复前的 README + 修复前的 files"组合下必须报红
 - **FR-004**: 本次改动 MUST NOT 增加包内容（`npm pack --dry-run` 仍为 24 files）
 - **FR-005**: 中英 README 的同义链接 MUST 形态一致

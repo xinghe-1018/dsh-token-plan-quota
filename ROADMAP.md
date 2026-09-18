@@ -7,7 +7,7 @@
 
 | 阶段 | 状态 | 依据 |
 |---|---|---|
-| ① 适配更多平台 | **部分完成** | 已落地：A 档两家预设（`moonshot-balance`、`openrouter-credits`——§0 记的 6 个预设现为 8 个）＋**既有控制台 Cookie 机制**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`，README 教用户粘贴 Cookie）；**但 Moonshot/OpenRouter 字段名尚未用真实 Key 核对**（见 README「已知边界」）。不做的是 README「明确不做的三类」，其精确边界是**读取其它 CLI 的本地登录态 / 额外强凭据**（GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与 CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）——**不是"不用 Cookie"**。C 档（官方无额度端点）不是不做，而是只做实测窗口（T1.6 `window:<provider>` 已 `[x]`）。**A/B/C 档描述的是"接这家需要什么形态 / 有没有官方端点"，不是做与不做的判定。** |
+| ① 适配更多平台 | **部分完成** | 已落地：A 档两家预设（T1.3 / T1.4 `[x]`——`moonshot-balance`、`openrouter-credits`；§0 记的 6 个预设现为 8 个）＋**既有控制台 Cookie 机制**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`，README 教用户粘贴 Cookie）。**尚未完成**：T1.4b（一源多请求）、T1.5 `glm-quota`（2026-09-06 主动推迟）、T1.8（真实 Key 逐家跑 `probe` 核对字段名——"字段名尚未用真实 Key 核对"就是这条）。不做的是 README `## 明确不做的三类`，其精确边界是**读取其它 CLI 的本地登录态 / 额外强凭据**（GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与 CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）——**不是"不用 Cookie"**。C 档（官方无额度端点）不是不做，而是只做实测窗口（T1.6 `[x]`）。**A/B/C 档描述的是"接这家需要什么形态 / 有没有官方端点"，不是做与不做的判定。** |
 | ② 零配置自动检测 | **已完成** | `lib/index.js:44` `autoDetect: true`、`:1189` `applyAutoDetect()`、`:2245` 调用点。下方设计段保留为决策记录。 |
 | ③ 重写 README ＋ 开源准备 | **已开源发布** | registry `latest = 0.4.8`、本地 tag `v0.4.8`、`CHANGELOG.md` 的 `[0.4.8]`（2026-09-15）。本文原定的 `1.0.0` 尚未。 |
 
@@ -56,15 +56,19 @@
 
 ## 1. 阶段①：适配更多平台
 
-> **状态：部分完成**（2026-09-18 对账）。A 档两家预设已落地：`PRESETS` 含 `moonshot-balance`、
-> `openrouter-credits`（原 §0 记的 6 个预设现为 8 个）；**字段名尚未用真实 Key 核对**（见 README「已知边界」）。
-> 已落地的是 A 档两家预设 ＋**既有控制台 Cookie 机制**（`token-plan-console` / `BAILIAN_CONSOLE_COOKIE`，
-> README 教用户粘贴 Cookie）——「不用 Cookie」**不是**本项目的边界。不做的是 README「明确不做的三类」，
-> 其精确边界为**读取其它 CLI 的本地登录态 / 额外强凭据**（GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与
-> CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）。C 档（官方无额度端点）不是不做，而是只做实测窗口：
-> `window:<provider>` 已实现（T1.6 `[x]`）。**A/B/C 是"需要什么形态 / 有没有官方端点"的分类，不是做与不做的判定。**
-> 下方的端点核实与
-> 任务清单保留为决策记录。
+> **状态：部分完成**（2026-09-18 对账）。
+>
+> - **已落地**：A 档两家预设（T1.3 / T1.4 `[x]`——`PRESETS` 含 `moonshot-balance`、`openrouter-credits`；
+>   §0 记的 6 个预设现为 8 个）＋**既有控制台 Cookie 机制**（`token-plan-console` / `BAILIAN_CONSOLE_COOKIE`，
+>   README 教用户粘贴 Cookie）——「不用 Cookie」**不是**本项目的边界。
+> - **尚未完成**：T1.4b（一源多请求）、T1.5 `glm-quota`（2026-09-06 主动推迟）、T1.8（真实 Key 逐家跑
+>   `probe` 核对字段名——"字段名尚未用真实 Key 核对"就是这条）。
+> - **不做**：README 的 `## 明确不做的三类`，精确边界为**读取其它 CLI 的本地登录态 / 额外强凭据**
+>   （GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与 CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）。
+> - **C 档**（官方无额度端点）不是不做，而是只做实测窗口：`window:<provider>` 已实现（T1.6 `[x]`）。
+> - **A/B/C 是"需要什么形态 / 有没有官方端点"的分类，不是做与不做的判定。**
+>
+> 下方的端点核实与任务清单保留为决策记录。
 
 ### 1.1 端点核实结论（2026-09，全部带出处）
 

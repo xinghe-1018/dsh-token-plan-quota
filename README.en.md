@@ -431,7 +431,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 npm run check                       # all seven steps below
 node test/host.mjs                  # 379 assertions, offline
 node test/client.mjs                # 207 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 32 assertions: behaviour matrices of the gates themselves
+node test/guards.mjs                # 80 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations

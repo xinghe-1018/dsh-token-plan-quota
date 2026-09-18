@@ -11,6 +11,7 @@
  *   2. `PRESETS` 每个源名都在中英 README 里出现（新增一家忘了同步文档 = CI 红）；
  *   3. 预设与字体 CDN 的每个出站主机都在 `dshhub.permissions.network` 里；
  *   4. README 里的相对链接指向的文件真实存在；
+ *   4b. README 的相对链接目标必须**随包发布**（包页只渲染包内文件：否则 GitHub 正常、npm 上 404）；
  *   5. README 声称的测试项数与实跑结果一致（数字不许漂）；
  *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
@@ -64,6 +65,25 @@ for (const host of [...hosts].sort()) {
 for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
   for (const link of new Set([...text.matchAll(/\]\((?!https?:|#|mailto:)([^)#\s]+)/g)].map(m => m[1]))) {
     if (!existsSync(join(root, link))) problems.push(`${file} 的链接目标不存在：${link}`)
+  }
+}
+
+/* 4b) 发布面链接：README 里的相对链接目标必须**随包发布**。npm 包页只渲染包内文件——
+ *     一个"仓库内存在但不随包发布"的链接，在 GitHub 上正常、在包页上 404，本地完全看不出来；
+ *     上面第 4 项只查"仓库内存在"，管不到这一层。图片引用交给第 10 项，这里排除。 */
+const publishedFiles = JSON.parse(read('package.json')).files ?? []
+const isPublished = target => publishedFiles.some(f => target === f || target.startsWith(f.replace(/\/$/, '') + '/'))
+for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
+  const links = [...text.matchAll(/!?\[[^\]]*\]\(([^)\s]+)\)/g)]
+    .filter(m => !m[0].startsWith('!'))
+    .map(m => m[1])
+  for (const link of new Set(links)) {
+    if (/^(https?:|mailto:|#)/.test(link)) continue
+    const target = link.split('#')[0].replace(/^\.\//, '')
+    if (target === '') continue
+    if (!isPublished(target)) {
+      problems.push(`${file} 的链接目标不随包发布：${target}（改成绝对链接，或加进 package.json#files）`)
+    }
   }
 }
 

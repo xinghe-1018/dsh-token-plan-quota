@@ -45,8 +45,8 @@
 ![没有官方额度、也没有调用记录时的实测卡](docs/images/state-no-history.png)
 
 > 上面七张图里的余额、token 数、日期**全部是合成示例**，不是任何真实账号的额度（本插件不会把真实数字放进公开仓库）。
-> 英文套只有六张：⑦ 那句解释文案宿主目前只有中文（见 [ROADMAP](ROADMAP.md)），与其给它编一句英文，不如少一张图。
-> 想自己复现或换图：[scripts/shots/README.md](scripts/shots/README.md)。
+> 英文套只有六张：⑦ 那句解释文案宿主目前只有中文（见 [ROADMAP](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/ROADMAP.md)），与其给它编一句英文，不如少一张图。
+> 想自己复现或换图：[scripts/shots/README.md](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/scripts/shots/README.md)。
 
 ## 它不做什么
 
@@ -365,7 +365,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 千问 Token Plan 的余量卡走的是**控制台数据网关（Cookie 会话），不是公开发布的官方 API**：
 上游随时可能改动或拒绝；若其服务条款禁止此类访问，请**不要启用**该源（把 `token-plan-console` 从
 `sources` 去掉，或关掉 `autoDetect` 后不写它）。Cookie 只从本地解析、只在进程内使用、
-**绝不进任何路由响应**——细节见 [`SECURITY.md`](SECURITY.md)。
+**绝不进任何路由响应**——细节见 [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/SECURITY.md)。
 
 ## 开发
 
@@ -382,8 +382,8 @@ node scripts/check-docs.mjs        # README 的可核实声明必须与代码一
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，
 外加"解包后能加载"的冒烟（`npm pack` → 解 tar → `import lib/index.js`）。
-贡献流程与产品口径见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，发版三步（GitHub topic / npm / 插件目录站）见
-[`RELEASE.md`](RELEASE.md)。
+贡献流程与产品口径见 [`CONTRIBUTING.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/CONTRIBUTING.md)，发版三步（GitHub topic / npm / 插件目录站）见
+[`RELEASE.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/RELEASE.md)。
 
 ## 许可
 

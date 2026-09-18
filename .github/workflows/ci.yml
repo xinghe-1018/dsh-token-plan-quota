@@ -31,6 +31,15 @@ jobs:
       - name: client tests
         shell: bash
         run: bash scripts/ci-run.sh node test/client.mjs
+      # 门禁自身的行为矩阵与行号门禁都进三平台矩阵：它们含**平台语义**——Windows 把 `\`
+      # 也当路径分隔符（越界判定必须覆盖），junction/symlink 会让递归枚举越出仓库。
+      # 只挂 ubuntu 的 manifest job 的话，这两类差异在 CI 上永远看不见（评审 Lens 2 指出）。
+      - name: gate behaviour matrices
+        shell: bash
+        run: bash scripts/ci-run.sh node test/guards.mjs
+      - name: living docs carry no line-number references
+        shell: bash
+        run: bash scripts/ci-run.sh node scripts/check-refs.mjs
 
   manifest:
     name: manifest & docs
@@ -52,14 +61,6 @@ jobs:
       - name: README claims match the code
         shell: bash
         run: bash scripts/ci-run.sh node scripts/check-docs.mjs
-      # 门禁自己的行为矩阵：fixture 的痕迹守卫不得假红、check-refs 的正则不得漏检。
-      # 放在这里而不是 test job：它不依赖平台矩阵，跑一次就够。
-      - name: guard behaviour matrices
-        shell: bash
-        run: bash scripts/ci-run.sh node test/guards.mjs
-      - name: living docs carry no line-number references
-        shell: bash
-        run: bash scripts/ci-run.sh node scripts/check-refs.mjs
       - name: packed tarball loads
         shell: bash
         run: |

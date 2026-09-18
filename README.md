@@ -2,9 +2,19 @@
 
 [中文](README.md) | [English](README.en.md)
 
-在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 网页界面的输入框工具行里显示**额度**：
-官方接口给真值，没有官方接口的供应商显示明确标注「实测」的本实例消耗——**零配置**，装完按你实际在用的
-供应商路由自动决定该开哪些源。
+**在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的输入框工具行里，显示「你正在用的那家还剩多少额度」。**
+
+做它的起因很具体：**阿里云 / 千问 Token Plan 有额度，却没有公开的额度接口**——只能走控制台数据网关
+（Cookie 会话），所以生态里的同类插件普遍不碰它。本插件把那套契约内置了，顺手也把有官方接口的几家
+（DeepSeek、Moonshot、OpenRouter、阿里云费用中心）按真值接上。
+
+三条口径，一眼看完：
+
+| 口径 | 表现 |
+|---|---|
+| **有官方接口 → 真值** | 有分母就画余量条、报百分比；没分母就只报数——DeepSeek 余额没有"总量"这个分母，所以不画条 |
+| **没有官方接口 → 标「实测」** | 只报**经过本实例**的 token / 次数。不折算 Credits、不按历史推算剩余、**永不画条、永不报百分比** |
+| **零配置** | 装完按你实际在用的供应商路由决定开哪些源；不用写 `sources`，也不用手填 `providers` |
 
 ```
 输入框工具行里的徽标是个小胶囊，跟随当前模型的供应商切换（名字/速度/天数都在 tooltip 里）：
@@ -45,8 +55,8 @@
 ![没有官方额度、也没有调用记录时的实测卡](docs/images/state-no-history.png)
 
 > 上面七张图里的余额、token 数、日期**全部是合成示例**，不是任何真实账号的额度（本插件不会把真实数字放进公开仓库）。
-> 英文套只有六张：⑦ 那句解释文案宿主目前只有中文（见 [ROADMAP](ROADMAP.md)），与其给它编一句英文，不如少一张图。
-> 想自己复现或换图：[scripts/shots/README.md](scripts/shots/README.md)。
+> 英文套只有六张：⑦ 那句解释文案宿主目前只有中文（见 [ROADMAP](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/ROADMAP.md)），与其给它编一句英文，不如少一张图。
+> 想自己复现或换图：[scripts/shots/README.md](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/scripts/shots/README.md)。
 
 ## 它不做什么
 
@@ -105,10 +115,10 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ### 与相邻插件的区别
 
-生态里已有做同类事的插件（`dsh-cost-meter` 覆盖九家 Coding Plan 并带费用估算、`dsh-token-monitor` 做请求级
-成本统计）。区别在口径：本插件**只报真值或明确标注的实测，不折算不估算**，徽标**跟随当前模型供应商**切换，
-并且内置了千问 Token Plan 的控制台余量契约（邻居里没有）。要费用报表请选前者，要"我正在用的这家还剩多少"
-选这个。
+生态里已有做同类事的插件，主要是**成本统计 / 费用估算**方向（例如 `dsh-cost-meter`、`dsh-token-monitor`）。
+本插件不抢那块，它的口径是**只报真值或明确标注的实测，不折算、不估算**，徽标**跟随当前模型的供应商**切换，
+并且内置了**阿里云 / 千问 Token Plan 的控制台余量契约**——那一家有额度却没有公开接口，正是本插件当初被做
+出来的原因。要费用报表请选前者；要"我正在用的这家还剩多少"，选这个。
 
 ## 零配置自动检测
 
@@ -365,25 +375,35 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 千问 Token Plan 的余量卡走的是**控制台数据网关（Cookie 会话），不是公开发布的官方 API**：
 上游随时可能改动或拒绝；若其服务条款禁止此类访问，请**不要启用**该源（把 `token-plan-console` 从
 `sources` 去掉，或关掉 `autoDetect` 后不写它）。Cookie 只从本地解析、只在进程内使用、
-**绝不进任何路由响应**——细节见 [`SECURITY.md`](SECURITY.md)。
+**绝不进任何路由响应**——细节见 [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/SECURITY.md)。
 
 ## 开发
 
 ```bash
-npm run check                      # 下面四步一次跑完
+npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 379 项，离线
 node test/client.mjs               # 207 项，假 React/DOM/fetch
+node test/guards.mjs               # 80 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
+node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
+node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项 + guards 80 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，
 外加"解包后能加载"的冒烟（`npm pack` → 解 tar → `import lib/index.js`）。
-贡献流程与产品口径见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，发版三步（GitHub topic / npm / 插件目录站）见
-[`RELEASE.md`](RELEASE.md)。
+贡献流程与产品口径见 [`CONTRIBUTING.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/CONTRIBUTING.md)，发版三步（GitHub topic / npm / 插件目录站）见
+[`RELEASE.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/RELEASE.md)。
+
+这个仓库自己也按一套写下来的工程循环在走。这些目录在仓库里，但**不随 npm 包发布**：`specs/`（三条规格周期——
+ROADMAP 对账、发布面链接、门禁加固）、`workflow/`（相位模板与三 lens 评审清单）、`AGENTS.md`（给 agent 的常驻指令）、
+`.specify/`（Spec Kit 的规格与宪法）。要看原文走绝对链接：
+[workflow](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/workflow/README.md)、
+[AGENTS.md](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/AGENTS.md)、
+[宪法](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/.specify/memory/constitution.md)。
 
 ## 许可
 

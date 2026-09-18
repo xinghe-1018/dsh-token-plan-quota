@@ -156,11 +156,12 @@ function main() {
   // 自检不调 `npm`：Windows 上它是 npm.cmd，而 Node 24 起（CVE-2024-27980 的修复）
   // spawnSync 拒绝在不带 shell 的情况下启动 .cmd —— 于是这一步**根本没跑**就返回非零，
   // 报"自检没过"却拿不到任何原因（0.4.7 发布时实机撞上：手动 npm run check 全绿）。
-  // 直接用自己的 process.execPath 跑 `npm run check` 里那五步：跨平台都是真可执行体，
-  // 不碰 shell，也不触发 DEP0190。
+  // 直接用自己的 process.execPath 跑 `npm run check` 里那七步（顺序与 package.json#scripts.check
+  // 一致）：跨平台都是真可执行体，不碰 shell，也不触发 DEP0190。
   const CHECK_STEPS = [
-    ['test/host.mjs'], ['test/client.mjs'],
-    ['scripts/check-manifest.mjs'], ['scripts/check-docs.mjs'], ['scripts/check-submission.mjs'],
+    ['test/host.mjs'], ['test/client.mjs'], ['test/guards.mjs'],
+    ['scripts/check-manifest.mjs'], ['scripts/check-docs.mjs'],
+    ['scripts/check-refs.mjs'], ['scripts/check-submission.mjs'],
   ]
   let checkFailed = null
   for (const args of CHECK_STEPS) {

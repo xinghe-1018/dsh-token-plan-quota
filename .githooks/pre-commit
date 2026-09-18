@@ -1,0 +1,13 @@
+#!/bin/sh
+# 提交门禁：跑与 CI 同一件事（npm run check）。
+#
+# 为什么默认不启用：core.hooksPath 是**本地仓库配置**，一次改动静默改变所有协作者的提交行为
+# 不合适。启用是显式的一行（见 CONTRIBUTING.md「提交门禁」）：
+#   git config core.hooksPath .githooks
+# 知道自己在做什么时可以跳过：
+#   git commit --no-verify
+#
+# 为什么值得装：CI 只在 push / PR 上跑，红灯到那时才发现；本地钩子把它提前到提交之前。
+set -e
+echo 'pre-commit: npm run check（跳过用 git commit --no-verify）'
+npm run check

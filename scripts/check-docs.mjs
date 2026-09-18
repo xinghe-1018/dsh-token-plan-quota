@@ -11,7 +11,8 @@
  *   2. `PRESETS` 每个源名都在中英 README 里出现（新增一家忘了同步文档 = CI 红）；
  *   3. 预设与字体 CDN 的每个出站主机都在 `dshhub.permissions.network` 里；
  *   4. README 里的相对链接指向的文件真实存在；
- *   5. README 声称的测试项数与实跑结果一致（数字不许漂）；
+ *   4b. README 的相对链接目标必须**随包发布**（包页只渲染包内文件：否则 GitHub 正常、npm 上 404）；
+ *   5. README 声称的测试项数与实跑结果一致（数字不许漂）——host / client / guards **三个套件都核**；
  *   6. 正文里写死的计数（键数/源数/主机数）与代码一致；
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
@@ -23,6 +24,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
+import { classifyTarget, extractImageTargets, extractLinkTargets } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const read = file => readFileSync(join(root, file), 'utf8')
@@ -60,24 +62,69 @@ for (const host of [...hosts].sort()) {
   if (!declared.has(host)) problems.push(`出站主机 ${host} 未声明在 dshhub.permissions.network`)
 }
 
-/* 4) 相对链接 */
+/* 4) 相对链接：README 里的相对链接必须指向**仓库内真的存在**的文件。
+ *
+ *    抽取与分类是**单一实现**（`./link-targets.mjs`），第 4 项、4b 与第 10 项共用。曾经两处各
+ *    有一套正则，结果窄的那套对**引用式**与 **HTML** 两种写法完全隐形，而**代码围栏里的示例**
+ *    又被它误报成声明（002 的 Lens 1/Lens 2 各自独立报过同一处）——同一语义两处实现必有一处先忘。
+ *    现在连"要不要碰文件系统"也只由 `classifyTarget` 说了算：**只有 `relative` 才允许 existsSync**。 */
+
 for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
-  for (const link of new Set([...text.matchAll(/\]\((?!https?:|#|mailto:)([^)#\s]+)/g)].map(m => m[1]))) {
-    if (!existsSync(join(root, link))) problems.push(`${file} 的链接目标不存在：${link}`)
+  for (const raw of new Set(extractLinkTargets(text))) {
+    const { kind, target } = classifyTarget(raw)
+    if (kind === 'skip') continue
+    // 指向仓库外 / 含反斜杠的一律报错。前者本来就没意义，顺带关掉"用存在性探测仓库外路径"那个面
+    // （002 的 Lens 2 F5 记为既存问题；003 的 Lens 2 进一步指出旧判定漏了裸 `..` 与 `\` 形态）。
+    if (kind === 'escape') problems.push(`${file} 的链接目标指向仓库外：${target}`)
+    else if (kind === 'backslash') problems.push(`${file} 的链接目标含反斜杠，不是合法仓库路径：${target}`)
+    else if (!existsSync(join(root, target))) problems.push(`${file} 的链接目标不存在：${target}`)
+  }
+}
+
+/* 4b) 发布面链接：README 里的每个链接与图片目标都必须**随包发布**。npm 包页只渲染包内文件——
+ *     一个"仓库内存在但不随包发布"的目标，在 GitHub 上正常、在包页上 404（图片则是裂图），
+ *     本地完全看不出来；上面第 4 项只查"仓库内存在"，管不到这一层。
+ *
+ *     抽取与分类和第 4 项共用同一套实现（`extractLinkTargets` + `classifyTarget`）。当初两边
+ *     各有一套正则，窄的那套只认内联 `](x)`，对带 title、引用式、HTML 三种写法完全隐形
+ *     ——002 的 Lens 1 与 Lens 2 各自独立报了同一处。两处实现必然分叉，所以只留一处。
+ *     发布面也不能只按 `files` 字面算：`npm pack` 无论 files 怎么写都会带上 package.json、
+ *     README*、LICENSE* 与 main 指向的文件（审阅实测 package.json 在 tarball 里而不在 files）。 */
+const pkgMeta = JSON.parse(read('package.json'))
+const fileList = pkgMeta.files ?? null
+if (fileList === null) {
+  notices.push('README 发布面检查跳过：package.json 没有 files 字段，无法判断哪些文件随包发布')
+} else if (fileList.some(f => f.startsWith('!') || /[*?[\]{}]/.test(f))) {
+  notices.push('README 发布面检查可能不准：files 里含否定项或 glob，本检查只做字面/目录前缀比对')
+}
+const alwaysShipped = ['package.json', 'README.md', 'README.en.md', 'LICENSE', 'LICENCE', pkgMeta.main, pkgMeta.types]
+  .filter(v => typeof v === 'string' && v !== '')
+const publishedFiles = [...(fileList ?? []).filter(f => !f.startsWith('!')), ...alwaysShipped]
+const isPublished = target => publishedFiles.some(f => target === f || target.startsWith(f.replace(/\/$/, '') + '/'))
+for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['README.en.md', en]])) {
+  for (const raw of new Set(extractLinkTargets(text))) {
+    const { kind, target } = classifyTarget(raw)
+    if (kind !== 'relative') continue
+    if (!isPublished(target)) {
+      problems.push(`${file} 的链接目标不随包发布：${target}（改成绝对链接，或加进 package.json#files）`)
+    }
   }
 }
 
 /* 5) 测试项数 */
+// **三个套件都要核**。这里曾经只有 host / client，`test/guards.mjs` 不在列表里——
+// 代价实测过：它的用例数在评审修复中从 32 涨到 80，而 README 里那句"32 项"因为没人守，
+// 刚写完就漂了。凡是**写在 README 里、又能从实跑得到**的数字，就必须进这个列表。
+const SUITES = ['host', 'client', 'guards']
 const counts = {}
-for (const suite of ['host', 'client']) {
+for (const suite of SUITES) {
   const out = execFileSync(process.execPath, [join(root, 'test', `${suite}.mjs`)], { encoding: 'utf8' })
   const match = /(\d+) passed, (\d+) failed/.exec(out)
   if (match === null) problems.push(`test/${suite}.mjs 没给出可解析的结果行`)
   else if (match[2] !== '0') problems.push(`test/${suite}.mjs 有 ${match[2]} 项失败`)
   else counts[suite] = Number(match[1])
 }
-for (const [suite, text] of [['host', zh], ['client', en]]) {
-  void text
+for (const suite of SUITES) {
   const claimed = [...zh.matchAll(new RegExp(`test/${suite}\\.mjs\\s+#?\\s*(\\d+) 项`, 'g'))].map(m => Number(m[1]))
     .concat([...en.matchAll(new RegExp(`test/${suite}\\.mjs\\s*\\n?\\s*#\\s*(\\d+) assertions`, 'g'))].map(m => Number(m[1])))
   for (const value of claimed) {
@@ -286,10 +333,16 @@ for (const rel of textFiles) {
   // 英文套少一张是**有意的**：「本实例还没调用过」那句说明宿主只有中文（lib/index.js:376）。
   const minRefs = { 'README.md': 7, 'README.en.md': 6 }
   for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-    const refs = [...text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1])
+    const refs = extractImageTargets(text)
     if (refs.length < minRefs[name]) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 ${minRefs[name]} 张`)
     for (const ref of refs) {
-      if (!existsSync(join(root, ref))) problems.push(`${name} 引用的图片不存在：${ref}`)
+      // 与第 4 项同一条规矩：只有 `relative` 才碰文件系统。旧写法直接 `join(root, ref)` + existsSync，
+      // 于是 `![x](../../../../Windows/win.ini)` 也能拿来当"仓库外某个文件是否存在"的神谕
+      // （003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
+      const { kind, target } = classifyTarget(ref)
+      if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
+      else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
+      else if (kind === 'relative' && !existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
     }
   }
   try {
@@ -310,7 +363,7 @@ if (problems.length > 0) {
   process.exitCode = 1
 } else {
   console.log(`check-docs: OK（配置键 ${tally.keys}、数据源 ${tally.sources}、出站主机 ${tally.hosts}、`
-    + `host ${counts.host} 项 / client ${counts.client} 项，中英 README 与代码一致）`)
+    + `host ${counts.host} 项 / client ${counts.client} 项 / guards ${counts.guards} 项，中英 README 与代码一致）`)
 }
 // 跳过的检查要出声，不然"绿"里混着"这条其实没跑"。
 for (const notice of notices) console.log(`  note: ${notice}`)

@@ -1,6 +1,16 @@
 <!--
 Sync Impact Report
 ==================
+- Version change: 1.0.0 → 1.0.1
+- 变更类型: PATCH（清单同步，非语义修订）
+- 修订内容: VI 章第 4 条里 `npm run check` 的组成清单由 5 项补为 7 项（新增 guards、check-refs
+  两道门禁），并注明以 `package.json#scripts.check` 为准。该清单是"订阅"而非规则本身——
+  门禁集合变了它就该跟着变，否则 `AGENTS.md` 所称的"判定口径的权威"这一份会最先漂。
+- 未变更: 六条原则（含三个 NON-NEGOTIABLE 标记）、附加约束、开发工作流、Governance 规则。
+- 触发来源: specs/003-guardrails-and-doc-hygiene（把两个新门禁接进 `npm run check` 与 CI）。
+- 上一版记录（1.0.0）保留在下方。
+
+## 1.0.0（首次确立）
 - Version change: (none) → 1.0.0
 - 新增原则:
     I.   真值优先，绝不估算 (NON-NEGOTIABLE)
@@ -75,8 +85,8 @@ README、`dshhub.summary`、`docs/`、issue 中出现的数字、端点名、主
   且不依赖真实 `~/.dsh`（测试把 `DSH_HOME` 指向临时目录）。
 - 不写死平台路径；临时目录一律 `join(os.tmpdir(), ...)`；Linux / macOS / Windows 三平台都必须能跑。
 - 新增能力同步新增断言；**修复缺陷必须带能重现该缺陷的回归测试**。
-- `npm run check`（host + client + check-manifest + check-docs + check-submission）
-  全绿是任何改动进入仓库的前提。
+- `npm run check`（host + client + guards + check-manifest + check-docs + check-refs + check-submission，
+  以 `package.json#scripts.check` 为准）全绿是任何改动进入仓库的前提。
 
 **理由**：无构建步骤的项目里，测试是唯一的结构性保障。
 
@@ -111,4 +121,4 @@ README、`dshhub.summary`、`docs/`、issue 中出现的数字、端点名、主
   PATCH＝措辞澄清、错别字等非语义修订。
 - 合规评审：每个提交 / PR 必须核验本宪法；`npm run check` 为机械化门，任何一项为红即不得合并。
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-18
+**Version**: 1.0.1 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-18

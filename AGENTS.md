@@ -9,7 +9,7 @@
 - 宿主半边测试：`node test/host.mjs`
 - 浏览器半边测试：`node test/client.mjs`
 - **提交前提**：`npm run check`（host + client + guards + check-manifest + check-docs + check-refs + check-submission）
-- 造 README 截图：`node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> --lang zh|en --out docs/images`
+- 造 README 图：界面截图 `node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> --lang zh|en --out docs/images`；架构图 `node diagrams/make-diagram-png.mjs --html <Archify 渲染好的.html>`（前置见 `diagrams/README.md`）
 - 发布：`node scripts/release.mjs`（完整流程见 RELEASE.md）
 
 ## Conventions（只写非显然的）
@@ -28,7 +28,7 @@
 
 - `.env*`、`.credentials.yaml`、任何密钥 / Cookie：**不读、不回显、不进日志与错误信息**。这是硬线，不是建议（原则 II）。
 - 已决定不做的形态：**读取其它 CLI 的本地登录态 / 额外强凭据**那三类（GLM 团队模式额外头、Kimi Code 浏览器 Cookie 与 CLI 凭据文件、Codex·Gemini 的 OAuth token 文件）——不要"顺手补上"；README「明确不做的三类」是权威记录。**注意：Cookie 不是禁区**——控制台 Cookie（`BAILIAN_CONSOLE_COOKIE`）是已发布能力。
-- `docs/images/` 下已发布的 13 张图：只能由 `scripts/shots/make-shots.mjs` 生成（README 引用它们，`check-docs.mjs` 第 10 项断言它们存在）。
+- `docs/images/` 里的图**一律脚本生成、不许手改**，但产出方分两类：13 张界面截图出自 `scripts/shots/make-shots.mjs`（中英两套，数据是合成的）；`architecture.png` 出自 `diagrams/make-diagram-png.mjs`，源规格在 `diagrams/`（中英共用一张）。`check-docs.mjs` 第 10 项断言它们存在且非空字节，并点名要求两份 README 都引到结构图。
 - `lib/detect.js` 是纯函数层：网络 / 文件 / cordis 调用不进这个文件。
 
 ## Definition of done

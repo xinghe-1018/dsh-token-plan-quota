@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "dsh-token-plan-quota — 额度徽标插件架构",
+    "output": "dsh-token-plan-quota-architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "badge", "type": "frontend", "label": "额度徽标（胶囊）", "sublabel": "跟随当前模型供应商", "pos": [40, 271], "size": [150, 64] },
+    { "id": "panel", "type": "frontend", "label": "明细浮层面板", "sublabel": "可拖成悬浮小窗", "pos": [40, 457], "size": [150, 60] },
+    { "id": "surfaces", "type": "backend", "label": "只读接口面", "sublabel": "/token-plan-quota/* · 模型工具", "pos": [320, 286], "size": [170, 66] },
+    { "id": "host", "type": "backend", "label": "宿主半边", "sublabel": "lib/index.js · 组卡", "pos": [560, 203], "size": [180, 150], "tag": "双面插件" },
+    { "id": "detect", "type": "backend", "label": "自动检测纯函数层", "sublabel": "零配置 · 零网络", "pos": [300, 55], "size": [190, 58] },
+    { "id": "creds", "type": "security", "label": "凭据解析", "sublabel": "仅进程内 · 不回传", "pos": [700, 38], "size": [190, 58], "tag": "只进不出" },
+    { "id": "ledger", "type": "database", "label": "本实例实测账本", "sublabel": "月份账 + 7 天窗口锚点", "pos": [560, 534], "size": [180, 62], "tag": "标注「实测」" },
+    { "id": "official", "type": "external", "label": "官方余额接口", "sublabel": "DeepSeek · Moonshot · OpenRouter", "pos": [1120, 85], "size": [180, 66], "tag": "官方真值" },
+    { "id": "aliyun", "type": "external", "label": "阿里云 BssOpenApi", "sublabel": "AK/SK 签名 RPC", "pos": [1120, 321], "size": [180, 62], "tag": "官方真值" },
+    { "id": "qwen", "type": "external", "label": "千问控制台数据网关", "sublabel": "Cookie 会话", "pos": [1120, 507], "size": [180, 70], "tag": "非公开 API" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "浏览器 · Web GUI（React 半边）", "wraps": ["badge", "panel"] },
+    { "kind": "region", "label": "DSH 宿主进程（profile: web）", "wraps": ["surfaces", "host", "detect", "creds", "ledger"] },
+    { "kind": "region", "label": "上游供应商（只读端点）", "wraps": ["official", "aliyun", "qwen"] }
+  ],
+  "connections": [
+    { "id": "host-register-surfaces", "from": "host", "to": "surfaces", "label": "注册只读端点", "fromSide": "left", "toSide": "right" },
+    { "id": "surfaces-feed-badge", "from": "surfaces", "to": "badge", "label": "只读快照", "variant": "emphasis", "fromSide": "left", "toSide": "right" },
+    { "id": "badge-open-panel", "from": "badge", "to": "panel", "label": "点开明细", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [115, 396] },
+    { "id": "host-ask-detect", "from": "host", "to": "detect", "label": "识别在用路由", "fromSide": "top", "toSide": "bottom" },
+    { "id": "host-resolve-cred", "from": "host", "to": "creds", "label": "按引用名解析", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "id": "host-write-ledger", "from": "host", "to": "ledger", "label": "写月份账与窗口锚点", "fromSide": "bottom", "toSide": "top", "labelAt": [590, 444] },
+    { "id": "host-call-official", "from": "host", "to": "official", "label": "Bearer GET", "fromSide": "right", "toSide": "left" },
+    { "id": "host-call-aliyun", "from": "host", "to": "aliyun", "label": "AK/SK 签名 RPC", "fromSide": "right", "toSide": "left" },
+    { "id": "host-call-qwen", "from": "host", "to": "qwen", "label": "Cookie 取 secToken", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelSegment": 1 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "取数与口径", "items": ["有官方接口就报真值：DeepSeek /user/balance、Moonshot、OpenRouter credits、阿里云 BssOpenApi", "千问 Token Plan 有额度却没公开接口，走控制台数据网关（Cookie 会话）", "没有官方分母的供应商只报标注「实测」的本实例窗口，不折算 Credits"] },
+    { "dot": "rose", "title": "凭据边界", "items": ["Bearer / AK-SK / Cookie 只在宿主进程内解析", "只读路由与模型工具永不回传密钥", "不读其它 CLI 的本地登录态（明确不做的三类）"] },
+    { "dot": "emerald", "title": "工程门禁", "items": ["零第三方依赖、无构建步骤", "host 379 项 + client 207 项 + guards 80 项，外加 4 个自检脚本", "CI：node 20 / 22 × ubuntu、windows、macos"] }
+  ]
+}

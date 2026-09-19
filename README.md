@@ -120,6 +120,21 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 并且内置了**阿里云 / 千问 Token Plan 的控制台余量契约**——那一家有额度却没有公开接口，正是本插件当初被做
 出来的原因。要费用报表请选前者；要"我正在用的这家还剩多少"，选这个。
 
+## 结构总览
+
+![架构示意图：浏览器半边、DSH 宿主进程、上游供应商三块怎么分工](docs/images/architecture.png)
+
+一张图看完半边怎么分工：**浏览器半边**（`lib/client.js`）在输入框工具行渲染跟随当前模型的徽标，
+点开是明细面板；**宿主半边**（`lib/index.js`）挂 `llm/stream` 记本实例账本、注册只读路由与
+`token_plan_quota` 工具、按零配置检测出的在用路由去查上游；**上游**按有没有官方接口分两类——
+有官方接口的报真值（DeepSeek / Moonshot / OpenRouter / 阿里云费用中心），千问 Token Plan 走控制台
+数据网关（Cookie 会话）。凭据只进不出：Bearer / AK-SK / Cookie 只在宿主进程内解析，
+只读路由与模型工具永不回传。
+
+这张图不是手绘的：源规格在仓库的 `diagrams/` 里，再生成方式与前置条件见
+[`diagrams/README.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/diagrams/README.md)
+（该目录不随 npm 包发布）。
+
 ## 零配置自动检测
 
 宿主在用的供应商路由就是**唯一事实来源**，所以你不用写 `sources`，也不用手填 `providers`——历史上正是这两个

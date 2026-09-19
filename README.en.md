@@ -135,6 +135,23 @@ provider**, and it ships the **Aliyun / Qwen Token Plan console-quota contract**
 no public API, which is precisely why this plugin exists. Want a cost dashboard? Take the former. Want "how much
 is left on the provider I am using right now"? Take this one.
 
+## Architecture at a glance
+
+![Architecture diagram: the browser half, the DSH host process, and the upstream vendors](docs/images/architecture.png)
+
+One picture of how the halves divide the work: the **browser half** (`lib/client.js`) renders the chip in
+the input tool row that follows the current model and opens into the detail panel; the **host half**
+(`lib/index.js`) wraps `llm/stream` to keep this instance's ledger, registers the read-only routes and the
+`token_plan_quota` tool, and queries upstream along the routes zero-configuration detection found;
+**upstream** splits by whether an official endpoint exists - official truth where there is one
+(DeepSeek / Moonshot / OpenRouter / Aliyun Billing), and the Qwen Token Plan console data gateway
+(cookie session) where there is not. Credentials only go in: Bearer / AK-SK / cookie are resolved inside
+the host process, and neither the read-only routes nor the model tool ever send them back.
+
+The diagram is generated, not hand-drawn: its source spec lives in the repository's `diagrams/`, and
+[`diagrams/README.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/diagrams/README.md)
+covers regeneration and prerequisites (that directory does not ship with the npm package).
+
 ## Zero-configuration detection
 
 The provider routes live in your harness are the **single source of truth** for which sources to open, so you

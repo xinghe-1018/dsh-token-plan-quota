@@ -19,7 +19,7 @@
 - 对外描述（`README.md` / `README.en.md` / `dshhub.summary` / issue 文字）必须与代码同源，且在同一次改动内完成——`check-docs.mjs` 会拿去和代码核。
 - `docs/` 是 `package.json#files` 白名单成员，**会随 npm 包发布**。中间产物（`.shots-work/`、`.scratch/`）只能待在 `docs/` 之外。
 - 数字口径：要么官方接口真值，要么明确标注「实测」的本实例窗口；不折算 Credits、不估算余量；**没有官方分母就不出现百分比**（原则 I）。
-- `dshhub.permissions.network` 的声明集合必须等于实际出站主机集合，新增供应商要同步（原则 V）。
+- `dshhub.permissions.network` 的声明集合必须等于**插件运行时**的实际出站主机集合，新增供应商要同步（原则 V）；开发流水线的出站（如渲染架构图时查看器请求的 CDN 字体）不算运行时，**不进**这个清单。
 - **"不做"的精确边界**是**读取其它 CLI 的本地登录态 / 额外强凭据**（见 README「明确不做的三类」）；
   **Cookie 是已发布能力**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`）。**A/B/C 档位描述"需要什么形态 /
   有没有官方端点"，不是做与不做的判定**——引用档位时不许合并、不许当结论用。

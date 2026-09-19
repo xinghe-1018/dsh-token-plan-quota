@@ -398,14 +398,14 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 379 项，离线
 node test/client.mjs               # 207 项，假 React/DOM/fetch
-node test/guards.mjs               # 80 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/guards.mjs               # 94 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项 + guards 80 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项 + guards 94 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

@@ -153,3 +153,43 @@ export function classifyTarget(raw) {
   }
   return { kind: 'relative', target }
 }
+
+/**
+ * 判断一份文本是否**真的引用了**某个仓库内目标（第 10 项的结构图断言用）。
+ *
+ * 为什么要单独一个函数、而且要覆盖四种写法：初版断言只扫行内 markdown 图片，
+ * 于是 `<img src="…">`、引用式定义、绝对 GitHub 链接三种**无害写法**被判红
+ * （004 的 Lens 1 端到端实测：临时副本 exit 0→1，且报错文案还说"没有引用"）。
+ * 假红比没有检查更坏——它会训练人忽略红灯，所以这里按"**引用**"的语义收全。
+ *
+ * 三种被接受的形态：
+ *  - 仓库内相对路径：归一化后**等于**目标（`./docs/…`、带 title、尖括号都归一到同一串）
+ *  - 对外链接（含绝对 GitHub 链接）：URL 的 **path 以目标结尾**——指向同一个文件的远端写法
+ *  - HTML 的 `href=` 与 `src=` 两种属性（`extractLinkTargets` 只认 `href`，图片走的是 `src`）
+ *
+ * 两种刻意**不算**引用的形态：
+ *  - 代码围栏 / 行内代码里的示例（与第 4 项、第 4b 项同一口径：那是文档，不是声明）
+ *  - HTML 注释里的引用（`<!-- … -->`）——它不渲染，等于没引用（004 的 Lens 1 实测过这条绕过）
+ *
+ * @param {string} text Markdown 原文
+ * @param {string} wanted 归一化后的仓库内相对路径，例如 `docs/images/architecture.png`
+ * @returns {boolean}
+ */
+export function mentionsTarget(text, wanted) {
+  const stripped = stripCode(text).replace(/<!--[\s\S]*?-->/g, '')
+  // 复用 `extractLinkTargets`（内联 / 徽标式 / 引用式 / `href=`）再补一条 `src=`：
+  // 图片走的是 `src`，而那个函数的 HTML 分支只认 `href`——这是 004 的 Lens 1 实测出来的缺口。
+  const raws = [...extractLinkTargets(stripped), ...[...stripped.matchAll(/src="([^"]+)"/g)].map(m => m[1])]
+  return raws.some(raw => {
+    const decorated = stripTarget(raw)
+    if (decorated === '') return false
+    if (/^[a-z][a-z0-9+.-]*:/i.test(decorated) || decorated.startsWith('//')) {
+      try {
+        const url = new URL(decorated.startsWith('//') ? 'https:' + decorated : decorated)
+        return url.pathname.endsWith('/' + wanted)
+      } catch { return false }
+    }
+    const { kind, target } = classifyTarget(raw)
+    return kind === 'relative' && target === wanted
+  })
+}

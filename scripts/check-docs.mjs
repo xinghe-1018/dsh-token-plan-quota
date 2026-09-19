@@ -17,14 +17,14 @@
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
  *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）；
- *  10. 十三张截图（中文 7 张 / 英文 6 张）真实存在且 README 已引用，合成数据仍符合产品口径。
+ *  10. 十三张截图（中文 7 张 / 英文 6 张）+ 一张结构图真实存在且 README 已引用，合成数据仍符合产品口径。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
-import { classifyTarget, extractImageTargets, extractLinkTargets } from './link-targets.mjs'
+import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const read = file => readFileSync(join(root, file), 'utf8')
@@ -351,14 +351,12 @@ for (const rel of textFiles) {
   }
   /* 结构图必须**两侧都引到**。上面那条只查数量下限（英文套有意比中文套少一张），
    * 单侧漏加一张是抓不到的——003 把这一类记为已知边界，004 用点名断言收口。
-   * 比照 `classifyTarget` 归一化后再比，避免写法不同（`./docs/...`）造成假红。 */
+   * 判"引用"用 `mentionsTarget`：归一化相对路径、`<img src>`、引用式定义、绝对 GitHub 链接
+   * 都算引用（初版只认行内图片，会把三种无害写法判红——004 的 Lens 1 实测），
+   * 代码围栏里的示例与 HTML 注释里的引用不算。行为矩阵常驻 `test/guards.mjs`。 */
   const DIAGRAM = 'docs/images/architecture.png'
   for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-    const referenced = extractImageTargets(text).some(raw => {
-      const { kind, target } = classifyTarget(raw)
-      return kind === 'relative' && target === DIAGRAM
-    })
-    if (!referenced) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
+    if (!mentionsTarget(text, DIAGRAM)) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
   }
   try {
     const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')

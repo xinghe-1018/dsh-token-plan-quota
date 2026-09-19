@@ -34,8 +34,18 @@ import { Cdp, launchEdge } from '../scripts/shots/cdp.mjs'
 /** 图的根节点带 Archify 自己的属性，比 `svg` 更精确（查看器工具栏里也有 svg 图标）。 */
 const SVG_SELECTOR = 'svg[data-quality-profile]'
 
-/** 空白图的体积下限：2676×1336 的纯色 PNG 压出来只有几 KB，20 KB 足以把"截到一张白图"挡掉。 */
-const MIN_BYTES = 20_000
+/**
+ * 空白图的体积下限。**这个数不是猜的**：004 的 Lens 1 在真实 Chromium 上对同一裁剪区实测——
+ * 纯白 13,198 B、只剩背景的"真·白图"19,304 B、入库的真图 186,019 B。初版取 20,000 B，
+ * 距离白图只差 696 B，等于没设门。现在取 60,000 B：对白图有 3.1× 余量、对真图有 3.1× 余量。
+ * 若图将来确实变简单而低于此值，**按新基线重新校准这个常量**，不要直接删掉这道门。
+ */
+const MIN_BYTES = 60_000
+
+/** SVG 里 `<text>` 的数量下限——体积挡不住"截到了别的元素 / 标签全丢"这一类。
+ *  004 的 Lens 1 实测：注入第二个 `svg[data-quality-profile]`（标签全丢）后产物 96,856 B，
+ *  照样越过了体积下限。真图有几十个 `<text>`，这里取 8 只是"这确实是一张渲染出来的图"的下限。 */
+const MIN_TEXT = 8
 
 /** 体积上限：对齐 `docs/images/` 现有兄弟文件 106–342 KB 的量级，别让 README 多背一张 1 MB 的图。 */
 const MAX_BYTES = 400_000
@@ -65,10 +75,17 @@ function parseArgs(argv) {
   return out
 }
 
+/** PNG 文件签名。 */
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** 只判签名，不解析结构——用来决定"能不能覆盖这个已存在的文件"。 */
+function isPng(buffer) {
+  return buffer.length >= 8 && buffer.subarray(0, 8).equals(PNG_MAGIC)
+}
+
 /** 读 PNG 的 IHDR 宽高；顺带验签名，坏文件当场失败而不是写进仓库。 */
 function pngSize(buffer) {
-  const magic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  if (!buffer.subarray(0, 8).equals(magic)) throw new Error('产物不是 PNG（签名不符）')
+  if (!isPng(buffer)) throw new Error('产物不是 PNG（签名不符）')
   if (buffer.subarray(12, 16).toString('latin1') !== 'IHDR') throw new Error('产物不是 PNG（缺 IHDR）')
   if (buffer.subarray(-8, -4).toString('latin1') !== 'IEND') throw new Error('产物不是 PNG（缺 IEND，可能被截断）')
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
@@ -82,6 +99,14 @@ async function main() {
   if (!existsSync(html)) throw new Error(`找不到已渲染的 HTML：${html}（先用 Archify 的 deliver 生成它）`)
   const htmlBytes = statSync(html).size
   if (htmlBytes <= 0) throw new Error(`HTML 是空文件：${html}`)
+
+  // `--out` 由本机开发者手输，没有远程触发面；但它曾经能**静默覆盖任意文件**：
+  // `--out README.md` 手滑就把一个已跟踪文件替换成 PNG 二进制，未跟踪的文件更不可恢复
+  // （004 的 Lens 2 F1）。两道守卫：尾缀必须是 .png；目标已存在且不是 PNG 就直接拒绝。
+  if (!out.toLowerCase().endsWith('.png')) throw new Error(`--out 必须以 .png 结尾：${out}`)
+  if (existsSync(out) && !isPng(readFileSync(out))) {
+    throw new Error(`目标已存在且不是 PNG，拒绝覆盖（怕把文本/配置换成位图）：${out}`)
+  }
 
   const url = pathToFileURL(html).href
   console.log(`源 HTML : ${relative(process.cwd(), html)} (${htmlBytes} B)`)
@@ -104,6 +129,14 @@ async function main() {
       await page.waitFor('document.fonts && document.fonts.status === "loaded"', { label: '字体就绪', timeoutMs: 8000 })
     } catch {
       console.log('提示    : 字体未在 8s 内就绪，按系统字体栈继续（离线常见，不影响结构）')
+    }
+
+    // 体积只能证明"有内容"，证明不了"是这张图"——所以先核一遍图上真的有字。
+    const textCount = await page.evaluate(`document.querySelector(${JSON.stringify(SVG_SELECTOR)}).querySelectorAll('text').length`)
+    console.log(`SVG 文本 : ${textCount} 个 <text>（下限 ${MIN_TEXT}）`)
+    if (!(textCount >= MIN_TEXT)) {
+      throw new Error(`选中的 SVG 只有 ${textCount} 个 <text>（下限 ${MIN_TEXT}）——`
+        + '多半截到了别的元素或标签全丢，已拒绝继续')
     }
 
     rect = await page.rectOf(SVG_SELECTOR)

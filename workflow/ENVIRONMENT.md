@@ -43,5 +43,5 @@
 
 ## 门禁耗时
 
-- `npm run check` 在本机约 **6 秒**（host 379 项 + client 207 项 + guards 32 项 + 四个自检：
+- `npm run check` 在本机约 **6 秒**（host 379 项 + client 207 项 + guards 94 项 + 四个自检：
   manifest / docs / refs / submission）。这就是 pre-commit 钩子可以直接跑全套、不必挑子集的依据。

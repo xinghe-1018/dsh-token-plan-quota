@@ -19,7 +19,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
-import { classifyTarget, extractImageTargets, extractLinkTargets, normalizeTarget } from '../scripts/link-targets.mjs'
+import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -228,6 +228,32 @@ ok('抽取 图片文字含方括号', extractImageTargets('![shot [1]](docs/a.pn
 ok('抽取 缩进的引用式定义', extractLinkTargets('  [r]: docs/a.md').includes('docs/a.md'))
 // 散文里偶然出现的 `](` 不算链接（左侧同一行内没有 `[`）。
 ok('抽取 散文中孤立 ]( 不算链接', extractLinkTargets('随手写 ](x) 这种').length === 0)
+
+/* ---------- 四之二、mentionsTarget：判"是否真的引用了某个仓内目标" ---------- */
+
+// 为什么要有这一组：第 10 项的结构图断言用它。初版断言只扫行内 markdown 图片，于是
+// `<img src>`、引用式定义、绝对 GitHub 链接三种**无害写法**被判红（004 的 Lens 1 端到端实测：
+// 临时副本 `exit 0→1`，而 main 上全绿）。假红比没有检查更坏——它训练人忽略红灯，
+// 所以"应当放行"的这一半跟"应当报"的那一半一样重要。
+const DIAGRAM = 'docs/images/architecture.png'
+const mentionsDiagram = text => mentionsTarget(text, DIAGRAM)
+ok('引用 内联图片', mentionsDiagram('![x](docs/images/architecture.png)'))
+ok('引用 带 title', mentionsDiagram('![x](docs/images/architecture.png "t")'))
+ok('引用 ./ 前缀', mentionsDiagram('![x](./docs/images/architecture.png)'))
+ok('引用 尖括号包裹', mentionsDiagram('![x](<docs/images/architecture.png>)'))
+ok('引用 引用式定义', mentionsDiagram('![x][r]\n[r]: docs/images/architecture.png'))
+ok('引用 HTML img[src]（`extractLinkTargets` 只认 href，这里是补上的那一条）',
+  mentionsDiagram('<img src="docs/images/architecture.png" alt="x">'))
+ok('引用 HTML a[href]', mentionsDiagram('<a href="docs/images/architecture.png">x</a>'))
+ok('引用 绝对 GitHub 链接', mentionsDiagram('![x](https://github.com/o/r/blob/main/docs/images/architecture.png)'))
+ok('引用 绝对链接带 query', mentionsDiagram('![x](https://github.com/o/r/raw/main/docs/images/architecture.png?raw=true)'))
+// 下面这一半是"不算引用"：它必须**继续不算**，否则断言可以被无渲染的写法满足。
+ok('引用 围栏里的示例不算', mentionsDiagram('```\n![x](docs/images/architecture.png)\n```') === false)
+ok('引用 HTML 注释里的不算（004 的 Lens 1 实测过这条绕过）',
+  mentionsDiagram('<!-- ![x](docs/images/architecture.png) -->') === false)
+ok('引用 别的文件名不算', mentionsDiagram('![x](docs/images/architecture-old.png)') === false)
+ok('引用 正文提到路径但没有链接语法不算', mentionsDiagram('见 docs/images/architecture.png 这张图') === false)
+ok('引用 远端同尾不同路径不算', mentionsDiagram('![x](https://example.com/docs/images/other.png)') === false)
 
 /* ---------- 五、入口判定不得静默失效 ---------- */
 

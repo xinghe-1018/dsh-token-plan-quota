@@ -303,7 +303,9 @@ for (const rel of textFiles) {
 /* 10) 截图物料：占位块必须已被真图取代，图必须真实存在且非零字节。
  *     截图是合成数据生成的（scripts/shots/），所以这里同时跑一次 fixture 自检——
  *     产品口径（实测卡不带百分比、百分比与 remaining/total 自洽、键 ⊆ publicCard 白名单、
- *     英文套不混中文）漂了就红，而不是悄悄拍出一张宿主永远发不出的图。 */
+ *     英文套不混中文）漂了就红，而不是悄悄拍出一张宿主永远发不出的图。
+ *     架构图与截图套不同源（它由 diagrams/ 的源规格产出、两种语言共用一张），
+ *     所以除了下面这条存在性清单，还有一条**点名**的双语引用断言。 */
 {
   const images = [
     'docs/images/badge-follows-model.gif',
@@ -319,6 +321,8 @@ for (const rel of textFiles) {
     'docs/images/en/cookie-fallback-measured.png',
     'docs/images/en/state-deepseek-balance.png',
     'docs/images/en/state-token-plan-credits.png',
+    // 架构图不属于中英两套截图：它是全仓库唯一的结构图，两侧引同一张（产出方见 AGENTS.md）。
+    'docs/images/architecture.png',
   ]
   for (const rel of images) {
     const abs = join(root, rel)
@@ -344,6 +348,17 @@ for (const rel of textFiles) {
       else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
       else if (kind === 'relative' && !existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
     }
+  }
+  /* 结构图必须**两侧都引到**。上面那条只查数量下限（英文套有意比中文套少一张），
+   * 单侧漏加一张是抓不到的——003 把这一类记为已知边界，004 用点名断言收口。
+   * 比照 `classifyTarget` 归一化后再比，避免写法不同（`./docs/...`）造成假红。 */
+  const DIAGRAM = 'docs/images/architecture.png'
+  for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
+    const referenced = extractImageTargets(text).some(raw => {
+      const { kind, target } = classifyTarget(raw)
+      return kind === 'relative' && target === DIAGRAM
+    })
+    if (!referenced) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
   }
   try {
     const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')

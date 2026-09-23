@@ -309,7 +309,8 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 **表外的键是内置预设专用，手写别照抄**：`builder`、`apiPrefix`、`consoleSite`、`gatewayAction`、`gatewayProduct`、
 `infoUrl`、`secTokenRef`、`dashboardURL`、`regionConfigKey`、`errorHints`、`keywords` 走的是各家特定的签名/CSRF/
-信封流程，只对相应预设成立。特别地：面板里的**多行窗口**（「5 小时」+「每周」两行）目前**只有
+信封流程，只对相应预设成立。特别地：面板里的**多行窗口**（当前账期那一行 +「5 小时」；账期是
+「本月」还是「7 天」取决于上游这个账号真回了哪个读数）目前**只有
 `token-plan-console` 会产生**，手写条目一条只有一个读数；想显示两个窗口，就写两条源。
 实测窗口用 `{"kind":"window","providers":["my-provider"],"label":"我的窗口","windowDays":30}`，
 或简写 `window:<provider>`。接入新厂家的完整核对流程见 [`docs/adding-a-provider.md`](docs/adding-a-provider.md)。
@@ -317,6 +318,9 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 #### 卡片空着、又没报错，按这个顺序查
 
 1. `GET /token-plan-quota/probe?source=<id>`（或临时开 `"debug": true`）——先看上游**实际**回了哪些字段名；
+   零配置安装里源是自动检测出来的、不写在配置里，`probe` 查不到时会**补跑一次检测**再查（2026-09-23 之前
+   它对这类源永远回 `unknown-source`，等于把最有用的诊断入口关掉了）。这次「余量不见了」就是这么定位的：
+   `usage` 实际回的是 `per1MonthPercentage`，而代码只认 `per1Week` / `per5Hour`。
 2. 对照上面那张权威键表逐字核对键名：**认不出的键不报错、只是没作用**，表现就是卡片空着而不是启动失败；
 3. `fields` 的路径是否真命中了这份响应（信封加不加 `data` 见过两种），`derive` 引用的名字是否都取到了数
    ——任一操作数缺失就整条空；
@@ -381,7 +385,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 379 项，离线
+node test/host.mjs                 # 395 项，离线
 node test/client.mjs               # 207 项，假 React/DOM/fetch
 node test/guards.mjs               # 80 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
@@ -390,7 +394,7 @@ node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项 + guards 80 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 395/207 项 + guards 80 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

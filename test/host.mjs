@@ -14,7 +14,7 @@ import { __internals, apply, observeStream, parsePolicyKey } from '../lib/index.
 
 const {
   DEFAULTS, PRESETS,
-  effectiveConfig, normalizeSources,
+  effectiveConfig, normalizeSources, findProbeSource,
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
   rpcEnvelopeOk, httpEnvelopeOk, parseEnvelope, pickPath, pickFirst, pickString, toNumber, toEpochMs,
   buildListCard, buildSingleCard, evalDerive, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
@@ -404,6 +404,39 @@ const fiveOnlyPrimary = finalizeCard(buildConsoleCard(consolePreset, {
 }, { standard: { five_hour: 200 } }, { specCode: 'standard' }))
 check('只有 5 小时窗口时它升为主计量', [fiveOnlyPrimary.meters.length, fiveOnlyPrimary.total, fiveOnlyPrimary.remaining], [1, 200, 150])
 check('主计量决定顶层重置时刻', fiveOnlyPrimary.expiresAt, weekReset)
+
+/* 2026-09-23 实测：控制台把 Token Plan 的账期改成**按月** —— 同一个源的 usage 只剩
+ * per1MonthPercentage / per1MonthResetTime，quota-config 的档位额度字段也从 weekly 改名
+ * monthly（这条卡于是整张没有数字，徽标只剩实测卡 —— 用户报"看不到余量"的真因）。 */
+const monthReset = Date.parse('2026-09-30T00:00:00Z')
+const monthOnly = finalizeCard(buildConsoleCard(consolePreset, {
+  per1MonthPercentage: 0.010915532622222222, per1MonthResetTime: monthReset,
+}, {
+  standard: { monthly: 45000, five_hour: 3000 },
+  pro: { monthly: 180000, five_hour: 12000 },
+  addon_quota: { extrabundle: 20000 },
+}, { specCode: 'standard', remainingDays: 68, endTime: 1796054400000 }))
+check('只有月度读数 → 出一条月度计量', monthOnly.meters.map(m => m.key), ['monthly'])
+check('分母取 quota[specCode].monthly（这个形态里没有 weekly 键）', monthOnly.total, 45000)
+check('剩余 = 45000×(1−1.0915533%)', Math.round(monthOnly.remaining), 44509)
+check('顶层重置时刻取 per1MonthResetTime', monthOnly.expiresAt, monthReset)
+check('已用比例直接来自官方比例（不估算）', Math.round(monthOnly.usedPercent * 100) / 100, 1.09)
+check('meters[0] 与顶层同源（前端只渲染 meters.slice(1)）',
+  [monthOnly.meters[0].remaining, monthOnly.meters[0].total], [monthOnly.remaining, monthOnly.total])
+check('月度形态下，档位里的 five_hour 仍只是配置噪声', monthOnly.extra.fiveHourConfiguredNoReading, true)
+check('附加包只报数，不并进分母（宪法原则 I：不折算）', monthOnly.extra.addonTotal, 20000)
+// 两种账期同时回读数：账期更长的那个才是"这个套餐的额度"，必须排在主计量位。
+const monthAndWeek = finalizeCard(buildConsoleCard(consolePreset, {
+  per1MonthPercentage: 0.5, per1MonthResetTime: monthReset,
+  per1WeekPercentage: 0.25, per1WeekResetTime: weekReset,
+}, { standard: { monthly: 1000, weekly: 4000 } }, { specCode: 'standard' }))
+check('月度与周度都在时，月度排在前', monthAndWeek.meters.map(m => m.key), ['monthly', 'weekly'])
+check('顶层跟月度而不是周度', [monthAndWeek.total, monthAndWeek.remaining, monthAndWeek.expiresAt], [1000, 500, monthReset])
+// 有读数、但档位额度字段名又不认识：空因必须指向"缺分母"，不是"没有窗口"。
+const monthNoTotal = finalizeCard(buildConsoleCard(consolePreset, { per1MonthPercentage: 0.3 }, {}, {}))
+check('有月度读数没分母 → 计量在、顶层不出数', [monthNoTotal.meters.map(m => m.key), monthNoTotal.total, monthNoTotal.remaining], [['monthly'], undefined, undefined])
+ok('空因说清是缺档位额度（引导核对字段名）',
+  typeof monthNoTotal.emptyReason === 'string' && monthNoTotal.emptyReason.includes('档位额度'), monthNoTotal.emptyReason)
 // 窗口一个都没有 → 明确空因，不出幽灵行。
 const noWindows = finalizeCard(buildConsoleCard(consolePreset, {}, {}, {}))
 check('没有任何窗口 → 无计量并给空因', [noWindows.meters.length, typeof noWindows.emptyReason], [0, 'string'])
@@ -417,6 +450,27 @@ check('publicCard 透传 meters', publicCard(consoleCard).meters.length, 2)
 // 没配 Cookie → NoCredentials 卡（不联网）。
 const noCookie = await querySource(consolePreset, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
 check('缺 Cookie → NoCredentials', noCookie.errorCode, 'NoCredentials')
+
+/* probe 的源查找（同一次改动里修的盲点）：零配置安装里，源是 computeStatus 跑
+ * applyAutoDetect 时才挂到 config 上的，而路由每次从 getConfig() 拿新配置 —— 之前直接查
+ * 必然 unknown-source，于是"能看上游字段集"的唯一入口，对唯一需要它的源永远 404。 */
+{
+  let detectRuns = 0
+  const cfg = { sources: [] }
+  const fakeDetect = async (target) => {
+    detectRuns += 1
+    target.sources.push({ id: 'token-plan-console', builder: 'token-plan-console' })
+  }
+  const found = await findProbeSource(cfg, {}, 'token-plan-console', fakeDetect)
+  check('配置里没有的源 → 补跑一次检测再查', [detectRuns, found?.builder], [1, 'token-plan-console'])
+  const again = await findProbeSource(cfg, {}, 'token-plan-console', fakeDetect)
+  check('第二次直接命中，不再重复跑检测', [detectRuns, again?.id], [1, 'token-plan-console'])
+  const direct = await findProbeSource({ sources: [{ id: 'deepseek-balance' }] }, {}, 'deepseek-balance',
+    async () => { throw new Error('配置里已有的源不该触发检测') })
+  check('文件里写明的源仍走直查', direct?.id, 'deepseek-balance')
+  check('补跑检测后仍查不到 → undefined（路由照旧回 404）',
+    await findProbeSource({ sources: [] }, {}, 'nope', async () => {}), undefined)
+}
 
 // 回环全链路：info.json 自动取 sec_token → usage + quota-config + subscription 三次 POST。
 import { createServer as createServerB } from 'node:http'

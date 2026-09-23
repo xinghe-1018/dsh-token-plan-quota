@@ -350,8 +350,9 @@ shows up as "the card stays empty", not as a failed start. This table is the aut
 **Keys outside this table are reserved for built-in presets - do not copy them into a hand-written entry**:
 `builder`, `apiPrefix`, `consoleSite`, `gatewayAction`, `gatewayProduct`, `infoUrl`, `secTokenRef`,
 `dashboardURL`, `regionConfigKey`, `errorHints`, `keywords` all drive vendor-specific signing / CSRF / envelope
-flows that only hold for the matching preset. In particular, **multi-row window cards** (the "5 hour" + "weekly"
-pair in the panel) are produced **only by `token-plan-console`**; one hand-written entry yields one reading, so
+flows that only hold for the matching preset. In particular, **multi-row window cards** (the current billing-period
+row plus "5 hour" - monthly or 7-day, depending on which reading the upstream returns for this account) are produced
+**only by `token-plan-console`**; one hand-written entry yields one reading, so
 write two sources to show two windows. For a measured window use
 `{"kind":"window","providers":["my-provider"],"label":"My window","windowDays":30}` or the
 `window:<provider>` shorthand. The full onboarding checklist is in
@@ -360,7 +361,10 @@ write two sources to show two windows. For a measured window use
 #### The card is empty and nothing errored - triage in this order
 
 1. `GET /token-plan-quota/probe?source=<id>` (or temporarily set `"debug": true`) - look at which field names the
-   upstream **actually** returned;
+   upstream **actually** returned. Sources added by auto-detection are not in the config file, so `probe` now
+   **re-runs detection** when its first lookup misses (before 2026-09-23 it always answered `unknown-source` for
+   exactly those sources, which switched off the most useful diagnostic). That is how the missing Qwen quota was
+   traced: `usage` actually returns `per1MonthPercentage`, while the code only knew `per1Week` / `per5Hour`;
 2. Check every key against the authoritative table above: **an unrecognised key does not fail, it just does
    nothing**, which is exactly why the symptom is an empty card rather than a failed start;
 3. Confirm the `fields` paths really hit this response (the same API has shipped with and without a `data`
@@ -440,7 +444,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 379 assertions, offline
+node test/host.mjs                  # 395 assertions, offline
 node test/client.mjs                # 207 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 80 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
@@ -450,7 +454,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 379/207 tests plus 80 guards assertions" - and checks them
+config table, 8 sources, 8 declared outbound hosts, 395/207 tests plus 80 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

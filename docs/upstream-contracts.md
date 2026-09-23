@@ -12,7 +12,7 @@
 | 平台 | 档 | 端点 | 鉴权 | 关键字段（含信封路径） | 验证到什么程度 |
 |---|---|---|---|---|---|
 | DeepSeek | A | `GET https://api.deepseek.com/user/balance` | Bearer `DEEPSEEK_API_KEY` | `balance_infos[]`：`total_balance` / `granted_balance` / `topped_up_balance`，多币种优先 CNY | ✅ 真实 Key 实测（本机长期在跳数） |
-| 千问 Token Plan | B | `POST https://cs-data.qianwenai.com/data/api.json?action=BroadScopeAspnGateway`（内层 `tokenplan/personal/api/v2` 的 `usage` / `quota-config` / `subscription`） | 登录 Cookie 会话；`sec_token` 由 `GET https://platform-home.qianwenai.com/tool/user/info.json` 自动取 | `usage.per1WeekPercentage` / `per1WeekResetTime`（**个人版 standard 只回这两个**）；`quota-config[specCode].weekly` / `five_hour`；`subscription.specCode` / `remainingDays` / `endTime` | ✅ 真账号实测（2026-09-06）。契约按其前端包 `shared.js` 逆向 |
+| 千问 Token Plan | B | `POST https://cs-data.qianwenai.com/data/api.json?action=BroadScopeAspnGateway`（内层 `tokenplan/personal/api/v2` 的 `usage` / `quota-config` / `subscription`） | 登录 Cookie 会话；`sec_token` 由 `GET https://platform-home.qianwenai.com/tool/user/info.json` 自动取 | `usage.per1MonthPercentage` / `per1MonthResetTime`（**2026-09-23 实测：账期已改成按月，只回这两个**；旧套餐回 `per1WeekPercentage` / `per1WeekResetTime`，两条都读）；`quota-config[specCode].monthly` / `weekly` / `five_hour`，另有 `addon_quota.extrabundle`；`subscription.specCode`（lite/standard/pro/essential）/ `remainingDays` / `endTime` | ✅ 真账号实测（2026-09-06 周度形态、2026-09-23 月度形态，均由 `probe`/debug 核对字段集）。契约按其前端包 `shared.js` 逆向 |
 | Moonshot / Kimi 开放平台 | A | `GET https://api.moonshot.cn/v1/users/me/balance`（大陆，CNY）<br>`GET https://api.moonshot.ai/v1/users/me/balance`（国际，USD） | Bearer | 信封 `{code, status, data}`，**先判 `code==0 && status==true`**；`data.available_balance` / `cash_balance`（可负＝欠款）/ `voucher_balance` | ⚠️ 端点存在性实测（2026-09-06 两区均回 `401 invalid_authentication_error`）；字段名有官方文档与第三方实现背书，**未用真 Key 核对** |
 | OpenRouter | A | `GET https://openrouter.ai/api/v1/credits` | Bearer `sk-or-v1-…` | `data.total_credits` / `data.total_usage`，**余额＝差额**（两版信封都见过：`data.*` 与裸顶层） | ⚠️ 同上：存在性实测（`401 {"error":{"message":"User not found."}}`），未用真 Key 核对 |
 | OpenRouter（key 级限额） | A | `GET https://openrouter.ai/api/v1/key` | 同上 | `data.limit` / `limit_remaining` / `usage_daily\|_weekly\|_monthly` / `limit_reset` / `rate_limit.{requests,interval}` | 未接入：需要"一源第二次请求"这个架构件（见 ROADMAP T1.4b） |
@@ -33,7 +33,7 @@
 | 枚举当数字 | 智谱 `unit` 3/6/1/5 | 声明 `unitEnum` 映射表，未识别的值**不猜**，落进 debug 骨架 |
 | 信封先判再取 | Moonshot `code==0 && status==true`；智谱 `code:200, success`；OpenRouter `error.message` | 复用 `parseEnvelope` + `httpEnvelopeOk`；4xx 额外捞 `error.message` 进卡片 |
 | 数字可能是字符串 | Codex `individual_limit.*`、各家 `0` | `toNumber` 剥逗号/空白；**`0` 是真值不是缺失**（有单测锁） |
-| **配置 ≠ 额度** | 千问 `quota-config` 给每个档位都躺着 `five_hour=3000`，但个人版 `usage` 只回 `per1Week*` | **一条计量只在该窗口真回读数时才存在**；孤立配置值只记 `extra.fiveHourConfiguredNoReading` |
+| **配置 ≠ 额度** | 千问 `quota-config` 给每个档位都躺着 `five_hour=3000`，但账号的 `usage` 只回当前账期那一个比例（2026-09-06 是 `per1Week*`，2026-09-23 起是 `per1Month*`） | **一条计量只在该窗口真回读数时才存在**；孤立配置值只记 `extra.fiveHourConfiguredNoReading` |
 | 别拿宿主 DOM 属性做交互判定 | `InputBar.tsx` 源码里的 `data-composer-card` 在**线上产物里不存在** | 交互语义自己定（明细=常驻小窗，不做点外面关闭），不依赖宿主实现细节 |
 
 ## 参考实现（都是 MIT，引用契约请注明出处）
@@ -53,7 +53,10 @@
 
 - `sec_token` 全自动（`tool/user/info.json` → `data.secToken`），手配 `BAILIAN_CONSOLE_SECTOKEN` 只作兜底；
 - `consoleSite=QIANWENAI`（百炼控制台是 `BAILIAN_ALIYUN`）；
-- 剩余 ＝ `quota[specCode].weekly × (1 − per1WeekPercentage)`，与订阅页「剩余量/总额度」同源；
+- 剩余 ＝ `quota[specCode].monthly × (1 − per1MonthPercentage)`，与订阅页「剩余量/总额度」同源；
+  **2026-09-23 起账期改成按月**（`usage` 只回 `per1Month*`，档位额度字段从 `weekly` 改名 `monthly`），
+  代码同时保留 `weekly` 口径回退，旧套餐不受影响。`addon_quota.extrabundle` **不并进分母**——
+  官方没说明它与档位额度的关系，折进去就是估算（原则 I）；
 - Cookie 一般能用几周（响应里有 `sessionExpireTimeStamp`），过期后该源报错、自动退回实测卡；
 - **Cookie 只从本地解析，绝不进任何路由响应**。非官方接口、可能违反上游服务条款、随时可能失效——
   详见 [`../SECURITY.md`](../SECURITY.md)。

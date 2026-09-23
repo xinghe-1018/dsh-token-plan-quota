@@ -19,6 +19,24 @@ All notable changes to this project are documented here. The format follows
   "绕开客户端缓存"并不等于"服务端已经是新的"。所以这次既拉长窗口（24×15s）又在失败分支里
   直接打印真相，不再靠事后翻 workflow 注解考古。
 
+### Fixed
+
+- **千问 Token Plan 余量整张卡没有数字（上游把账期改成按月了）**。症状：徽标只剩"实测"卡，面板里
+  那张官方卡既不出百分比也不报余量，`emptyReason` 写"网关 usage 里没有 per1Week/per5Hour 比例"。
+  用 `probe` + debug 核对真实回包后确认：同一个源的 `usage` 只剩 `per1MonthPercentage` /
+  `per1MonthResetTime`，`quota-config` 的档位额度字段也跟着从 `weekly` 改名成 `monthly`（档位表
+  lite / standard / pro / essential 各回 `monthly` + `five_hour`，另有 `addon_quota.extrabundle`），
+  而 `buildConsoleCard` 只认周度与 5 小时两个名字 —— 一条计量都拼不出来。**它不报错**，因为网关
+  那次调用是成功的：这正是"认不出的键不报错、只是没作用"的形态。现在月度与周度**两条都读**，谁回
+  了读数谁当主计量，老套餐继续走 `weekly`；主计量固定排在 `meters[0]`（前端只渲染
+  `meters.slice(1)`，顺序错了就是徽标报一个窗口、明细报另一个）。`addon_quota.extrabundle` 不并进
+  分母：官方没说明它与档位额度的关系，折进去就是估算（原则 I）。
+- **`probe` 对自动检测出来的源永远回 `unknown-source`**。零配置安装里源不在配置文件里，而是
+  `computeStatus` 跑 `applyAutoDetect` 时现挂到那份 config 上的；路由每次从 `getConfig()` 拿一份
+  新配置，于是唯一一个"能看上游实际字段集"的入口，对最需要它的源（`token-plan-console`）恰好不可用
+  —— 这次诊断就是被它逼着去临时改配置开 debug 的。现在查不到会补跑一次检测再查（检测只做本地解析
+  与凭据探测，不打额度端点，同名去重、可重入），404 里的 `known` 列表也跟着变准。
+
 ## [0.4.8] - 2026-09-15
 
 ### Fixed

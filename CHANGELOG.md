@@ -8,6 +8,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **判定口径：宪法原则 I 升到 v2.0.0**（MAJOR——按 Governance 自己的档位，改的是 NON-NEGOTIABLE
+  原则的边界）。原来那句「没有官方分母就永不出现百分比」写成绝对式，是因为在它被写下来的时候，
+  百分比**只可能**从 `remaining/total` 派生。现在千问控制台会**直接返回** `usage.per1MonthPercentage`，
+  绝对式就产生了自相矛盾：一个可追溯到官方字段名的真值，因为同一次查询里另一路没取到而被丢掉，
+  反而违背原则 I 第一句（每个数字必须可追溯到官方真值）。新口径：
+  **永不自行派生百分比**（`used/total`、`100−已用%`、任何换算式），**上游直给的比例属官方真值可显示**，
+  但缺分母时不画余量条、不报绝对剩余量、必须留诊断。同步改：`.specify/memory/constitution.md`
+  （含 Sync Impact Report 与版本号）、`AGENTS.md` 同一句、两份 README 的「不做什么」、
+  `docs/upstream-contracts.md` 与 `finalizeMeter` 上方注释。
+
+### Fixed
+
+- **上游慢的时候，千问额度卡整张退回"无数据"**——丢掉的正是已经拿到的官方真值。
+  实测：连打 5 次 `?fresh=1`，1 次没有分母，那一次全程 19.8 s（单次 `timeoutMs=15000`，
+  四次调用之间还有 `minIntervalMs=1200` 串行节流），`quota-config` 撞超时抛错，被
+  `catch { /* 拿不到档位额度时仍报已用比例 */ }` 静默吞掉——**注释承诺的行为代码没做**：
+  没分母 → 顶层算不出 `usedPercent` → 前端 `hasNumbers()` 判定"这张卡没数字" → 卡片收起，
+  而且这张退化卡还会被 TTL 缓存 10 分钟。现在：
+  - 宿主半边把上游直给的比例作为顶层 `usedPercent` 发出（不折算绝对剩余量），
+    并给 `extra.denominatorFailed`；`emptyReason` 只留给真的什么都没有的情况；
+  - 前端 `hasNumbers()` 认这个数（不再当空卡）；`cardValueText` 走新文案
+    「已用 {p}%」/「used {p}%」；渐变条**只认 `remainingPercent`**（那个字段由官方分母支撑），
+    所以缺分母时不画条；
+  - `summarizeText`（模型工具那条摘要）同口径：报「本周期已用 x%（档位额度这一路未取到，
+    故不报绝对剩余量）」而不是「无数据」。"官方真值有数就收起实测兜底行"的判据**不动**（仍要求
+    官方卡有绝对数字）——退化态下实测账本那行照报；把 `usedPercent` 也算进那个判据会让摘要收起
+    兜底行而面板仍显示，两半边不一致比多印一行更糟（本轮实测发现并回退）。
+  - 仍**不做**重试、不改缓存时长（按本轮决定）：退化态下一次缓存周期自然恢复，最坏 10 分钟。
+
 ## [0.4.9] - 2026-09-23
 
 ### Changed

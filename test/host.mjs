@@ -432,11 +432,30 @@ const monthAndWeek = finalizeCard(buildConsoleCard(consolePreset, {
 }, { standard: { monthly: 1000, weekly: 4000 } }, { specCode: 'standard' }))
 check('月度与周度都在时，月度排在前', monthAndWeek.meters.map(m => m.key), ['monthly', 'weekly'])
 check('顶层跟月度而不是周度', [monthAndWeek.total, monthAndWeek.remaining, monthAndWeek.expiresAt], [1000, 500, monthReset])
-// 有读数、但档位额度字段名又不认识：空因必须指向"缺分母"，不是"没有窗口"。
+// 有读数、但档位额度那一路没取到（实测：quota-config 单次超时，5 次里 1 次，那次全程 19.8s）。
+// 宪法 v2.0.0 之后的口径：**上游直接返回的官方比例照报**，只是不画余量条、不编绝对剩余量，
+// 并且必须留诊断。老写法是整张卡退回"无数据"——把一个可追溯到字段名的真值丢掉，还把人误导去核对字段名。
+const quotaFailed = finalizeCard(buildConsoleCard(consolePreset,
+  { per1MonthPercentage: 0.033, per1MonthResetTime: monthReset }, null, { specCode: 'standard' }))
+check('quota 那一路没回 → 官方比例仍进顶层 usedPercent',
+  [quotaFailed.usedPercent, quotaFailed.total, quotaFailed.remaining], [3.3, undefined, undefined])
+check('比例所在计量自己也带百分比（面板那行有得显示）',
+  [quotaFailed.meters[0].key, quotaFailed.meters[0].usedPercent], ['monthly', 3.3])
+check('缺分母时不给 remainingPercent —— 前端据此不画余量条', quotaFailed.meters[0].remainingPercent, undefined)
+check('缺分母不再算空卡：不给 emptyReason', quotaFailed.emptyReason, undefined)
+check('但也不能静默：留 denominatorFailed 诊断', quotaFailed.extra.denominatorFailed, true)
 const monthNoTotal = finalizeCard(buildConsoleCard(consolePreset, { per1MonthPercentage: 0.3 }, {}, {}))
-check('有月度读数没分母 → 计量在、顶层不出数', [monthNoTotal.meters.map(m => m.key), monthNoTotal.total, monthNoTotal.remaining], [['monthly'], undefined, undefined])
-ok('空因说清是缺档位额度（引导核对字段名）',
-  typeof monthNoTotal.emptyReason === 'string' && monthNoTotal.emptyReason.includes('档位额度'), monthNoTotal.emptyReason)
+check('档位字段名不认识走同一条路（比例保留 + 诊断）',
+  [monthNoTotal.usedPercent, monthNoTotal.total, monthNoTotal.extra.denominatorFailed], [30, undefined, true])
+// summarizeText 只报官方真值卡（veracity 是 querySource 那层给的，这里手工补上）。
+const ratioSummary = summarizeText({
+  generatedAt: Date.now(), refreshMinutes: 10, notices: [],
+  cards: [{ ...quotaFailed, veracity: 'verified', bindProviders: ['qwen-token-plan-cn'] }],
+})
+ok('模型工具摘要也报比例，不再说"无数据"',
+  ratioSummary.includes('已用 3.3%') && !ratioSummary.includes('无数据'), ratioSummary)
+check('publicCard 透传 usedPercent 与诊断字段',
+  [publicCard(quotaFailed).usedPercent, publicCard(quotaFailed).extra.denominatorFailed], [3.3, true])
 // 窗口一个都没有 → 明确空因，不出幽灵行。
 const noWindows = finalizeCard(buildConsoleCard(consolePreset, {}, {}, {}))
 check('没有任何窗口 → 无计量并给空因', [noWindows.meters.length, typeof noWindows.emptyReason], [0, 'string'])

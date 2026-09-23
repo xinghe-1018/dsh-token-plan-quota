@@ -56,7 +56,11 @@
 - 剩余 ＝ `quota[specCode].monthly × (1 − per1MonthPercentage)`，与订阅页「剩余量/总额度」同源；
   **2026-09-23 起账期改成按月**（`usage` 只回 `per1Month*`，档位额度字段从 `weekly` 改名 `monthly`），
   代码同时保留 `weekly` 口径回退，旧套餐不受影响。`addon_quota.extrabundle` **不并进分母**——
-  官方没说明它与档位额度的关系，折进去就是估算（原则 I）；
+  官方没说明它与档位额度的关系，折进去就是估算（原则 I）。
+- **`quota-config` 会偶发超时**（2026-09-23 实测：连打 5 次 `?fresh=1`，1 次没拿到分母，那次全程
+  19.8 s；单次超时 `timeoutMs=15000`，四次调用之间还有 `minIntervalMs=1200` 串行节流）。这种时候
+  `usage` 里的官方比例仍然拿得到：卡片**照报「本周期已用 x%」**，但不画余量条、不报绝对剩余量，
+  并留 `extra.denominatorFailed=true` 诊断 —— 原则 I（v2.0.0）禁的是**派生**，不是上游直给的官方数；
 - Cookie 一般能用几周（响应里有 `sessionExpireTimeStamp`），过期后该源报错、自动退回实测卡；
 - **Cookie 只从本地解析，绝不进任何路由响应**。非官方接口、可能违反上游服务条款、随时可能失效——
   详见 [`../SECURITY.md`](../SECURITY.md)。

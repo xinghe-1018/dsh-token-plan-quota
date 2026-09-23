@@ -66,7 +66,10 @@
 - **没有"我自己填一个额度上限"的窗口**：分母只能来自官方接口，手填的上限就是编数，所以本插件没有任何
   表达"周期 + 上限"的键。`token-plan-window` **不是**自建窗口预设，它是千问 Token Plan 的本地实测账本
   （不打网络，只记经过本实例的调用）；
-- **没有官方分母就没有百分比**：实测卡永不画余量条、永不显示百分比，只报「窗口内用了多少 token / 多少次」；
+- **没有官方分母就不派生百分比**：`used/total`、`100−已用%` 这类算出来的比例一律不出；实测卡永不画余量条、
+  永不显示百分比，只报「窗口内用了多少 token / 多少次」。但**上游直接返回的比例属官方真值**——千问控制台
+  的 `usage.per1MonthPercentage` 就是它给的数，所以档位额度那一路偶发取不到时（实测会超时），徽标仍显示
+  「已用 3.3%」，只是**不画余量条、不报绝对剩余量**（算不出来的东西不显示），并留 `extra.denominatorFailed` 诊断；
 - **档位配置不等于你的额度**：一个窗口只有在这个套餐真回了读数时才存在（上游 `quota-config` 里躺着的
   `five_hour` 上限不代表这个账号有 5 小时窗口）；
 - **认不准就不开**：自动检测宁可少一张卡，也不会把别家的余额数字顶在你正在用的模型上；
@@ -385,8 +388,8 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 395 项，离线
-node test/client.mjs               # 207 项，假 React/DOM/fetch
+node test/host.mjs                 # 401 项，离线
+node test/client.mjs               # 214 项，假 React/DOM/fetch
 node test/guards.mjs               # 80 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
@@ -394,7 +397,7 @@ node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 395/207 项 + guards 80 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 401/214 项 + guards 80 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

@@ -18,7 +18,9 @@
 - 提交信息用中文 Conventional Commits，一个提交只做一件事，正文写**为什么**（尤其被推翻的初版思路）。修 bug 必须带能重现该 bug 的回归测试。
 - 对外描述（`README.md` / `README.en.md` / `dshhub.summary` / issue 文字）必须与代码同源，且在同一次改动内完成——`check-docs.mjs` 会拿去和代码核。
 - `docs/` 是 `package.json#files` 白名单成员，**会随 npm 包发布**。中间产物（`.shots-work/`、`.scratch/`）只能待在 `docs/` 之外。
-- 数字口径：要么官方接口真值，要么明确标注「实测」的本实例窗口；不折算 Credits、不估算余量；**没有官方分母就不出现百分比**（原则 I）。
+- 数字口径：要么官方接口真值，要么明确标注「实测」的本实例窗口；不折算 Credits、不估算余量；
+  **没有官方分母就不派生百分比**（上游直接返回的比例属真值可显示，但缺分母时不画条、不报绝对
+  剩余量、必须留诊断）（原则 I，宪法 v2.0.0）。
 - `dshhub.permissions.network` 的声明集合必须等于实际出站主机集合，新增供应商要同步（原则 V）。
 - **"不做"的精确边界**是**读取其它 CLI 的本地登录态 / 额外强凭据**（见 README「明确不做的三类」）；
   **Cookie 是已发布能力**（`token-plan-console` 的 `BAILIAN_CONSOLE_COOKIE`）。**A/B/C 档位描述"需要什么形态 /

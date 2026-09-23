@@ -240,6 +240,28 @@ function makeFetch(mode) {
       const broken = SNAPSHOT.cards.map(card => ({ ...card, retry: { provider: 'deepseek', attempts: 2 } }))
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: broken }) }
     }
+    if (mode === 'ratio-only') {
+      // 真实形态（2026-09-23 实测：5 次里 1 次）：quota-config 那一路超时，上游只回了
+      // per1MonthPercentage。宪法 v2.0.0 之后这张卡照报官方比例，但不画条、不报绝对余量。
+      const ratioCard = {
+        id: 'token-plan-console',
+        label: 'Token Plan 余量',
+        labelEn: 'Token Plan quota',
+        metric: 'credits',
+        unit: 'Credits',
+        veracity: 'verified',
+        bindProviders: ['qwen-token-plan-cn'],
+        usedPercent: 3.3,
+        expiresAt: Date.now() + 7 * 86_400_000,
+        items: [],
+        meters: [{ key: 'monthly', label: '本月窗口', labelEn: 'Monthly window', unit: 'Credits', usedPercent: 3.3, resetAt: Date.now() + 7 * 86_400_000 }],
+        extra: { usedPercent: 3.3, denominatorFailed: true, specCode: 'standard', addonTotal: 20000 },
+        error: null,
+        sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
+      }
+      const restRatio = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [ratioCard, ...restRatio] }) }
+    }
     if (mode === 'meter-cap-only') {
       // 档位配了 5 小时上限、这个套餐却没回读数：次级计量没有可说的数，整行都不该出现。
       const capOnly = {
@@ -1379,7 +1401,7 @@ function findChip(node) {
   const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [62, 62])
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [63, 63])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1397,6 +1419,55 @@ function findChip(node) {
     .filter(({ line }) => !/toFixed\(\d\)\}[万亿]/u.test(line))
   ok('COPY 之外没有进画面的中文字面量（要加先加进字典）', offenders.length === 0,
     offenders.map(entry => `L${entry.no} ${entry.line.trim().slice(0, 90)}`).join(' ⏎ '))
+}
+
+/* 有官方比例、没取到档位额度（quota-config 超时）：徽标必须报"已用 x%"，
+ * 但**不画余量条**、不报绝对剩余量 —— 缺的东西就是不报（宪法原则 I v2.0.0）。 */
+{
+  const { api, registered } = await loadBundle('ratio-only')
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('没分母时徽标照报官方比例', flat.includes('已用 3.3%'), flat)
+  ok('这种卡不画余量条（条要有官方分母）', !flat.includes('tpq-bar'), flat)
+  findChip(await settle(render, 1)).props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('明细里那一行也只报比例，不出现「剩余 / 上限」', panel.includes('已用 3.3%') && !panel.includes('/ 10,000'))
+  ok('实测兜底卡不被这张卡收起（它确实有官方数字）', panel.includes('Token Plan 余量'))
+}
+
+/* 同一张卡在英文界面下走 usedOnly。 */
+{
+  const { api, registered } = await loadBundle('ratio-only', 'en-US')
+  globalThis.document.documentElement.lang = 'en'
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('英文界面：used {p}% 走字典', flat.includes('used 3.3%') && !flat.includes('已用'), flat.slice(0, 300))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

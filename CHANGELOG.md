@@ -10,34 +10,43 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- **判定口径：宪法原则 I 升到 v2.0.0**（MAJOR——按 Governance 自己的档位，改的是 NON-NEGOTIABLE
-  原则的边界）。原来那句「没有官方分母就永不出现百分比」写成绝对式，是因为在它被写下来的时候，
-  百分比**只可能**从 `remaining/total` 派生。现在千问控制台会**直接返回** `usage.per1MonthPercentage`，
-  绝对式就产生了自相矛盾：一个可追溯到官方字段名的真值，因为同一次查询里另一路没取到而被丢掉，
-  反而违背原则 I 第一句（每个数字必须可追溯到官方真值）。新口径：
-  **永不自行派生百分比**（`used/total`、`100−已用%`、任何换算式），**上游直给的比例属官方真值可显示**，
-  但缺分母时不画余量条、不报绝对剩余量、必须留诊断。同步改：`.specify/memory/constitution.md`
-  （含 Sync Impact Report 与版本号）、`AGENTS.md` 同一句、两份 README 的「不做什么」、
-  `docs/upstream-contracts.md` 与 `finalizeMeter` 上方注释。
+- **判定口径：宪法原则 I 升到 v2.0.0**（MAJOR —— 按 Governance 自己的档位，改的是 NON-NEGOTIABLE
+  原则的边界）。原来那句「没有官方分母就永不出现百分比」写成绝对式，是因为写下它的时候百分比
+  **只可能**从 `remaining/total` 派生；现在千问控制台**直接返回** `usage.per1MonthPercentage`，
+  绝对式就自相矛盾：一个可追溯到官方字段名的真值，因为同一次查询里另一路没取到而被丢掉，反而违背
+  原则 I 第一句（每个数字必须可追溯到官方真值）。新口径：**永不自行派生百分比**（`used/total`
+  与任何换算式），**上游直给的比例属官方真值**，可显示、也可照它画余量条（`100 − 已用%` 是同一个
+  官方数的反向写法）；缺分母时**不报绝对剩余量**、必须留诊断。同步改：`.specify/memory/constitution.md`
+  （含 Sync Impact Report）、`AGENTS.md` 同一句、两份 README「不做什么」、`docs/upstream-contracts.md`、
+  `finalizeMeter` 与 `buildConsoleCard` 的注释。修订过程中初稿还写了"缺分母时不画余量条"，实机
+  半小时就被否掉（用户："换回条状显示"）——条画的是同一个官方比例，禁它只是视觉上惩罚用户，
+  不增加任何真值保护；v2.0.0 尚未随任何已发布版本出厂（0.4.9 打的是 1.0.1 口径），所以在它自身的
+  措辞里改掉，不另计版本号。
 
 ### Fixed
 
-- **上游慢的时候，千问额度卡整张退回"无数据"**——丢掉的正是已经拿到的官方真值。
-  实测：连打 5 次 `?fresh=1`，1 次没有分母，那一次全程 19.8 s（单次 `timeoutMs=15000`，
-  四次调用之间还有 `minIntervalMs=1200` 串行节流），`quota-config` 撞超时抛错，被
-  `catch { /* 拿不到档位额度时仍报已用比例 */ }` 静默吞掉——**注释承诺的行为代码没做**：
-  没分母 → 顶层算不出 `usedPercent` → 前端 `hasNumbers()` 判定"这张卡没数字" → 卡片收起，
-  而且这张退化卡还会被 TTL 缓存 10 分钟。现在：
-  - 宿主半边把上游直给的比例作为顶层 `usedPercent` 发出（不折算绝对剩余量），
-    并给 `extra.denominatorFailed`；`emptyReason` 只留给真的什么都没有的情况；
-  - 前端 `hasNumbers()` 认这个数（不再当空卡）；`cardValueText` 走新文案
-    「已用 {p}%」/「used {p}%」；渐变条**只认 `remainingPercent`**（那个字段由官方分母支撑），
-    所以缺分母时不画条；
-  - `summarizeText`（模型工具那条摘要）同口径：报「本周期已用 x%（档位额度这一路未取到，
-    故不报绝对剩余量）」而不是「无数据」。"官方真值有数就收起实测兜底行"的判据**不动**（仍要求
-    官方卡有绝对数字）——退化态下实测账本那行照报；把 `usedPercent` 也算进那个判据会让摘要收起
-    兜底行而面板仍显示，两半边不一致比多印一行更糟（本轮实测发现并回退）。
-  - 仍**不做**重试、不改缓存时长（按本轮决定）：退化态下一次缓存周期自然恢复，最坏 10 分钟。
+- **上游慢的时候，千问额度卡整张退回"无数据"** —— 丢掉的正是已经拿到的官方真值。
+  实测：连打 5 次 `?fresh=1`，1 次没有分母，那一次全程 19.8 s（单次 `timeoutMs=15000`，四次调用之间
+  还有 `minIntervalMs=1200` 串行节流），`quota-config` 撞超时抛错，被
+  `catch { /* 拿不到档位额度时仍报已用比例 */ }` 静默吞掉 —— **注释承诺的行为代码没做**：没分母 →
+  顶层算不出 `usedPercent` → 前端 `hasNumbers()` 判定"这张卡没数字" → 卡片收起，而且这张退化卡还会被
+  TTL 缓存 10 分钟。现在：
+  - 宿主半边把上游直给的比例作为顶层 `usedPercent` 发出（不折算绝对剩余量），并给
+    `extra.denominatorFailed`；`emptyReason` 只留给真的一无所有的情况；
+  - 前端 `hasNumbers()` 认这个数（不再当空卡）；`remainingPercentOf()` 认两个合法来源
+    （官方分母派生的 `remainingPercent`，或上游直给的 `usedPercent`），所以徽标照旧是
+    **「余量% + 条」**；绝对值仍然不编；
+  - `summarizeText`（模型工具摘要）同口径报比例而不是"无数据"；"官方有数就收起实测兜底行"的
+    判据**不动**（仍要求官方卡有绝对数字）——把 `usedPercent` 也算进去会让摘要收起而面板仍显示，
+    两半边不一致比多印一行更糟（本轮实测发现并回退）。
+- **当前路由是包装层时，徽标并排冒出两个胶囊**（实机：`Token Plan 94%` + `DeepSeek ¥33.80`）。
+  模型切到 `modlens-qwen-token-plan-cn/deepseek-v4.1-flash` 之后，这个 provider id 既不在余量卡的
+  `bindProviders`（`qwen-token-plan-cn`）里也不在余额卡里，于是四处**精确相等**的比较全部落空，
+  走"匹配不到就全量显示"的兜底 → 两家并排。现在统一用一层按 `-` 边界的容忍匹配
+  （`sameProvider`：任一方是另一方的完整尾段），四处比较共用：徽标选卡、`panelScope: current`
+  的面板过滤、吞吐行归属、以及兜底卡的收起判据。边界是必须的 —— 否则 `qwen` 这类短名会把
+  `qwen-token-plan-cn` 一起吞掉；真正无关的路由仍照旧退回全量（不是藏成 0×0）。
+- 按本轮决定仍**不做**重试、不动缓存时长：退化态下一次缓存周期自然恢复，最坏 10 分钟。
 
 ## [0.4.9] - 2026-09-23
 

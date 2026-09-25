@@ -1329,8 +1329,10 @@ function findChip(node) {
 {
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok('手写 CJS 壳不再用 var（no-var）', !/^\s+var\s+(module|exports)\s*=/m.test(code))
-  ok('余量百分比只留一份算法（徽标与明细卡共用同一个函数）',
-    (code.match(/remainingPercentOf\(/g) ?? []).length === 3
+  ok('余量百分比只留一份算法（徽标、值文案、明细主卡、次级窗口行共用同一个函数）',
+    (code.match(/function remainingPercentOf\(/g) ?? []).length === 1
+      && (code.match(/remainingPercentOf\(/g) ?? []).length === 5
+      && (code.match(/100 - card\.usedPercent/g) ?? []).length === 1
       && !/isMeasured\(card\) \? null :/.test(code))
   ok('手势监听有卸载收口（拖拽中途被卸掉不再漏绑）',
     /const gestureRelease = React\.useRef\(null\)/.test(code)
@@ -1401,7 +1403,7 @@ function findChip(node) {
   const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [63, 63])
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [62, 62])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1421,8 +1423,9 @@ function findChip(node) {
     offenders.map(entry => `L${entry.no} ${entry.line.trim().slice(0, 90)}`).join(' ⏎ '))
 }
 
-/* 有官方比例、没取到档位额度（quota-config 超时）：徽标必须报"已用 x%"，
- * 但**不画余量条**、不报绝对剩余量 —— 缺的东西就是不报（宪法原则 I v2.0.0）。 */
+/* 有官方比例、没取到档位额度（quota-config 超时）：徽标照旧出「余量% + 条」——
+ * 条的两个合法来源是 remainingPercent 与**上游直给**的 usedPercent（宪法原则 I v2.0.0），
+ * 唯一不报的是绝对剩余量（没分母就是算不出来）。 */
 {
   const { api, registered } = await loadBundle('ratio-only')
   const dirStore = makeStore({
@@ -1440,11 +1443,12 @@ function findChip(node) {
     return component()
   }
   const flat = JSON.stringify(await settle(render))
-  ok('没分母时徽标照报官方比例', flat.includes('已用 3.3%'), flat)
-  ok('这种卡不画余量条（条要有官方分母）', !flat.includes('tpq-bar'), flat)
+  ok('缺分母时徽标出余量百分比（100 − 官方已用比例）', flat.includes('97%'), flat)
+  ok('这种卡照样画条：条来自官方给的比例，不是估算', flat.includes('tpq-bar'), flat)
+  ok('但不报绝对剩余量（没分母就是不报那个数）', !flat.includes('/ 45,000'), flat)
   findChip(await settle(render, 1)).props.onClick()
   const panel = JSON.stringify(await settle(render, 3))
-  ok('明细里那一行也只报比例，不出现「剩余 / 上限」', panel.includes('已用 3.3%') && !panel.includes('/ 10,000'))
+  ok('明细里报「已用 3.3%」而不编造「剩余 / 上限」', panel.includes('已用 3.3%') && !panel.includes('/ 45,000'))
   ok('实测兜底卡不被这张卡收起（它确实有官方数字）', panel.includes('Token Plan 余量'))
 }
 
@@ -1467,7 +1471,62 @@ function findChip(node) {
     return component()
   }
   const flat = JSON.stringify(await settle(render))
-  ok('英文界面：used {p}% 走字典', flat.includes('used 3.3%') && !flat.includes('已用'), flat.slice(0, 300))
+  ok('英文界面同一形态也出余量百分比（走 en 字典标签）', flat.includes('97%') && flat.includes('Token Plan quota'), flat.slice(0, 300))
+}
+
+/* 当前路由 id 是包装层（`modlens-qwen-token-plan-cn` 之于 `qwen-token-plan-cn`）：
+ * 过去精确相等匹配不到任何卡 → 退化成"全量并排"，实机反馈是**两个胶囊同时出现**
+ * （余量 + 余额），但只需要一个。现在按 `-` 边界容忍；边界是为了别让 `qwen` 这种短名乱吞。 */
+{
+  const { api, registered } = await loadBundle()
+  const dirStore = makeStore({
+    current: { provider: 'modlens-qwen-token-plan-cn', model: 'deepseek-v4.1-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  const chipCount = (flat.match(/tpq-chip/g) ?? []).length
+  ok('包装层路由只挂一张卡：胶囊数为 1', chipCount === 1, `chips=${chipCount}`)
+  ok('挂的是 Token Plan 那张，余额那张不出现', flat.includes('Token Plan') && !flat.includes('¥33.80'), flat.slice(0, 300))
+  ok('吞吐行也认得包装层（速度仍跟着这张卡）', flat.includes('tok/s'), flat.slice(0, 300))
+}
+
+/* 真正无关的路由（目录不认）时**只出一张**：既不藏空，也不并排。
+ * 挑法带一层模型名提示：`deepseek-v4.1-flash` → 绑 `deepseek` 的那张卡。 */
+for (const [model, label] of [
+  ['deepseek-v4.1-flash', '模型名提示 deepseek'],
+  ['qwen3.8-flash', '模型名提示 qwen'],
+]) {
+  const { api, registered } = await loadBundle()
+  const dirStore = makeStore({
+    current: { provider: 'some-unrelated-relay', model },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  const chipCount = (flat.match(/tpq-chip/g) ?? []).length
+  ok(`路由不认时只出一枚胶囊（${label}）`, chipCount === 1, `chips=${chipCount} model=${model}`)
+  if (model.startsWith('deepseek')) {
+    ok('模型名提示生效：出的是绑 deepseek 的那张卡', flat.includes('¥'), flat.slice(0, 200))
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

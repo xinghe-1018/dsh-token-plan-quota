@@ -76,7 +76,7 @@ This stance matters more than the feature list:
   shown - a measured card never draws a bar and never shows a percentage, reporting only how many tokens / requests
   were used in its window. A percentage **the API returns itself** is official truth, though: when the plan-limit call
   times out (it does, intermittently), the chip still shows "used 3.3%", because that number came straight from
-  `usage.per1MonthPercentage` - only **without a bar and without an absolute remaining amount** (what cannot be
+  `usage.per1MonthPercentage` - **with the bar** (it draws that same official ratio) but **without an absolute remaining amount** (what cannot be
   computed is not displayed), and with an `extra.denominatorFailed` diagnostic instead of going silent;
 - **Plan configuration is not your quota**: a window exists only when that plan actually reports a reading
   (a `five_hour` cap sitting in `quota-config` does not mean your account has a 5-hour window);
@@ -449,7 +449,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 401 assertions, offline
-node test/client.mjs                # 214 assertions, fake React/DOM/fetch
+node test/client.mjs                # 224 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 80 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
@@ -458,7 +458,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 401/214 tests plus 80 guards assertions" - and checks them
+config table, 8 sources, 8 declared outbound hosts, 401/224 tests plus 80 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

@@ -441,7 +441,7 @@ check('quota 那一路没回 → 官方比例仍进顶层 usedPercent',
   [quotaFailed.usedPercent, quotaFailed.total, quotaFailed.remaining], [3.3, undefined, undefined])
 check('比例所在计量自己也带百分比（面板那行有得显示）',
   [quotaFailed.meters[0].key, quotaFailed.meters[0].usedPercent], ['monthly', 3.3])
-check('缺分母时不给 remainingPercent —— 前端据此不画余量条', quotaFailed.meters[0].remainingPercent, undefined)
+check('缺分母时不给 remainingPercent（条由前端按官方比例画，服务端不派生死数）', quotaFailed.meters[0].remainingPercent, undefined)
 check('缺分母不再算空卡：不给 emptyReason', quotaFailed.emptyReason, undefined)
 check('但也不能静默：留 denominatorFailed 诊断', quotaFailed.extra.denominatorFailed, true)
 const monthNoTotal = finalizeCard(buildConsoleCard(consolePreset, { per1MonthPercentage: 0.3 }, {}, {}))

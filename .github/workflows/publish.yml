@@ -149,7 +149,10 @@ jobs:
           # 又报 "cannot publish over previously published versions: 0.4.6" 再挂一次。
           # 这条 grep 就是把这种情况当成"其实已经发过了，继续往下走"。
           if [ "$rc" -ne 0 ] && grep -q 'You cannot publish over the previously published versions' /tmp/publish.log; then
-            echo "::notice::registry 已有 ${{ github.ref_name }} 这个版本（上一次 run 上传成功但后续步骤没跑完），继续走 verify"
+            # 用解析出来的 tag，不用 `github.ref_name`：push 时它是 `v0.4.10`（read 起来对），
+            # 但 workflow_dispatch 时它是**分支名**——真话会变成"registry 已有 fix/xxx 这个版本"。
+            # 这条是 2026-09-26 真跑了一次 dry-run dispatch 才看出来的（静态审查没抓到）。
+            echo "::notice::registry 已有 ${{ steps.tag.outputs.tag }} 这个版本（上一次 run 上传成功但后续步骤没跑完），继续走 verify"
             rc=0
           fi
           if [ "$rc" -ne 0 ]; then

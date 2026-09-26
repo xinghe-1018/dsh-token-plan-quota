@@ -31,6 +31,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 两个入口的 tag 来源不同：push 就是 tag 本身；workflow_dispatch（release.yml 推完 tag
+      # 后显式触发，因为 GITHUB_TOKEN 推的 tag 不会自己触发 workflow）时 ref 是分支名，
+      # 以 package.json 的版本为准。下面所有"版本/tag"都从这一步取，别再各写一遍。
+      - name: resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
         # 千万不要在这里加 registry-url！setup-node 会往 ~/.npmrc 写
         #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
@@ -62,6 +76,37 @@ jobs:
 
       - name: full gate (tests + manifest + README claims + submission)
         run: npm run check
+
+      # CodeRabbit 在 PR #3 指出：dispatch 入口只从 package.json 取版本号，却不核对"这次 checkout
+      # 是不是那个 tag 指向的 commit"。tag 推完之后 main 再前进一格，一次手动重跑就会把**后来的
+      # 代码**以同一个版本号发上 npm，而 GitHub Release 还指着 tag 的 commit —— 包内容与 tag 不一致。
+      # 规则：真要发布（dry_run=false）时 tag 必须存在且指向本次 checkout；dry run 只告警不阻断
+      # （dry run 的用途正是在分支上验机制，那里本来就没有对应 tag）。
+      - name: dispatch 时校验 checkout 就是 tag 的 commit
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./package.json').version")"
+          tag="v${ver}"
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::${tag} 这个 tag 不存在（dry run，仅提示；真要发布时先确认 tag 已推）"
+              exit 0
+            fi
+            echo "::error::${tag} 这个 tag 不存在：先走 release.yml 推 tag 再来发版"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "${tag}")"
+          if [ "$tag_commit" != "${GITHUB_SHA}" ]; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::checkout ${GITHUB_SHA:0:7} 不是 ${tag} 指向的 commit ${tag_commit:0:7}（dry run，仅提示）"
+              exit 0
+            fi
+            echo "::error::checkout ${GITHUB_SHA:0:7} 不是 ${tag} 指向的 commit ${tag_commit:0:7} —— 拒绝以这个版本号发布后来的代码"
+            exit 1
+          fi
+          echo "::notice::checkout 与 ${tag} 指向同一个 commit（${tag_commit:0:7}）"
 
       - name: tarball contents
         shell: bash
@@ -135,7 +180,10 @@ jobs:
           # 又报 "cannot publish over previously published versions: 0.4.6" 再挂一次。
           # 这条 grep 就是把这种情况当成"其实已经发过了，继续往下走"。
           if [ "$rc" -ne 0 ] && grep -q 'You cannot publish over the previously published versions' /tmp/publish.log; then
-            echo "::notice::registry 已有 ${{ github.ref_name }} 这个版本（上一次 run 上传成功但后续步骤没跑完），继续走 verify"
+            # 用解析出来的 tag，不用 `github.ref_name`：push 时它是 `v0.4.10`（read 起来对），
+            # 但 workflow_dispatch 时它是**分支名**——真话会变成"registry 已有 fix/xxx 这个版本"。
+            # 这条是 2026-09-26 真跑了一次 dry-run dispatch 才看出来的（静态审查没抓到）。
+            echo "::notice::registry 已有 ${{ steps.tag.outputs.tag }} 这个版本（上一次 run 上传成功但后续步骤没跑完），继续走 verify"
             rc=0
           fi
           if [ "$rc" -ne 0 ]; then
@@ -177,11 +225,14 @@ jobs:
       # 只有 registry 真的收到了这个版本才建 GitHub Release，否则 tag 上会挂一条"发出去了"
       # 的说明但 npm 上根本没有 —— 那种不一致比没有更糟。
       - name: build release notes from CHANGELOG
-        if: github.event_name == 'push'
+        # dispatch 入口也要建 GitHub Release，否则"从浏览器一键发版"只上 npm、tag 下什么都没有，
+        # 那种不一致比没有更糟；dry run 当然不建。
+        if: github.event_name == 'push' || inputs.dry_run != true
         shell: bash
         run: |
           set -euo pipefail
-          ver="${GITHUB_REF_NAME#v}"
+          ver="${{ steps.tag.outputs.tag }}"
+          ver="${ver#v}"
           node scripts/extract-changelog-section.mjs "$ver" --heading > release-notes.md
           {
             echo ""
@@ -194,12 +245,48 @@ jobs:
           echo "----- release-notes.md -----"
           cat release-notes.md
 
+      - name: 补发旧版不抢 latest（自己比版本，别靠默认值）
+        if: github.event_name == 'push' || inputs.dry_run != true
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./package.json').version")"
+          # 原先这里写死 `make_latest: 'true'`，而 action 的默认值是"不传"＝交给 GitHub API 的
+          # 默认（新建 release 默认就标 latest）——两条路都会让"回头补发旧版"把 Latest 抢走，
+          # 与注释承诺的正好相反。所以自己比一次：只有严格更高才标。查不通时保守不标（并告警），
+          # 因为"少标一次 latest"可以手点，而"抢掉 latest"会把仓库首页指到旧版。
+          current="$(node -e 'fetch("https://api.github.com/repos/"+process.env.GITHUB_REPOSITORY+"/releases/latest",{headers:{authorization:"Bearer "+process.env.GH_TOKEN,"user-agent":"dsh-token-plan-quota-release"}}).then(r=>{if(r.status===404)return null;if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(j=>console.log(j&&j.tag_name?j.tag_name:"")).catch(()=>console.log("__ERROR__"))')"
+          case "$current" in
+            __ERROR__)
+              echo "::warning::GitHub API 没查通，保守处理：本次不标 latest（要标就手动在 Release 页勾）"
+              echo "value=false" >> "$GITHUB_OUTPUT"
+              ;;
+            "")
+              echo "::notice::仓库还没有 latest release，本次标 latest"
+              echo "value=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # `>=` 而不是 `>`：候选版本**等于**现有 latest 时（例如同一个 release 重跑）也要继续标 latest。
+              # 用 `>` 会在这种情形下发 `false`，等于让 action 去把已经标好的 latest 摘掉（CodeRabbit PR #3 指出）。
+              if node -e 'const g=v=>v.replace(/^v/,"").split(".").map(Number);const[a,b]=process.argv.slice(1).map(g);process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>=0?0:1)' "$ver" "$current"; then
+                echo "::notice::$ver 不低于现有 latest $current，标 latest"
+                echo "value=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "::notice::$ver 低于现有 latest $current，不抢 latest"
+                echo "value=false" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+          esac
+
       - name: create GitHub Release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.dry_run != true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
           body_path: release-notes.md
-          # 只有比现有 latest 新的 tag 才标 latest；回头补发旧版不会把 latest 抢走。
-          make_latest: 'true'
+          # 由上面那步算出来：严格更高才标 latest。不传该字段＝交给 GitHub API 默认（会抢旧版）。
+          make_latest: ${{ steps.latest.outputs.value }}

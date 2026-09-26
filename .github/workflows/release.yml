@@ -20,6 +20,9 @@ on:
 # 会把 GITHUB_TOKEN 写进 remote，release.mjs 里的 `git push` 就直接用它。
 permissions:
   contents: write
+  # `gh workflow run` 走 Actions 的 dispatch API，没有 actions: write 会被 403。
+  # 之前没有这一条，是因为那时假设"推 tag 就会触发 publish"——那个假设是错的（见下面那步）。
+  actions: write
 
 jobs:
   release:
@@ -40,12 +43,20 @@ jobs:
       - name: release ${{ inputs.bump }}
         run: node scripts/release.mjs --${{ inputs.bump }}
 
-      # 只到"计划"这一层，让人先看清再手动跑一次不带 --dry-run 的。
-      # （GitHub Actions 的确认按钮没法插在中间，所以 dry-run 得走 publish.yml 的
-      # workflow_dispatch 入口 —— 那边默认就是 dry_run=true。）
-      - name: what just happened
-        if: success()
+      # 这一步是必需的，不是保险：release.mjs 推 tag 用的凭据来自 actions/checkout 注入的
+      # GITHUB_TOKEN，而**用 GITHUB_TOKEN 触发的事件不会新建 workflow run**（GitHub 防递归的
+      # 设计；例外只有 workflow_dispatch 与 repository_dispatch）。所以 publish.yml 的
+      # `on: push: tags` 在这条路径上永远不会触发——tag 看着推成功了，npm 上却什么都没有。
+      # 手推 tag（本地 `git push origin vX.Y.Z`，用人的凭据）不受影响，那条路照旧自动触发。
+      - name: dispatch publish（GITHUB_TOKEN 推的 tag 不会自己触发它）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          echo "::notice::tag 已推。publish.yml 会在同一个 Actions 列表里接手（跑全量 check → npm publish → 回读 registry → 建 GitHub Release）。"
+          set -euo pipefail
+          tag="v$(node -p "require('./package.json').version")"
+          # dispatch 入口以 package.json 的版本为准（dispatch 时 ref 是分支名，没有 tag 可比），
+          # 而 main 此刻已经指向刚推上去的 release commit。
+          gh workflow run publish.yml --ref main -f dry_run=false
+          echo "::notice::已触发 publish.yml（$tag）：全量 check → npm publish → 回读 registry → 建 GitHub Release。"
           echo "看 https://github.com/${GITHUB_REPOSITORY}/actions"

@@ -43,5 +43,9 @@
 
 ## 门禁耗时
 
-- `npm run check` 在本机约 **6 秒**（host 379 项 + client 207 项 + guards 32 项 + 四个自检：
-  manifest / docs / refs / submission）。这就是 pre-commit 钩子可以直接跑全套、不必挑子集的依据。
+- `npm run check` 在本机约 **7 秒**（七步：host / client / guards + manifest / docs / refs / submission）。
+  这就是 pre-commit 钩子可以直接跑全套、不必挑子集的依据。
+- **具体项数不写在这里。** 这份文件不在 `check-docs` 的覆盖里（门禁只核两份 README 里的数字），
+  写死就会漂——它曾经写着 `host 379 项 + client 207 项 + guards 32 项`，实跑早已是 `420 / 224 / 91`
+  （2026-09-26 实测，同期顺手把源也带上：项数要看就直接跑 `npm run check`）。
+  这与文件开头自己立的判据一致：**会过期的缓存不写进来**。

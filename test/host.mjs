@@ -7,10 +7,22 @@
  * 重试观测来自 llm/retry 持久事件。
  */
 import { createHmac } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import { __internals, apply, observeStream, parsePolicyKey } from '../lib/index.js'
+
+// 离线不变量（宪法 VI）：本套件不得联网。DSH_HOME 指向 tmpdir 只挡住了 .credentials.yaml 与 .env，
+// **进程环境层没挡**——shell（尤其 CI 注入了 secret）只要有 DEEPSEEK_API_KEY /
+// ALIBABA_CLOUD_ACCESS_KEY_ID(+SECRET) / MOONSHOT_API_KEY / OPENROUTER_API_KEY /
+// BAILIAN_CONSOLE_COOKIE，buildStatus 就会真的去打 api.deepseek.com、business.aliyuncs.com 等：
+// 同一套件在干净机器上"离线绿"、在有变量的机器上联网，连"未配置凭据"那几条断言都会因此变红。
+// 这里把凭据类环境变量一律清掉，把"无凭据"变成确定前提。
+for (const name of Object.keys(process.env)) {
+  if (/(_API_KEY|_ACCESS_KEY_ID|_ACCESS_KEY_SECRET|ACCESS_KEY|_SECRET|_TOKEN|COOKIE)$/i.test(name)) delete process.env[name]
+}
 
 const {
   DEFAULTS, PRESETS,
@@ -464,7 +476,60 @@ const measuredMeter = finalizeMeter({ key: 'w', total: 1000, remaining: 300 }, f
 check('实测计量剥掉百分比', [measuredMeter.usedPercent, measuredMeter.remainingPercent, measuredMeter.remaining], [undefined, undefined, 300])
 check('真值计量保留百分比', finalizeMeter({ key: 'w', total: 1000, remaining: 300 }, true).usedPercent, 70)
 check('没有分母就没有百分比（任何档位）', [finalizeMeter({ key: 'w', remaining: 42 }, true).usedPercent, finalizeMeter({ key: 'w', remaining: 42 }, false).usedPercent], [undefined, undefined])
+// 「实测」的判据两半边必须一致：客户端认 `estimated === true || veracity === 'local'`
+// （lib/client.js 的 isMeasured），宿主此前只认 estimated —— 只标了 veracity 的实测卡会漏网，
+// 服务端派生出百分比、客户端拒绝画条，同一张卡两个说法。
+const localMeterCard = finalizeCard({ veracity: 'local', meters: [{ key: 'w', total: 1000, remaining: 300 }] })
+check('veracity:local 的卡，计量一律剥掉百分比（与客户端同口径）',
+  [localMeterCard.meters[0].usedPercent, localMeterCard.meters[0].remainingPercent, localMeterCard.meters[0].remaining], [undefined, undefined, 300])
+check('veracity:verified 的卡照常派生百分比', finalizeCard({ veracity: 'verified', meters: [{ key: 'w', total: 1000, remaining: 300 }] }).meters[0].usedPercent, 70)
+// 凭据两层兜底：按键名过滤 + 按值脱敏。上游错误体若把请求原样回显，键名是上游定的，猜不全。
+const trimmedShape = __internals.configlessTrim(
+  { sec_token: 'SECRETVALUE1', secToken: 'SECRETVALUE1', AccessKeySecret: 'x', password: 'y', bearer: 'z', total_tokens: 5, note: 'echo SECRETVALUE1 end' },
+  0, ['SECRETVALUE1'])
+check('configlessTrim 删掉凭据键，保留正常用量字段',
+  [trimmedShape.sec_token, trimmedShape.secToken, trimmedShape.AccessKeySecret, trimmedShape.password, trimmedShape.bearer, trimmedShape.total_tokens],
+  [undefined, undefined, undefined, undefined, undefined, 5])
+check('configlessTrim 按值兜底：普通字段里回显的凭据值也脱敏', trimmedShape.note, 'echo **** end')
+check('redactSecrets 只脱敏够长的值（短值不误伤普通文本）',
+  [__internals.redactSecrets('a=token123456789', ['token123456789']), __internals.redactSecrets('ab', ['ab'])], ['a=****', 'ab'])
+// 出站声明要真的约束出站（宪法 V）：原先"声明集合 == 实际出站集合"只是文档承诺——
+// `endpoint`（用户可配）与自定义源的 url 能把请求（含 AK/SK 签名）打到任意主机而没有任何检查。
+check('声明内的主机放行', __internals.assertDeclaredHost('https://api.deepseek.com/user/balance', {}, 'x'), 'https://api.deepseek.com')
+let hostRejectCode = 'no-throw'
+try { __internals.assertDeclaredHost('https://evil.example.com/x', {}, 'x') } catch (error) { hostRejectCode = error.code }
+check('未声明主机被拒（HostNotDeclared）', hostRejectCode, 'HostNotDeclared')
+check('显式打开 allowUndeclaredHosts 才放行',
+  __internals.assertDeclaredHost('https://evil.example.com/x', { allowUndeclaredHosts: true }, 'x'), 'https://evil.example.com')
+let hostBadUrlCode = 'no-throw'
+try { __internals.assertDeclaredHost('not-a-url', {}, 'x') } catch (error) { hostBadUrlCode = error.code }
+check('非绝对 URL 判 BadUrl（不猜默认主机）', hostBadUrlCode, 'BadUrl')
+let hostHttpCode = 'no-throw'
+try { __internals.assertDeclaredHost('http://api.deepseek.com/x', {}, 'x') } catch (error) { hostHttpCode = error.code }
+check('非回环的 http 一律 BadUrl（凭据不走明文）', hostHttpCode, 'BadUrl')
+check('回环是测试的明文例外（宪法 VI），不受声明集合约束',
+  __internals.assertDeclaredHost('http://127.0.0.1:9/balance', {}, 'x'), 'http://127.0.0.1:9')
+// 比对走归一化后的 origin：大写主机名与显式默认端口仍指向已声明的那台主机
+// （拿原文比会误报"未声明"——CodeRabbit 在 PR #3 上指出）。
+check('主机比对：大写与 :443 仍算已声明',
+  [__internals.assertDeclaredHost('https://API.DeepSeek.com:443/user/balance', {}, 'x'),
+    __internals.assertDeclaredHost('https://openrouter.ai:443/api/v1/credits', {}, 'x')],
+  ['https://api.deepseek.com', 'https://openrouter.ai'])
+// 端到端：未声明的自定义源要在断言处就变成错误卡，而不是真去请求它。
+const undeclaredCard = await querySource({ id: 'custom-undeclared', label: '自定义', type: 'http', url: 'https://evil.example.com/balance' },
+  effectiveConfig({ sources: [], showInstanceWindow: false }, ctxStub), { configured: false })
+check('未声明的自定义源变成 HostNotDeclared 错误卡',
+  [undeclaredCard.errorCode, typeof undeclaredCard.hint], ['HostNotDeclared', 'string'])
 check('publicCard 透传 meters', publicCard(consoleCard).meters.length, 2)
+// 字段错位回归（2026-09-23 账期改名后的真实风险）：`quota-config` 已按月、`usage` 仍只回周比例。
+// 配置上限不得自成一条计量、不得凭"monthly 优先"当上主计量；官方周比例必须照常进顶层，
+// 配置值只留诊断——旧写法在这里会同时丢掉比例和三个诊断。
+const mismatched = finalizeCard(buildConsoleCard(consolePreset,
+  { per1WeekPercentage: 0.25, per1WeekResetTime: weekReset }, { standard: { monthly: 45000 } }, { specCode: 'standard' }))
+check('字段错位：配置上限不成为计量', mismatched.meters.map(m => m.key), ['weekly'])
+check('字段错位：官方周比例照旧进顶层，且不给假的总量',
+  [mismatched.usedPercent, mismatched.total, mismatched.remaining], [25, undefined, undefined])
+check('字段错位：配置上限只留诊断', mismatched.extra.monthlyConfiguredNoReading, true)
 
 // 没配 Cookie → NoCredentials 卡（不联网）。
 const noCookie = await querySource(consolePreset, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
@@ -862,6 +927,39 @@ try {
   await new Promise(resolve => server.close(resolve))
 }
 
+/* ====== 13b. 上游把请求原样回显时，凭据不得随 message / raw 出网（CWE-209） ====== */
+
+// 为什么要有这一组：`raw` 早先按值脱敏了，但 `SourceError` 的 **message** 没有——而 message 同样
+// 会随卡片（`card.error`）与 `/probe`（`error: error.message`）出网。真实的注入拦截/WAF 就爱把
+// 收到的 `Authorization` 原样写进错误体，报错信息里于是躺着真 Key。
+const echoed = createServer((req, res) => {
+  req.on('data', () => {})
+  req.on('end', () => {
+    res.writeHead(401, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: `Invalid Authentication: ${req.headers.authorization ?? ''}`, type: 'invalid_authentication_error' } }))
+  })
+})
+await new Promise(resolve => echoed.listen(0, '127.0.0.1', resolve))
+const echoPort = echoed.address().port
+try {
+  const echoConfig = effectiveConfig({ timeoutMs: 5000, minIntervalMs: 0, debug: true }, ctxStub)
+  const echoSource = { ...normalizeSources(['deepseek-balance'], ctxStub)[0], url: `http://127.0.0.1:${echoPort}/user/balance`, _bearer: 'sk-echo-secret-1234567890' }
+  const echoCard = await querySource(echoSource, echoConfig, { configured: false })
+  ok('上游回显请求：卡片 error 里不出现凭据值',
+    echoCard.error !== null && !String(echoCard.error).includes('sk-echo-secret-1234567890'), String(echoCard.error))
+  ok('上游回显请求：raw 里也不出现凭据值（debug 打开时才带 raw，正好在这里核）',
+    echoCard.raw !== undefined && !String(echoCard.raw).includes('sk-echo-secret-1234567890'), String(echoCard.raw))
+  // 对照两条：边界不是魔法——不传 secrets 就不脱敏，所以调用点必须把手头的凭据传进来。
+  const noCtx = new __internals.SourceError('X', 'leak sk-echo-secret-1234567890', 's', 'raw sk-echo-secret-1234567890')
+  ok('SourceError 不传 secrets 时不脱敏（把这条契约钉住）', String(noCtx.message).includes('sk-echo-secret-1234567890'))
+  const withCtx = new __internals.SourceError('X', 'leak sk-echo-secret-1234567890', 's', 'raw sk-echo-secret-1234567890', ['sk-echo-secret-1234567890'])
+  ok('SourceError 传了 secrets 则 message 与 raw 一起脱敏',
+    !String(withCtx.message).includes('sk-echo-secret-1234567890') && !String(withCtx.raw).includes('sk-echo-secret-1234567890'),
+    String(withCtx.message))
+} finally {
+  await new Promise(resolve => echoed.close(resolve))
+}
+
 /* ============================================ 14. HTTP 4xx 的人话 + 源级提示（Moonshot 形态） */
 
 const seenM = []
@@ -1256,9 +1354,13 @@ ok('短版本号 0.4 不误命中 0.4.5（会退回 null）', extract(changelogT
 ok('不存在的版本返回 null 而不是抛', extract(changelogText, '9.9.9') === null)
 ok('非 X.Y.Z 直接判 null（防被拼进正则当元字符）', extract(changelogText, 'unreleased') === null)
 ok('--heading 时首行就是节标题', extract(changelogText, '0.4.5', { heading: true }).startsWith('## [0.4.5] -'))
-// 别把 extract 的 CLI 分支跑起来 —— import 时如果 argv[1] 判定错，stdout 会被抢着打印，
-// 这里通过"import 后 passed 计数还在涨"来旁证：上面 7 条断言就是这次 import 的产物。
-ok('CLI 守卫：import 时 argv[1] 不是本文件，不触发 process.exit', true)
+// 别把 extract 的 CLI 分支跑起来 —— import 时如果 argv[1] 判定错，stdout 会被抢着打印、
+// 甚至抢跑 process.exit。原写法是 `ok(..., true)`（恒真，回归时照样绿），这里改成真起一个
+// 子进程 import 它：抢跑就打印不出空 stdout 或退出码不为 0，这条会红。
+const cliProbe = spawnSync(process.execPath, ['-e', `import(${JSON.stringify(new URL('../scripts/extract-changelog-section.mjs', import.meta.url).href)})`], { encoding: 'utf8' })
+ok('CLI 守卫：被 import 时既不打印也不抢跑 exit',
+  cliProbe.status === 0 && cliProbe.stdout.trim() === '',
+  `status=${cliProbe.status} stdout=${JSON.stringify(cliProbe.stdout)} stderr=${JSON.stringify(cliProbe.stderr)}`)
 
 /* --- 发布流水线的关键契约（三处文件之间的耦合，漂了就发不出去） ------------- */
 // release.yml：浏览器一键发版；publish.yml：tag push 触发 npm 发布 + 建 GitHub Release。

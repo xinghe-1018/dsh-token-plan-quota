@@ -9,13 +9,21 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { repoPathFromUrl } from './repo-path.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CATEGORIES = ['agi', 'ui', 'usage', 'theme', 'model', 'identity', 'session', 'memory', 'tools', 'wsl',
   'browser', 'vision', 'voice', 'docs', 'skill', 'workflow', 'git', 'notify', 'dev', 'security', 'remote',
   'market', 'fun']
-const OWNER = 'xinghe-1018'
-const REPO = 'dsh-token-plan-quota'
+// owner/repo 从 package.json#repository.url 派生，不在这里再抄一份（三处各写一遍时，
+// 仓库改名会让投稿 URL 与新仓库不一致，而这条检查自己恰恰是管这个的——它得有自己的真值来源）。
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const repoPath = repoPathFromUrl(pkg.repository?.url)
+if (repoPath === undefined) {
+  console.error('check-submission: package.json#repository.url 里取不到 owner/repo')
+  process.exit(1)
+}
+const [OWNER, REPO] = repoPath.split('/')
 
 const problems = []
 const book = readFileSync(join(root, 'RELEASE.md'), 'utf8').replace(/\r\n/g, '\n')

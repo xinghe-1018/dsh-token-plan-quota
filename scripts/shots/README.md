@@ -37,8 +37,8 @@ DeepSeek Harness 的 web 层自带 fixture 模式（URL 加 `?fixture`，客户�
 
 ### 3. 要"当前模型"和卡片对得上，就得补全假宿主的模型目录
 
-徽标和面板都跟着**当前模型的供应商**走（`lib/client.js:979`、`:994-1003`），所以一张讲「Token Plan 额度」
-的图，活动模型必须真的就是 `qwen-token-plan-cn/…`。而假宿主的模型目录只有 DeepSeek 与 OpenAI 两家。
+徽标和面板都跟着**当前模型的供应商**走（`lib/client.js` 里按当前模型挑卡的那段：`pickOne()` / `bindOf()`），
+所以一张讲「Token Plan 额度」的图，活动模型必须真的就是 `qwen-token-plan-cn/…`。而假宿主的模型目录只有 DeepSeek 与 OpenAI 两家。
 
 补法是在浏览器侧改写那个客户端包里的一段目录常量（`make-shots.mjs` 的 `patchFixtureCatalog`）。
 **不改宿主源码**：`dsh web` 发的是**预构建**的客户端包，改 `packages/client` 下的 src 不重新构建就不生效
@@ -82,7 +82,8 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
-**英文套没有第 7 张**：那句解释文案宿主只有中文（`lib/index.js:376`），编一句英文就等于拍假图。
+**英文套没有第 7 张**：那句解释文案宿主只有中文（`lib/index.js` 的 `buildWindowCard` 里 `emptyReason` 那句），
+编一句英文就等于拍假图。
 
 中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload）与
 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
@@ -114,10 +115,10 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 3. **百分比是派生值**：`usedPercent`/`remainingPercent` 由 `finalizeCard()`/`finalizeMeter()` 从
    `{remaining,total}` 算出（取整到 4 位）。`fixture.mjs` 跑的是同一套公式，`assertFixture()` 还会复算比对——
    手改一个数字让算式对不上，出图会被拒。
-4. **余量条的配色有硬档位**：`client.js:218-222` 是 ≥70% 绿 / 40–70% 蓝 / <40% 橙红。
+4. **余量条的配色有硬档位**：`lib/client.js` 里余量条的三档配色是 ≥70% 绿 / 40–70% 蓝 / <40% 橙红。
    想让图里是绿条，合成数字就得真的落在 70% 以上，而不是去改前端。
-5. **"还没调用过"的卡必须字段缺席**：宿主在 `startedAt === undefined` 分支根本不发
-   `tokens`/`calls`/`resetAt`（`lib/index.js:368-376`）。写成 `tokens: 0` 会拍出一张宿主永远发不出的
+5. **"还没调用过"的卡必须字段缺席**：宿主在 `buildWindowCard` 的 `startedAt === undefined` 分支根本不发
+   `tokens`/`calls`/`resetAt`。写成 `tokens: 0` 会拍出一张宿主永远发不出的
    「0 tok」，徽标也不会是「无官方额度数据」。
 
 另外 ④ 那张图里的"官方卡"必须**不带任何数字**：一旦带了数字，前端会把同供应商的实测兜底卡收掉

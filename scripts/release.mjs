@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { repoPathFromUrl } from './repo-path.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -133,7 +134,7 @@ function main() {
   // 仓库路径只有一个来源：package.json#repository.url。原先 owner/repo 在三处各写一遍
   // （这里、check-submission.mjs、package.json），改名时 check-docs 只核 tag 那半段，
   // 于是 compare 链接会静默指向旧仓库而门禁全绿。
-  const repoPath = /github\.com[/:]([^/]+\/[^/.]+)/.exec(pkg.repository?.url ?? '')?.[1]
+  const repoPath = repoPathFromUrl(pkg.repository?.url)
   if (repoPath === undefined) throw new Error('package.json#repository.url 里取不到 owner/repo，compare 链接无法生成')
   const linkNeedle = `\n[${previous}]:`
   const withLink = moved.includes(linkNeedle)

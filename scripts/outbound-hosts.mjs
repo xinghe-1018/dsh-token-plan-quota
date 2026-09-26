@@ -12,11 +12,16 @@
  * 机械检查必须做行为矩阵，且要能失败）。
  */
 
-/** 从 URL 取 `https://<host>`（去尾斜杠）；取不到给 null —— 不猜、不补默认。 */
+/** 从 URL 取归一化后的 origin（`https://<host>`，主机小写、剥 userinfo 与默认端口）；解析不了给 null
+ *  —— 不猜、不补默认。归一化这一步是必需的：`https://API.example.com/x`、`user@host`、
+ *  `https://host:443/` 都指向已声明的那台主机，拿原文比会报成"未声明"（CodeRabbit PR #3 指出）。 */
 export function hostOfUrl(url) {
   if (typeof url !== 'string') return null
-  const match = /^https?:\/\/([^/?#]+)/.exec(url.trim())
-  return match === null ? null : `https://${match[1]}`
+  try {
+    return new URL(url.trim()).origin
+  } catch {
+    return null
+  }
 }
 
 /**

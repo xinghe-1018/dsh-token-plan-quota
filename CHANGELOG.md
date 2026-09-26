@@ -57,6 +57,26 @@ All notable changes to this project are documented here. The format follows
   - `make_latest: 'true'` 与旁边注释相反（不传该字段才是 API 默认＝新建即标 latest），补发旧版照样
     抢 Latest；改为显式比较版本：严格更高才标，API 查不通时保守不标并告警。
 
+### 修复（评审轮：CodeRabbit 在 PR #3 上的 7 条发现）
+
+- **手动发布要落在 tag 的那个 commit 上**：dispatch 入口原先只从 `package.json` 取版本号，却不核对
+  "这次 checkout 是不是该 tag 指向的 commit"——tag 推完之后 main 再前进一格，一次手动重跑就会把
+  **后来的代码**以同一个版本号发上 npm，而 GitHub Release 还指着 tag 的 commit（包内容与 tag 不一致）。
+  现在真要发布（`dry_run=false`）时 tag 必须存在且指向本次 checkout；dry run 只告警——它的用途正是
+  在分支上验机制，那里本来就没有对应 tag。
+- **候选版本等于现有 latest 时不再摘掉 latest**：比较从 `>` 改成 `>=`。同一个 release 重跑时，
+  旧写法会发 `false`，等于让 action 取消那条已经标好的 latest。
+- **出站主机比对走归一化 `origin`**：`https://API.DeepSeek.com:443/` 与声明里的
+  `https://api.deepseek.com` 是同一台主机；拿原文比会误报"未声明"（假红）。
+- **结构化 `raw` 与 RPC 的单条凭据也进脱敏**：`parseEnvelope` 把上游失败信封塞进 `raw` 时没把
+  secrets 传给 `configlessTrim`（按键名过滤挡得住"键名叫 sec_token"，挡不住"值里回显了凭据、
+  键名由上游自取"）；`postForm` 原先只把整个请求体当候选值，而上游可能只回显一个 AccessKeyId。
+- **`owner/repo` 抽取保留点号**（`owner/plugin.v2.git` 曾被 `[^/.]+` 抓成 `owner/plugin`，
+  算出的投稿条目文件名跟着错），并抽成 `scripts/repo-path.mjs` **单一实现**——原先
+  `release.mjs` 与 `check-submission.mjs` 各写一份，加 `package.json` 里的 `repository.url` 一共三份。
+- `workflow/ENVIRONMENT.md` 去掉会漂的门禁项数（它写着 379/207/32，实跑是 420/224/91），
+  并把耗时改成实测的 7 秒——该文件开头自己写着"能查到的东西不写在这里，写下来就是一份会过期的缓存"。
+
 ## [0.4.10] - 2026-09-25
 
 ### Changed

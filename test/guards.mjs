@@ -22,6 +22,7 @@ import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, normalizeTarget } from '../scripts/link-targets.mjs'
 import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
+import { repoPathFromUrl } from '../scripts/repo-path.mjs'
 import { __internals } from '../lib/index.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -307,6 +308,25 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('主机推导：客户端 FONT_CSS 的 CDN 主机', derived.has('https://cdn.jsdelivr.net'))
   ok(`主机推导：注释里的 URL 不算出站（且总数正好 ${derived.size}=6）`,
     !derived.has('https://comment.example.com') && derived.size === 6)
+
+  // 归一化（CR PR #3 的 #4/#8）：大小写、默认端口、userinfo 都指向同一条声明，
+  // 拿原文比会把它们判成"未声明的另一台主机"——那是假红，比漏检更坏。
+  const normalized = deriveHostsFromCode({
+    presets: {
+      upper: { url: 'https://API.Example.com/x' },
+      ported: { url: 'https://api.example.com:443/y' },
+      userinfo: { url: 'https://user:pw@api.example.com/z' },
+    },
+    clientSource: '',
+  })
+  ok(`主机推导：大小写/默认端口/userinfo 归纳到同一条 origin（得到 ${[...normalized].join(',')}）`,
+    normalized.size === 1 && normalized.has('https://api.example.com'))
+
+  // owner/repo 抽取（CR PR #3 的 #7）：点号要留着——`plugin.v2.git` 只该剥末尾的 `.git`。
+  ok('repoPathFromUrl：https + .git', repoPathFromUrl('git+https://github.com/owner/plugin.v2.git') === 'owner/plugin.v2')
+  ok('repoPathFromUrl：ssh 形态', repoPathFromUrl('git@github.com:owner/repo.git') === 'owner/repo')
+  ok('repoPathFromUrl：无 .git 且带尾斜杠', repoPathFromUrl('https://github.com/owner/repo/') === 'owner/repo')
+  ok('repoPathFromUrl：非 github 一律 undefined（不猜）', repoPathFromUrl('https://gitlab.com/owner/repo.git') === undefined)
 
   const full = compareHosts(derived, new Set([...derived]))
   ok('主机比对：一一对应时两边都空', full.undeclared.length === 0 && full.unused.length === 0)

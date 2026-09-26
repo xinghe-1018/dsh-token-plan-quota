@@ -77,6 +77,37 @@ jobs:
       - name: full gate (tests + manifest + README claims + submission)
         run: npm run check
 
+      # CodeRabbit 在 PR #3 指出：dispatch 入口只从 package.json 取版本号，却不核对"这次 checkout
+      # 是不是那个 tag 指向的 commit"。tag 推完之后 main 再前进一格，一次手动重跑就会把**后来的
+      # 代码**以同一个版本号发上 npm，而 GitHub Release 还指着 tag 的 commit —— 包内容与 tag 不一致。
+      # 规则：真要发布（dry_run=false）时 tag 必须存在且指向本次 checkout；dry run 只告警不阻断
+      # （dry run 的用途正是在分支上验机制，那里本来就没有对应 tag）。
+      - name: dispatch 时校验 checkout 就是 tag 的 commit
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./package.json').version")"
+          tag="v${ver}"
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::${tag} 这个 tag 不存在（dry run，仅提示；真要发布时先确认 tag 已推）"
+              exit 0
+            fi
+            echo "::error::${tag} 这个 tag 不存在：先走 release.yml 推 tag 再来发版"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "${tag}")"
+          if [ "$tag_commit" != "${GITHUB_SHA}" ]; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::checkout ${GITHUB_SHA:0:7} 不是 ${tag} 指向的 commit ${tag_commit:0:7}（dry run，仅提示）"
+              exit 0
+            fi
+            echo "::error::checkout ${GITHUB_SHA:0:7} 不是 ${tag} 指向的 commit ${tag_commit:0:7} —— 拒绝以这个版本号发布后来的代码"
+            exit 1
+          fi
+          echo "::notice::checkout 与 ${tag} 指向同一个 commit（${tag_commit:0:7}）"
+
       - name: tarball contents
         shell: bash
         run: |
@@ -238,11 +269,13 @@ jobs:
               echo "value=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              if node -e 'const g=v=>v.replace(/^v/,"").split(".").map(Number);const[a,b]=process.argv.slice(1).map(g);process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>0?0:1)' "$ver" "$current"; then
-                echo "::notice::$ver 高于现有 latest $current，标 latest"
+              # `>=` 而不是 `>`：候选版本**等于**现有 latest 时（例如同一个 release 重跑）也要继续标 latest。
+              # 用 `>` 会在这种情形下发 `false`，等于让 action 去把已经标好的 latest 摘掉（CodeRabbit PR #3 指出）。
+              if node -e 'const g=v=>v.replace(/^v/,"").split(".").map(Number);const[a,b]=process.argv.slice(1).map(g);process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>=0?0:1)' "$ver" "$current"; then
+                echo "::notice::$ver 不低于现有 latest $current，标 latest"
                 echo "value=true" >> "$GITHUB_OUTPUT"
               else
-                echo "::notice::$ver 不高于现有 latest $current，不抢 latest"
+                echo "::notice::$ver 低于现有 latest $current，不抢 latest"
                 echo "value=false" >> "$GITHUB_OUTPUT"
               fi
               ;;

@@ -509,6 +509,12 @@ try { __internals.assertDeclaredHost('http://api.deepseek.com/x', {}, 'x') } cat
 check('非回环的 http 一律 BadUrl（凭据不走明文）', hostHttpCode, 'BadUrl')
 check('回环是测试的明文例外（宪法 VI），不受声明集合约束',
   __internals.assertDeclaredHost('http://127.0.0.1:9/balance', {}, 'x'), 'http://127.0.0.1:9')
+// 比对走归一化后的 origin：大写主机名与显式默认端口仍指向已声明的那台主机
+// （拿原文比会误报"未声明"——CodeRabbit 在 PR #3 上指出）。
+check('主机比对：大写与 :443 仍算已声明',
+  [__internals.assertDeclaredHost('https://API.DeepSeek.com:443/user/balance', {}, 'x'),
+    __internals.assertDeclaredHost('https://openrouter.ai:443/api/v1/credits', {}, 'x')],
+  ['https://api.deepseek.com', 'https://openrouter.ai'])
 // 端到端：未声明的自定义源要在断言处就变成错误卡，而不是真去请求它。
 const undeclaredCard = await querySource({ id: 'custom-undeclared', label: '自定义', type: 'http', url: 'https://evil.example.com/balance' },
   effectiveConfig({ sources: [], showInstanceWindow: false }, ctxStub), { configured: false })

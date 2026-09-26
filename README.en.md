@@ -246,6 +246,7 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | Where the local ledger is persisted |
 | `minIntervalMs` | `1200` | Minimum interval between outbound calls (ms), throttling globally |
 | `timeoutMs` | `15000` | Per-request upstream timeout (ms, floor 1000) |
+| `allowUndeclaredHosts` | `false` | Outbound allowlist switch. Off by default: every request is checked against the declared host set in `dshhub.permissions.network` **before** it goes out (constitution V). A custom source pointing elsewhere must turn this on explicitly; the snapshot then carries a notice |
 
 ### Turning one single card off
 
@@ -448,17 +449,17 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 409 assertions, offline
+node test/host.mjs                  # 416 assertions, offline
 node test/client.mjs                # 224 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 90 assertions: behaviour matrices of the gates themselves
+node test/guards.mjs                # 91 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 409/224 tests plus 90 guards assertions" - and checks them
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
+config table, 8 sources, 8 declared outbound hosts, 416/224 tests plus 91 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

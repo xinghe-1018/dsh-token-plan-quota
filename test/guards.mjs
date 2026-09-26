@@ -329,6 +329,12 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const realDiff = compareHosts(realDerived, realDeclared)
   const realMessage = `主机真数据：声明 ${realDeclared.size} 个与代码推导逐项相等（少声明 ${realDiff.undeclared.join(',') || '无'}；多声明 ${realDiff.unused.join(',') || '无'}）`
   ok(realMessage, realDiff.undeclared.length === 0 && realDiff.unused.length === 0)
+  // 代码侧真值与 package.json 的声明必须逐项相等：两份都在是有意的（运行时用前者在发请求前
+  // 拒绝未声明主机，审计用后者），但两份就一定会漂，所以这里机械核一遍。
+  const codeDeclared = new Set(__internals.DECLARED_HOSTS)
+  const mismatched = [...realDeclared].filter(host => !codeDeclared.has(host)).concat([...codeDeclared].filter(host => !realDeclared.has(host)))
+  ok(`DECLARED_HOSTS 与 package.json#permissions.network 逐项相等（不一致项：${mismatched.join(',') || '无'}）`,
+    codeDeclared.size === realDeclared.size && mismatched.length === 0)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

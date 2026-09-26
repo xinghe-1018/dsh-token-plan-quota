@@ -8,6 +8,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **出站主机白名单**：`dshhub.permissions.network` 从"文档承诺"变成**运行时断言**——请求发出**之前**
+  核主机在声明集合里，未声明一律 `HostNotDeclared` 拒发（含非绝对 URL 的 `BadUrl`）。自定义源指向
+  别处要显式打开新配置 `allowUndeclaredHosts`，打开后快照里多一条 notice，不静默降级。
+  起因：`endpoint`（用户可配）与自定义源的 `url` 原本能把含 AK/SK 签名的请求打到任意主机而没有任何
+  检查，"声明集合 == 实际出站集合"（宪法 V）于是无法成立。代码侧真值 `DECLARED_HOSTS` 与
+  `package.json` 的声明由门禁**双向**核对；`docs/adding-a-provider.md` 同步要求两处一起改。
+
+### Fixed
+
+- **门禁宣称的覆盖面大于实际覆盖面**（比漏检更坏的假绿）：
+  - 出站主机检查里扫 README 的那行是**死代码**（两份 README 里根本没有那个 URL，实测出现 0 次），
+    而只做**单向**比对；`DEFAULTS.endpoint`（阿里云 BSS 的裸主机名）与 `lib/client.js` 的字体 CDN
+    这两个**真实**出站主机压根不在被检集合里。现在推导逻辑抽成 `scripts/outbound-hosts.mjs`
+    单一实现（预设 + endpoint + FONT_CSS），双向比对，并带扫描面下限自检。
+  - 编码护栏只扫 "11 个顶层文件 + 6 个目录一层"，漏掉 `.githooks/pre-commit`（不变量 VI 点名它依赖
+    shebang，BOM 会让 shebang 失效）与 `scripts/shots/*.mjs`；改为递归全仓文本文件并带下限自检。
+  - 截图契约只数引用条数（同一张图引 7 次即过），而"13 张图存在"由另一份硬编码清单保证，两者从不
+    交汇；改为按**集合**核对：名单里每张图都要被对应 README 引到。
+  - `check-refs` 只扫 ROADMAP + `workflow/` + `specs/`（19 个活文档），漏掉 `scripts/shots/README.md`
+    里那 5 处行号引用；改为全仓 `.md`（豁免 CHANGELOG 与 `reviews/`），现在明确报 34 个活文档。
+  - `test/guards.mjs` 的 `rejects()` 捕任何异常都算通过——夹具自己崩了（TypeError）也是绿；现在要求
+    消息匹配预期，或至少驳回"不像守卫在拒绝"的运行时错误。新增出站主机正反例 10 条。
+
+- **发布流水线三处静默失手**：
+  - **用 `GITHUB_TOKEN` 推的 tag 不会触发 publish.yml**（GitHub 防递归的设计，例外只有
+    `workflow_dispatch` / `repository_dispatch`），而一键发版推 tag 用的正是它——tag 看着推成功、
+    两处注释都宣称 publish 接手，npm 上什么都没有。现在 `release.yml` 推完显式 dispatch
+    （因此补上 `actions: write`）；`publish.yml` 两条入口改为等价（原先 dispatch 路径不建 GitHub Release）。
+  - **CI 下"只在 main 发版"闸门被整条跳过**，而 `workflow_dispatch` 的分支是人在 UI 上选的、推的却是
+    `HEAD:main`；改为 CI 下校验 `GITHUB_REF === refs/heads/main`。
+  - **发布提交撞自家门禁**：先 commit 后 tag，而 CONTRIBUTING 推荐的 pre-commit 钩子会跑 check-docs
+    （它要求 CHANGELOG 引用的 tag 已存在）→ 提交被拒、留下"已改已 add、无 commit"的半途状态；
+    改为 `git commit --no-verify`（脚本本就在打完 tag 之后跑完整七步自检）。
+  - `make_latest: 'true'` 与旁边注释相反（不传该字段才是 API 默认＝新建即标 latest），补发旧版照样
+    抢 Latest；改为显式比较版本：严格更高才标，API 查不通时保守不标并告警。
+
 ## [0.4.10] - 2026-09-25
 
 ### Changed

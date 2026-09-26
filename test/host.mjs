@@ -493,6 +493,27 @@ check('configlessTrim 删掉凭据键，保留正常用量字段',
 check('configlessTrim 按值兜底：普通字段里回显的凭据值也脱敏', trimmedShape.note, 'echo **** end')
 check('redactSecrets 只脱敏够长的值（短值不误伤普通文本）',
   [__internals.redactSecrets('a=token123456789', ['token123456789']), __internals.redactSecrets('ab', ['ab'])], ['a=****', 'ab'])
+// 出站声明要真的约束出站（宪法 V）：原先"声明集合 == 实际出站集合"只是文档承诺——
+// `endpoint`（用户可配）与自定义源的 url 能把请求（含 AK/SK 签名）打到任意主机而没有任何检查。
+check('声明内的主机放行', __internals.assertDeclaredHost('https://api.deepseek.com/user/balance', {}, 'x'), 'https://api.deepseek.com')
+let hostRejectCode = 'no-throw'
+try { __internals.assertDeclaredHost('https://evil.example.com/x', {}, 'x') } catch (error) { hostRejectCode = error.code }
+check('未声明主机被拒（HostNotDeclared）', hostRejectCode, 'HostNotDeclared')
+check('显式打开 allowUndeclaredHosts 才放行',
+  __internals.assertDeclaredHost('https://evil.example.com/x', { allowUndeclaredHosts: true }, 'x'), 'https://evil.example.com')
+let hostBadUrlCode = 'no-throw'
+try { __internals.assertDeclaredHost('not-a-url', {}, 'x') } catch (error) { hostBadUrlCode = error.code }
+check('非绝对 URL 判 BadUrl（不猜默认主机）', hostBadUrlCode, 'BadUrl')
+let hostHttpCode = 'no-throw'
+try { __internals.assertDeclaredHost('http://api.deepseek.com/x', {}, 'x') } catch (error) { hostHttpCode = error.code }
+check('非回环的 http 一律 BadUrl（凭据不走明文）', hostHttpCode, 'BadUrl')
+check('回环是测试的明文例外（宪法 VI），不受声明集合约束',
+  __internals.assertDeclaredHost('http://127.0.0.1:9/balance', {}, 'x'), 'http://127.0.0.1:9')
+// 端到端：未声明的自定义源要在断言处就变成错误卡，而不是真去请求它。
+const undeclaredCard = await querySource({ id: 'custom-undeclared', label: '自定义', type: 'http', url: 'https://evil.example.com/balance' },
+  effectiveConfig({ sources: [], showInstanceWindow: false }, ctxStub), { configured: false })
+check('未声明的自定义源变成 HostNotDeclared 错误卡',
+  [undeclaredCard.errorCode, typeof undeclaredCard.hint], ['HostNotDeclared', 'string'])
 check('publicCard 透传 meters', publicCard(consoleCard).meters.length, 2)
 // 字段错位回归（2026-09-23 账期改名后的真实风险）：`quota-config` 已按月、`usage` 仍只回周比例。
 // 配置上限不得自成一条计量、不得凭"monthly 优先"当上主计量；官方周比例必须照常进顶层，

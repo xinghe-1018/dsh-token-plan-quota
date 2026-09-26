@@ -162,7 +162,7 @@ else {
   if (sources !== tally.sources) problems.push(`README.md 说 ${sources} 个数据源，实际 ${tally.sources} 个`)
   if (hostCount !== tally.hosts) problems.push(`README.md 说声明 ${hostCount} 个出站主机，实际 ${tally.hosts} 个`)
 }
-const enProse = /(\d+) DEFAULTS keys, an (\d+)-row\s*\n?\s*config table, (\d+) sources,\s*\n?\s*(\d+) declared outbound hosts/.exec(en)
+const enProse = /(\d+) DEFAULTS keys, an? (\d+)-row\s*\n?\s*config table, (\d+) sources,\s*\n?\s*(\d+) declared outbound hosts/.exec(en)
 if (enProse === null) problems.push('README.en.md 里找不到 "N DEFAULTS keys, an M-row config table, K sources, L declared outbound hosts" 这句')
 else {
   const [keys, rows, sources, hostCount] = [Number(enProse[1]), Number(enProse[2]), Number(enProse[3]), Number(enProse[4])]

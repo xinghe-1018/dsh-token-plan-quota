@@ -1,0 +1,85 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# 本仓库的设计约束见 AGENTS.md 与 .specify/memory/constitution.md；
+# 这里只补"审查时需要、但 AGENTS.md 没写死"的领域规则，避免与仓库规范重复表述。
+language: "zh-CN"
+early_access: false
+tone_instructions: >-
+  这是一个零第三方依赖的 DSH 宿主插件，自带门禁（npm run check：host/client/guards/check-manifest/
+  check-docs/check-refs/check-submission，最后一次编辑之后必须全绿）。只报会导致门禁假红或假绿、
+  工件与事实不一致、双语不同源、真实缺陷的问题；不提美化、重构与风格建议。
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: false
+  path_instructions:
+    - path: "README.md"
+      instructions: |
+        本仓库两份 README 必须双语同源：README.md 与 README.en.md 任一侧有实质改动时，要求另一侧同步；
+        只改单侧时报 warning 并指出缺的是哪一侧。数字口径与代码同源，改数字要能指到代码或实测出处。
+    - path: "README.en.md"
+      instructions: |
+        与 README.md 双语同源：任一侧实质改动必须成对出现；数字口径与代码同源，改数字要能指到代码或实测出处。
+    - path: "scripts/*.mjs"
+      instructions: |
+        这些是工程门禁脚本，按四条审：
+        (1) 断言可证伪吗——正例与反例两半是否都补了（本仓库教条：机械检查必须做行为矩阵）；
+        (2) 会不会把无害写法判红——假红比漏检更坏，会把红灯训练成背景噪音；
+        (3) 常量、正则、清单是否单一事实源，重复字面量要指出；
+        (4) URL/路径匹配是否限定主机与仓库（外部同尾路径不得满足仓库内断言）。
+    - path: "test/*.mjs"
+      instructions: |
+        测试即门禁：检查断言是否被弱化、是否跳过、"修好了测试"式的改动。
+        功能坏了这些测试还会过吗？不会过的才算测试。
+    - path: "lib/*.js"
+      instructions: |
+        遵守宪法原则：数字要么是官方接口真值、要么明确标注「实测」的本实例窗口；
+        不折算 Credits、不估算余量；没有官方分母就不出现百分比。
+        lib/detect.js 是纯函数层，网络/文件/cordis 调用不得进入该文件。
+        凭据（.env*、.credentials.yaml、Cookie、密钥）不读、不回显、不进日志与错误信息——这是硬线。
+    - path: "docs/**/*.md"
+      instructions: |
+        docs/ 会随 npm 包发布：只审事实一致性（命令、参数、数字与代码/实测出处是否对得上），
+        不做文风建议；中间产物（截图工作目录等）不得出现在 docs/ 内。
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: ["main"]
+    ignore_title_keywords: ["WIP", "DO NOT MERGE", "skip-review"]
+    auto_incremental_review: true
+  tools:
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+  # 自动改码类动作全关：本仓库零依赖且门禁严格，机器生成的改动容易撞门禁或引入第三方依赖。
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+  pre_merge_checks:
+    custom_checks:
+      - name: "凭据不回显"
+        mode: "error"
+        instructions: >-
+          当 diff 中新增或修改了任何 .env*、.credentials.yaml、Cookie、API key、token 相关处理时，
+          检查其值是否可能被读取、回显、写进日志或错误信息。出现回显即判 fail（宪法 II 硬线）。
+          文档、注释、测试 fixture 里的占位符与示例不算违规。
+      - name: "门禁与行为矩阵同步"
+        mode: "warning"
+        instructions: >-
+          当 scripts/*.mjs 或 test/*.mjs 的检查逻辑被修改时，要求同一 PR 内同步更新行为矩阵（正例 + 反例）；
+          只改实现不补反例时报 warning。README/工件里引用的门禁条数、测试数、断言数变化时，
+          要求同步更新所有引用副本；无法确认哪几处需要同步时，列出候选位置而不是放过。
+      - name: "双语同源"
+        mode: "warning"
+        instructions: >-
+          当 README.md 或 README.en.md 之一被实质修改（不只空格/链接修正）而另一侧未动时判 warning，
+          并点名缺失的一侧；两侧同时修改则 pass。
+
+chat:
+  auto_reply: true

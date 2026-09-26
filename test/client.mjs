@@ -725,7 +725,9 @@ function findChip(node) {
   ok('胶囊不挂天数/速度/重试标签（详细内容交给面板）',
     !flat.includes('tpq-tag') && !flat.includes('tpq-speed'))
   ok('吞吐速度收进胶囊 tooltip（数字仍在 title 里，只是不占位）', flat.includes('42 tok/s'))
-  ok('徽标无状态圆点、无表情符号', !flat.includes('tpq-dot') && !flat.includes('⚡'))
+  // 原先这条查的是 `tpq-dot` 与 `⚡`——两个字符串在实现与夹具里都不存在，断言恒真。
+  // 改成对所有渲染输出做表情符号扫描：真加了 emoji 就会红。
+  ok('徽标不出现表情符号（原断言查的 tpq-dot 实现里根本没有，恒真）', !/\p{Extended_Pictographic}/u.test(flat), flat.slice(0, 200))
 
   // 点开 → panelScope=current：只列当前供应商的卡 + 本实例实测，DeepSeek 不再常驻。
   const openChip = findChip(await settle(render, 1))

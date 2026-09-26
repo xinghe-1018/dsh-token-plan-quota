@@ -9,8 +9,12 @@
  * 在 CI 里再跑一遍全量检查才真发 npm。所以本地这一步的失败**不会**发出半个包。
  *
  * 浏览器一键：`.github/workflows/release.yml` 用 `workflow_dispatch` 在 runner 上跑同一段
- * 代码（不复制逻辑），差别只有两处 —— `GITHUB_ACTIONS=true` 时给 `git tag -a` 补上身份，
- * 以及推用的凭据来自 actions/checkout 的 `persist-credentials` 默认注入的 `GITHUB_TOKEN`。
+ * 代码（不复制逻辑），差别有三处 —— `GITHUB_ACTIONS=true` 时给 `git tag -a` 补上身份、
+ * 推用的凭据来自 actions/checkout 的 `persist-credentials` 默认注入的 `GITHUB_TOKEN`，
+ * 以及**推完必须显式 dispatch publish.yml**：用 `GITHUB_TOKEN` 触发的事件不会新建 workflow run
+ * （GitHub 防递归的设计，例外只有 workflow_dispatch / repository_dispatch），所以那条路径上
+ * publish.yml 的 `on: push: tags` 永远不会自己触发。那一步写在 release.yml 里，因为本地手推
+ * tag（用人的凭据）不受这条限制，仍然走自动触发。
  *
  * 三条硬前置（对齐"永不带脏发布"）：
  *  1. 工作区干净 —— 有未提交改动就停，避免把没写完的东西打上 release tag；
@@ -94,9 +98,15 @@ function main() {
   const blockers = []
   if (git('status', '--porcelain') !== '') blockers.push('工作区不干净：先提交或还原')
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
-  // Actions runner 上 checkout 默认是 detached HEAD（`--abbrev-ref` 会得到 `HEAD`），
-  // 但 workflow_dispatch 触发时 `ref` 就是所选分支；这条闸门是给本地误操作准备的，CI 不适用。
-  if (branch !== 'main' && !IS_CI) blockers.push(`当前在 ${branch}，release 只在 main 上打`)
+  // Actions runner 上 checkout 默认是 detached HEAD（`--abbrev-ref` 会得到 `HEAD`），拿不到分支名，
+  // 所以 CI 下改看 `GITHUB_REF`：workflow_dispatch 的 ref 是人在 UI 上选的，**可以选任意分支**，
+  // 而下面推的是 `HEAD:main` —— 不加这道闸门就等于"从任意分支发版会把该分支内容推上 main 再打 tag"。
+  if (IS_CI) {
+    const ref = process.env.GITHUB_REF ?? ''
+    if (ref !== 'refs/heads/main') blockers.push(`CI 的 ref 是 ${ref || '(未知)'}，release 只在 refs/heads/main 上打（在 Actions 页面选 main 再跑）`)
+  } else if (branch !== 'main') {
+    blockers.push(`当前在 ${branch}，release 只在 main 上打`)
+  }
   if (unreleasedBody(changelog) === '') blockers.push('[Unreleased] 是空的：没有内容可发')
   if (changelog.includes(`## [${target}]`)) blockers.push(`CHANGELOG 已有 ## [${target}]`)
   if (git('tag', '--list', `v${target}`).trim() !== '') blockers.push(`tag v${target} 已存在`)
@@ -120,9 +130,14 @@ function main() {
     `## [Unreleased]\n\n## [${target}] - ${today}\n\n${body}\n\n## `,
   )
   if (!moved.includes(`## [${target}] - ${today}`)) throw new Error('CHANGELOG 搬移失败：没找到 [Unreleased] 的边界')
+  // 仓库路径只有一个来源：package.json#repository.url。原先 owner/repo 在三处各写一遍
+  // （这里、check-submission.mjs、package.json），改名时 check-docs 只核 tag 那半段，
+  // 于是 compare 链接会静默指向旧仓库而门禁全绿。
+  const repoPath = /github\.com[/:]([^/]+\/[^/.]+)/.exec(pkg.repository?.url ?? '')?.[1]
+  if (repoPath === undefined) throw new Error('package.json#repository.url 里取不到 owner/repo，compare 链接无法生成')
   const linkNeedle = `\n[${previous}]:`
   const withLink = moved.includes(linkNeedle)
-    ? moved.replace(linkNeedle, `\n[${target}]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v${previous}...v${target}\n[${previous}]:`)
+    ? moved.replace(linkNeedle, `\n[${target}]: https://github.com/${repoPath}/compare/v${previous}...v${target}\n[${previous}]:`)
     : moved
   if (!withLink.includes(`[${target}]: https://github.com`)) throw new Error(`CHANGELOG 缺 [${previous}] 链接区，无法插入 compare 链接`)
 
@@ -148,7 +163,12 @@ function main() {
     git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
   }
   git('add', 'package.json', 'CHANGELOG.md')
-  git('commit', '-m', `chore(release): ${target}`)
+  // `--no-verify` 是必需的，不是图快：CONTRIBUTING 推荐的 pre-commit 钩子会跑 `npm run check`，
+  // 而此刻 CHANGELOG 刚插进去的 compare 链接指向 `v${target}`，tag 要到下一行才创建 ——
+  // check-docs 的"CHANGELOG 引用的 tag 必须存在"必然红，提交被自家门禁拒绝，留下
+  // "已改已 add、无 commit"的半途状态（下一次 `git status` 还会说工作区脏，release 自己也走不动）。
+  // 脚本自己在下游（打完 tag 之后）跑完整自检，钩子这一步是重复的。
+  git('commit', '--no-verify', '-m', `chore(release): ${target}`)
   // tag 先打在本地：check-docs 会核 CHANGELOG 里的 compare 链接指向真实 tag，
   // 没有它就永远红，于是"先自检再推"变成死循环。
   git('tag', '-a', `v${target}`, '-m', `${pkg.name} ${target}`)
@@ -158,13 +178,15 @@ function main() {
   // 报"自检没过"却拿不到任何原因（0.4.7 发布时实机撞上：手动 npm run check 全绿）。
   // 直接用自己的 process.execPath 跑 `npm run check` 里那七步（顺序与 package.json#scripts.check
   // 一致）：跨平台都是真可执行体，不碰 shell，也不触发 DEP0190。
-  const CHECK_STEPS = [
-    ['test/host.mjs'], ['test/client.mjs'], ['test/guards.mjs'],
-    ['scripts/check-manifest.mjs'], ['scripts/check-docs.mjs'],
-    ['scripts/check-refs.mjs'], ['scripts/check-submission.mjs'],
-  ]
+  // 步骤清单以 package.json#scripts.check 为唯一来源：原先在这里又抄了一份，加/换一步就两处漂，
+  // 而"release 跑的自检"与"CI 跑的 check"理应是同一套（V：宣称与实际必须一致）。
+  const CHECK_STEPS = String(pkg.scripts?.check ?? '').split('&&').map(part => part.trim()).filter(part => part !== '')
+  if (CHECK_STEPS.length === 0 || CHECK_STEPS.some(step => !/^node\s+\S+$/.test(step))) {
+    throw new Error(`package.json#scripts.check 的形状变了（期望「node <文件> && …」的链），release.mjs 的解析要同步：${pkg.scripts?.check ?? '(缺失)'}`)
+  }
+  const CHECK_ARGS = CHECK_STEPS.map(step => step.replace(/^node\s+/, '').split(/\s+/))
   let checkFailed = null
-  for (const args of CHECK_STEPS) {
+  for (const args of CHECK_ARGS) {
     const step = spawnSync(process.execPath, args, { cwd: ROOT, stdio: 'inherit', shell: false })
     if (step.status !== 0) {
       checkFailed = { step: args[0], status: step.status, error: step.error ? step.error.message : null }

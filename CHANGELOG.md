@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **上游错误体里的凭据不再随错误信息出网（CWE-209）**：`SourceError` 的 `raw` 早已按值脱敏，但
+  **message** 没有——而 message 同样会随卡片（`card.error`）与 `/probe`（`error: error.message`）
+  出网。真实的注入拦截 / WAF 常把收到的 `Authorization` 原样写进错误体（`Invalid Authentication:
+  Bearer sk-…`），于是报错信息里就躺着真 Key。现在 `SourceError` 新增可选的 `secrets` 参数，把
+  message 与 raw 一起按值脱敏，四条出站路径都把手头的凭据（Cookie / Bearer / 请求体 / AK-SK）传进去；
+  "不传就不脱敏"这条契约也用一组对照断言钉住（边界不是魔法，调用点必须传）。回归用例是端到端的：
+  起一个把 `Authorization` 原样回显进 401 体的回环服务，断言卡片 `error` 与 `raw` 都不含该密钥。
+  （CodeRabbit 在 PR #3 上报出；采纳前我核了代码与四条出站路径。）
+
 ### Added
 
 - **出站主机白名单**：`dshhub.permissions.network` 从"文档承诺"变成**运行时断言**——请求发出**之前**

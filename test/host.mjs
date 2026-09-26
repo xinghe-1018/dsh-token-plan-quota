@@ -921,6 +921,39 @@ try {
   await new Promise(resolve => server.close(resolve))
 }
 
+/* ====== 13b. 上游把请求原样回显时，凭据不得随 message / raw 出网（CWE-209） ====== */
+
+// 为什么要有这一组：`raw` 早先按值脱敏了，但 `SourceError` 的 **message** 没有——而 message 同样
+// 会随卡片（`card.error`）与 `/probe`（`error: error.message`）出网。真实的注入拦截/WAF 就爱把
+// 收到的 `Authorization` 原样写进错误体，报错信息里于是躺着真 Key。
+const echoed = createServer((req, res) => {
+  req.on('data', () => {})
+  req.on('end', () => {
+    res.writeHead(401, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: `Invalid Authentication: ${req.headers.authorization ?? ''}`, type: 'invalid_authentication_error' } }))
+  })
+})
+await new Promise(resolve => echoed.listen(0, '127.0.0.1', resolve))
+const echoPort = echoed.address().port
+try {
+  const echoConfig = effectiveConfig({ timeoutMs: 5000, minIntervalMs: 0, debug: true }, ctxStub)
+  const echoSource = { ...normalizeSources(['deepseek-balance'], ctxStub)[0], url: `http://127.0.0.1:${echoPort}/user/balance`, _bearer: 'sk-echo-secret-1234567890' }
+  const echoCard = await querySource(echoSource, echoConfig, { configured: false })
+  ok('上游回显请求：卡片 error 里不出现凭据值',
+    echoCard.error !== null && !String(echoCard.error).includes('sk-echo-secret-1234567890'), String(echoCard.error))
+  ok('上游回显请求：raw 里也不出现凭据值（debug 打开时才带 raw，正好在这里核）',
+    echoCard.raw !== undefined && !String(echoCard.raw).includes('sk-echo-secret-1234567890'), String(echoCard.raw))
+  // 对照两条：边界不是魔法——不传 secrets 就不脱敏，所以调用点必须把手头的凭据传进来。
+  const noCtx = new __internals.SourceError('X', 'leak sk-echo-secret-1234567890', 's', 'raw sk-echo-secret-1234567890')
+  ok('SourceError 不传 secrets 时不脱敏（把这条契约钉住）', String(noCtx.message).includes('sk-echo-secret-1234567890'))
+  const withCtx = new __internals.SourceError('X', 'leak sk-echo-secret-1234567890', 's', 'raw sk-echo-secret-1234567890', ['sk-echo-secret-1234567890'])
+  ok('SourceError 传了 secrets 则 message 与 raw 一起脱敏',
+    !String(withCtx.message).includes('sk-echo-secret-1234567890') && !String(withCtx.raw).includes('sk-echo-secret-1234567890'),
+    String(withCtx.message))
+} finally {
+  await new Promise(resolve => echoed.close(resolve))
+}
+
 /* ============================================ 14. HTTP 4xx 的人话 + 源级提示（Moonshot 形态） */
 
 const seenM = []

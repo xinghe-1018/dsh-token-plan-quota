@@ -101,42 +101,40 @@ export function findLineRefs(text) {
  * 路径长度上限，而指向仓库外的 `.md` 会被真读进来。那等于给这道新门禁加了一个"读仓库外文件"的面。
  * 遇到 `isSymbolicLink()` 直接跳过：实测 junction 与文件 symlink 都会报 true，一条挡住"环"与"越界"。
  */
+/** 递归时跳过的目录：`.git` 里没有活文档（而且量极大）、node_modules 与截图中间产物同理。 */
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work'])
+
 function walkMarkdown(absDir, rel, out) {
   for (const dirent of readdirSync(absDir, { withFileTypes: true })) {
     const childRel = rel === '' ? dirent.name : `${rel}/${dirent.name}`
     if (dirent.isSymbolicLink()) continue
-    if (dirent.isDirectory()) walkMarkdown(join(absDir, dirent.name), childRel, out)
-    else if (dirent.name.endsWith('.md')) out.push(childRel)
+    if (dirent.isDirectory()) {
+      if (!SKIP_DIRS.has(dirent.name)) walkMarkdown(join(absDir, dirent.name), childRel, out)
+    } else if (dirent.name.endsWith('.md')) out.push(childRel)
   }
 }
 
-/** 范围内的文件：显式列举顶层文件 + 递归两个目录，排除 `reviews/`。 */
+/**
+ * 范围内的文件：**仓库里所有 .md**，只有两类豁免（理由见文件头）——
+ *  - `CHANGELOG.md`：记录已发布的历史，那时的行号是当时的现场；
+ *  - 任何层级的 `reviews/` 目录：冻结的评审证据。
+ *
+ * 旧实现是"显式列举顶层 + 只递归 workflow/ 与 specs/"：于是 `scripts/shots/README.md`
+ * （活文档）里的 5 处 `file:line` 永不被捕获，而门禁的日志还宣称"19 个活文档无行号引用"——
+ * 宣称的覆盖面大于实际覆盖面，比明说"只管这几个目录"更坏。
+ */
 function inScopeFiles() {
-  const files = ['ROADMAP.md'].filter(existsSync)
-  for (const dir of ['workflow', 'specs']) {
-    const abs = join(root, dir)
-    if (!existsSync(abs)) continue
-    const found = []
-    walkMarkdown(abs, '', found)
-    for (const normalized of found) {
-      // `reviews/` 是**冻结的评审证据**（允许其行号随代码漂移），**任何层级**的 reviews/ 目录一律
-      // 豁免——豁免的是"记录"这一类东西，不是某个具体路径。003 的 Lens 2 F8 指出实现比 spec 写得
-      // 宽，这里把口径写成实现的样子（spec.md 的非目标同步改成同一句话）。
-      if (normalized.startsWith('reviews/') || normalized.includes('/reviews/')) continue
-      // 一律用 `/` 拼进报告：同一处违规在 Windows 与 Linux 上要长得一样，否则 CI 的注解
-      // 和本地输出对不上，人还得在脑子里换算一次分隔符。
-      files.push(`${dir}/${normalized}`)
-    }
-  }
-  return files
+  const all = []
+  walkMarkdown(root, '', all)
+  return all.filter(rel => rel !== 'CHANGELOG.md' && !rel.startsWith('reviews/') && !rel.includes('/reviews/'))
 }
 
 function main() {
   const problems = []
   const files = inScopeFiles()
   // 门禁自己失效（目录改名 / 递归 API 变了 / 排除规则写宽了）时必须报红，而不是"零违规通过"。
-  if (files.length < 8) {
-    problems.push(`范围内只找到 ${files.length} 个 Markdown 文件，扫描面像失效了（预期 >= 8）：${files.join(', ')}`)
+  if (files.length < 15) {
+    problems.push(`范围内只找到 ${files.length} 个 Markdown 文件，扫描面像失效了（全仓 .md 减去 CHANGELOG 与 reviews/ 应有 15 个以上）：${files.join(', ')}`)
   }
   for (const file of files) {
     for (const { label, match } of findLineRefs(readFileSync(join(root, file), 'utf8'))) {

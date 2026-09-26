@@ -24,6 +24,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
+// 出站主机的推导与比对抽成单一实现（可被 test/guards.mjs 喂正反例），见该文件的头注释。
+import { compareHosts, deriveHostsFromCode } from './outbound-hosts.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -48,18 +50,27 @@ for (const id of Object.keys(__internals.PRESETS).sort()) {
   if (!en.includes(token)) problems.push(`README.en.md 没提到数据源 ${id}`)
 }
 
-/* 3) 出站主机 */
+/* 3) 出站主机：声明集合必须与实际出站集合**逐项相等**（宪法 V）。
+ *
+ *    旧实现有两个洞（2026-09 审查实测）：
+ *      a. 只从预设的 url/infoUrl/regions 抠，而阿里云 BSS 的主机是 `DEFAULTS.endpoint` 的裸
+ *         主机名（请求时才拼成 https）—— 抠不出来，等于"人工声明对了、门禁从没验过"；
+ *      b. 字体 CDN 那行是扫 README 文本，而两份 README 里根本没有那个 URL → 恒不命中，
+ *         **死代码**（门禁宣称管到了，实际没管）。
+ *    现在改为：从代码推导（预设 + endpoint + client.js 的 FONT_CSS），并**双向**比对。 */
 const declared = new Set((pkg.dshhub?.permissions?.network ?? []).map(entry => entry.replace(/\/+$/, '')))
-const hosts = new Set()
-for (const preset of Object.values(__internals.PRESETS)) {
-  for (const url of [preset.url, ...(preset.regions ? Object.values(preset.regions).map(r => r.url) : []), preset.infoUrl]) {
-    const match = typeof url === 'string' ? /^https?:\/\/([^/?#]+)/.exec(url) : null
-    if (match !== null) hosts.add(`https://${match[1]}`)
-  }
-}
-for (const url of zh.match(/https:\/\/cdn\.jsdelivr\.net/g) ?? []) hosts.add(url)
-for (const host of [...hosts].sort()) {
-  if (!declared.has(host)) problems.push(`出站主机 ${host} 未声明在 dshhub.permissions.network`)
+const derived = deriveHostsFromCode({
+  presets: __internals.PRESETS,
+  defaults: __internals.DEFAULTS,
+  clientSource: readFileSync(join(root, 'lib/client.js'), 'utf8'),
+})
+// 扫描面自检：推导不出足够主机就说明这条检查失效了（宁可红，也不假装通过）。
+if (derived.size < 6) problems.push(`只从代码里推导出 ${derived.size} 个出站主机，这条检查的扫描面像失效了`)
+if (declared.size === 0) problems.push('dshhub.permissions.network 是空的：所有出站主机都要声明')
+const hostDiff = compareHosts(derived, declared)
+for (const host of hostDiff.undeclared) problems.push(`出站主机 ${host} 未声明在 dshhub.permissions.network`)
+for (const host of hostDiff.unused) {
+  problems.push(`dshhub.permissions.network 声明的 ${host} 在代码里找不到出处（删源后遗留？声明必须与实际逐项相等）`)
 }
 
 /* 4) 相对链接：README 里的相对链接必须指向**仓库内真的存在**的文件。
@@ -266,15 +277,31 @@ for (const [file, text, marker, endMarker] of [
  *    `Get-Content | Set-Content -Encoding utf8` 往返就把中文变成乱码 + BOM，而且**不可逆**
  *    （GBK 私用区字符没有反向映射）。本仓库真的踩过，所以这类损坏必须当场红灯。
  *    判断只看码位，不用字面量——不然这条检查自己就会成为又一处隐形损坏。 */
-const textFiles = ['README.md', 'README.en.md', 'ROADMAP.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md',
-  'RELEASE.md', 'LICENSE', 'package.json', 'cordis.patch.yml']
-for (const dir of ['docs', 'lib', 'scripts', 'test', '.github/workflows', '.github/ISSUE_TEMPLATE']) {
-  const abs = join(root, dir)
-  if (!existsSync(abs)) continue
-  for (const name of readdirSync(abs)) {
-    if (statSync(join(abs, name)).isFile()) textFiles.push(join(dir, name))
+const TEXT_EXT = new Set(['.md', '.mjs', '.cjs', '.js', '.json', '.yml', '.yaml', '.sh', '.bash', '.ps1', '.psm1',
+  '.txt', '.css', '.html', '.toml', '.cfg', '.ini'])
+// 无扩展名但必须是文本的（含 .githooks/pre-commit —— 它依赖 shebang，BOM 会让 shebang 失效，
+// 而不变量 VI 点名的正是这一条，旧实现却把它漏在扫描面外）。
+const TEXT_NAMES = new Set(['LICENSE', 'pre-commit', 'post-commit', 'commit-msg', 'pre-push',
+  '.gitattributes', '.gitignore', '.npmrc'])
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work'])
+/** 递归枚举文本文件。不用 `{ recursive: true }`：它会跟随 symlink/junction 到仓库外（同 check-refs 的理由）。 */
+function walkTextFiles(absDir, rel, out) {
+  for (const dirent of readdirSync(absDir, { withFileTypes: true })) {
+    if (dirent.isSymbolicLink()) continue
+    const childRel = rel === '' ? dirent.name : `${rel}/${dirent.name}`
+    if (dirent.isDirectory()) {
+      if (!SKIP_DIRS.has(dirent.name)) walkTextFiles(join(absDir, dirent.name), childRel, out)
+      continue
+    }
+    const dot = dirent.name.lastIndexOf('.')
+    const ext = dot > 0 ? dirent.name.slice(dot).toLowerCase() : ''
+    if (TEXT_EXT.has(ext) || TEXT_NAMES.has(dirent.name)) out.push(childRel)
   }
 }
+const textFiles = []
+walkTextFiles(root, '', textFiles)
+// 扫描面自检：目录改名/扩展名表写窄了会让这道护栏"零违规通过"——那是最坏的假绿。
+if (textFiles.length < 40) problems.push(`编码护栏只扫到 ${textFiles.length} 个文本文件（预期 >= 40），扫描面像失效了`)
 const isCjk = ch => { const cp = ch.codePointAt(0); return cp >= 0x4E00 && cp <= 0x9FFF }
 const isPua = ch => { const cp = ch.codePointAt(0); return cp >= 0xE000 && cp <= 0xF8FF }
 for (const rel of textFiles) {
@@ -331,20 +358,34 @@ for (const rel of textFiles) {
   if (en.includes('Screenshots (4 to add before release)')) problems.push('README.en.md 仍留着截图占位块')
   // 两份 README 都得真的引到图，缺一张就是图文不符。
   // 英文套少一张是**有意的**：「本实例还没调用过」那句说明宿主只有中文（lib/index.js:376）。
-  const minRefs = { 'README.md': 7, 'README.en.md': 6 }
-  for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-    const refs = extractImageTargets(text)
-    if (refs.length < minRefs[name]) problems.push(`${name} 只引用了 ${refs.length} 张图，应有 ${minRefs[name]} 张`)
-    for (const ref of refs) {
-      // 与第 4 项同一条规矩：只有 `relative` 才碰文件系统。旧写法直接 `join(root, ref)` + existsSync，
-      // 于是 `![x](../../../../Windows/win.ini)` 也能拿来当"仓库外某个文件是否存在"的神谕
-      // （003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
-      const { kind, target } = classifyTarget(ref)
-      if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
-      else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
-      else if (kind === 'relative' && !existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
+  // 两份 README 都得真的引到图。**按集合核对，不是"引够 N 张"**：旧实现只数条数，
+// 同一张图引 7 次即过，而"13 张图存在"由上面那份硬编码清单保证——两者从不交汇。
+// 英文套少 state-no-history 是**有意的**：「本实例还没调用过」那句说明宿主只有中文
+// （lib/index.js 的 emptyReason 是写死的中文），所以它只出现在中文套。
+const requiredImageRefs = {
+  'README.md': images.filter(rel => !rel.startsWith('docs/images/en/')),
+  'README.en.md': images.filter(rel => rel.startsWith('docs/images/en/')),
+}
+for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
+  const refs = extractImageTargets(text)
+  if (refs.length === 0) problems.push(`${name} 一张图都没引用`)
+  const relativeTargets = new Set()
+  for (const ref of refs) {
+    // 与第 4 项同一条规矩：只有 `relative` 才碰文件系统。旧写法直接 `join(root, ref)` + existsSync，
+    // 于是 `![x](../../../../Windows/win.ini)` 也能拿来当"仓库外某个文件是否存在"的神谕
+    // （003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
+    const { kind, target } = classifyTarget(ref)
+    if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
+    else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
+    else if (kind === 'relative') {
+      relativeTargets.add(target)
+      if (!existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
     }
   }
+  for (const expected of requiredImageRefs[name]) {
+    if (!relativeTargets.has(expected)) problems.push(`${name} 没有引用 ${expected}（截图契约按集合核对：每张图都要被引到）`)
+  }
+}
   try {
     const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')
     const whitelist = publicCardKeys()

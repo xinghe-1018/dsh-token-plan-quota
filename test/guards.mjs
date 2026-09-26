@@ -15,11 +15,14 @@
  * 两类用例都必须在场：**应报**（不报 = 漏检 = 假安全感）与**应放行**（报了 = 假红 = 训练人忽略红灯）。
  */
 import { execFileSync } from 'node:child_process'
-import { dirname, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, normalizeTarget } from '../scripts/link-targets.mjs'
+import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
+import { __internals } from '../lib/index.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -32,13 +35,26 @@ function ok(label, condition) {
     console.log(`FAIL ${label}`)
   }
 }
-function rejects(label, fn) {
+function rejects(label, fn, expected) {
   try {
     fn()
     failed += 1
     console.log(`FAIL ${label}\n  期望抛错，实际放行`)
-  } catch {
-    passed += 1
+  } catch (error) {
+    // 任何异常都算"正确拒绝"会把**夹具自己崩了**（TypeError / RangeError）也记成通过——
+    // 那是假绿：守卫没生效，用例却绿了。给了 expected 就必须匹配消息；没给时至少驳回
+    // 运行时错误这一类"不像守卫在拒绝"的异常。
+    const name = String(error?.name ?? '')
+    const message = `${name}: ${String(error?.message ?? error)}`
+    if (expected !== undefined && !expected.test(String(error?.message ?? ''))) {
+      failed += 1
+      console.log(`FAIL ${label}\n  抛的错与预期不符（应匹配 ${expected}）：${message}`)
+    } else if (expected === undefined && /^(TypeError|RangeError|ReferenceError|SyntaxError)$/.test(name)) {
+      failed += 1
+      console.log(`FAIL ${label}\n  抛的是 ${name}（不像守卫在拒绝，像夹具自己崩了）：${message}`)
+    } else {
+      passed += 1
+    }
   }
 }
 function accepts(label, fn) {
@@ -262,6 +278,57 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const linksMs = ms(extractLinkTargets, input)
   ok(`线性 findLineRefs（${label} 80 KB）< 1000 ms，实测 ${refsMs.toFixed(1)} ms`, refsMs < 1000)
   ok(`线性 extractLinkTargets（${label} 80 KB）< 1000 ms，实测 ${linksMs.toFixed(1)} ms`, linksMs < 1000)
+}
+
+/* ---------- 六、出站主机的推导与双向比对（宪法 V） ---------- */
+
+// 为什么要有这一组：原实现只从预设的 `url`/`infoUrl`/`regions` 抠主机，而且**只做单向**检查。
+// 两个洞都实测到了：阿里云 BSS 的主机是 `DEFAULTS.endpoint` 的裸主机名（请求时才拼 https，
+// 抠不出来）；字体 CDN 那行是扫 README 文本，而那份文本里根本没有该 URL —— 恒不命中，是死代码。
+// 这里把"该推导出来的能推导出来"（含防假红：注释里的 URL 不算）与"两个方向都能报"一起钉住。
+{
+  const presets = {
+    'normal-source': { url: 'https://api.example.com/v1/balance' },
+    'region-source': { regions: { cn: { url: 'https://cn.example.cn/x' }, intl: { url: 'https://intl.example.ai/x' } } },
+    'info-source': { infoUrl: 'https://info.example.com/tool/user/info.json' },
+    'endpoint-source': { builder: 'rpc' },
+  }
+  const clientSource = [
+    '// 注释里的示例 URL 不算出站：https://comment.example.com/never.css',
+    'const FONT_CSS = [',
+    '  "https://cdn.jsdelivr.net/npm/@fontsource-variable/geist@5/index.css",',
+    '];',
+  ].join('\n')
+  const derived = deriveHostsFromCode({ presets, defaults: { endpoint: 'business.aliyuncs.com' }, clientSource })
+  ok('主机推导：预设 url', derived.has('https://api.example.com'))
+  ok('主机推导：多区 regions', derived.has('https://cn.example.cn') && derived.has('https://intl.example.ai'))
+  ok('主机推导：infoUrl', derived.has('https://info.example.com'))
+  ok('主机推导：裸主机 endpoint（旧实现抠不出来的那类）', derived.has('https://business.aliyuncs.com'))
+  ok('主机推导：客户端 FONT_CSS 的 CDN 主机', derived.has('https://cdn.jsdelivr.net'))
+  ok(`主机推导：注释里的 URL 不算出站（且总数正好 ${derived.size}=6）`,
+    !derived.has('https://comment.example.com') && derived.size === 6)
+
+  const full = compareHosts(derived, new Set([...derived]))
+  ok('主机比对：一一对应时两边都空', full.undeclared.length === 0 && full.unused.length === 0)
+  const missingDecl = compareHosts(derived, new Set([...derived].filter(host => host !== 'https://cdn.jsdelivr.net')))
+  ok('主机比对：代码里有而未声明会被抓到',
+    missingDecl.undeclared.includes('https://cdn.jsdelivr.net') && missingDecl.unused.length === 0)
+  const staleDecl = compareHosts(derived, new Set([...derived, 'https://old.example.com']))
+  ok('主机比对：声明里有而代码里没有也会被抓到（旧实现完全看不到这一半）',
+    staleDecl.unused.includes('https://old.example.com') && staleDecl.undeclared.length === 0)
+
+  // 真数据自检：当前仓库的声明必须与代码推导逐项相等（这条与 check-docs 第 3 项同源，
+  // 但在这里失败时能立刻看出是"少了谁 / 多了谁"）。
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const realDeclared = new Set(pkg.dshhub.permissions.network.map(entry => entry.replace(/\/+$/, '')))
+  const realDerived = deriveHostsFromCode({
+    presets: __internals.PRESETS,
+    defaults: __internals.DEFAULTS,
+    clientSource: readFileSync(join(ROOT, 'lib/client.js'), 'utf8'),
+  })
+  const realDiff = compareHosts(realDerived, realDeclared)
+  const realMessage = `主机真数据：声明 ${realDeclared.size} 个与代码推导逐项相等（少声明 ${realDiff.undeclared.join(',') || '无'}；多声明 ${realDiff.unused.join(',') || '无'}）`
+  ok(realMessage, realDiff.undeclared.length === 0 && realDiff.unused.length === 0)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

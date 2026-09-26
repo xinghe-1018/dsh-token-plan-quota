@@ -78,8 +78,11 @@ reviews:
       - name: "双语同源"
         mode: "warning"
         instructions: >-
-          当 README.md 或 README.en.md 之一被实质修改（不只空格/链接修正）而另一侧未动时判 warning，
-          并点名缺失的一侧；两侧同时修改则 pass。
+          当 README.md 或 README.en.md 发生实质修改（不只空格/链接修正）时，逐条比对两侧：
+          只改单侧 → warning 并点名缺失的一侧；两侧都改、但改动不对应（同一章节/同一事实没有成对出现，
+          或一侧补了新内容而另一侧没有对应内容）→ 同样 warning 并指出不对应之处；
+          只有两侧的实质改动一一对应时才 pass。**不要仅凭"两侧都动了"就判同源**——那会把不同步的内容
+          判成绿灯，比漏报更坏。
 
 chat:
   auto_reply: true

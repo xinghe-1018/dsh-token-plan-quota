@@ -240,6 +240,28 @@ function makeFetch(mode) {
       const broken = SNAPSHOT.cards.map(card => ({ ...card, retry: { provider: 'deepseek', attempts: 2 } }))
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: broken }) }
     }
+    if (mode === 'with-console') {
+      // 默认快照里没有"官方额度卡"（只有余额卡 + 实测卡），而真实快照有。补一张用来复现
+      // "路由解析不出时该挑额度卡、不该被余额卡顶掉"。
+      const official = {
+        id: 'token-plan-console',
+        label: 'Token Plan 余量',
+        labelEn: 'Token Plan quota',
+        metric: 'credits',
+        unit: 'Credits',
+        veracity: 'verified',
+        bindProviders: ['qwen-token-plan-cn'],
+        total: 45000,
+        remaining: 41850,
+        usedPercent: 7,
+        remainingPercent: 93,
+        meters: [{ key: 'monthly', label: '本月窗口', labelEn: 'Monthly window', unit: 'Credits', total: 45000, remaining: 41850, usedPercent: 7, remainingPercent: 93, resetAt: Date.now() + 6 * 86_400_000 }],
+        items: [],
+        error: null,
+        sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
+      }
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [official, ...SNAPSHOT.cards] }) }
+    }
     if (mode === 'ratio-only') {
       // 真实形态（2026-09-23 实测：5 次里 1 次）：quota-config 那一路超时，上游只回了
       // per1MonthPercentage。宪法 v2.0.0 之后这张卡照报官方比例，但不画条、不报绝对余量。
@@ -1502,13 +1524,12 @@ function findChip(node) {
   ok('吞吐行也认得包装层（速度仍跟着这张卡）', flat.includes('tok/s'), flat.slice(0, 300))
 }
 
-/* 真正无关的路由（目录不认）时**只出一张**：既不藏空，也不并排。
- * 挑法带一层模型名提示：`deepseek-v4.1-flash` → 绑 `deepseek` 的那张卡。 */
-for (const [model, label] of [
-  ['deepseek-v4.1-flash', '模型名提示 deepseek'],
-  ['qwen3.8-flash', '模型名提示 qwen'],
-]) {
-  const { api, registered } = await loadBundle()
+/* 路由解析不出时（目录不认这条路由，如中转/自定义路由）**只出一张**，且挑的是
+ * "最近真在服务请求的那条路由"绑定的卡 —— **不是模型名匹配**：初版用模型名当线索，
+ * `deepseek-v4.1-flash`（模型家族）把绑 `deepseek` 的余额卡挑了出来，实机反馈
+ * "只剩余额的钱数、条状额度不见了"。这里两条模型名都必须是额度卡胜出。 */
+for (const model of ['deepseek-v4.1-flash', 'qwen3.8-flash']) {
+  const { api, registered } = await loadBundle('with-console')
   const dirStore = makeStore({
     current: { provider: 'some-unrelated-relay', model },
     routable: true, groups: [], failures: [], status: 'ready', error: null,
@@ -1525,10 +1546,9 @@ for (const [model, label] of [
   }
   const flat = JSON.stringify(await settle(render))
   const chipCount = (flat.match(/tpq-chip/g) ?? []).length
-  ok(`路由不认时只出一枚胶囊（${label}）`, chipCount === 1, `chips=${chipCount} model=${model}`)
-  if (model.startsWith('deepseek')) {
-    ok('模型名提示生效：出的是绑 deepseek 的那张卡', flat.includes('¥'), flat.slice(0, 200))
-  }
+  ok(`路由不认时只出一枚胶囊（model=${model}）`, chipCount === 1, `chips=${chipCount}`)
+  ok('挑的是额度卡（Token Plan 余量），不是余额卡',
+    flat.includes('Token Plan 余量') && !flat.includes('¥'), flat.slice(0, 260))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

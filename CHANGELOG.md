@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-09-29
+
 ### Security
 
 - **上游错误体里的凭据不再随错误信息出网（CWE-209）**：`SourceError` 的 `raw` 早已按值脱敏，但
@@ -662,6 +664,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.11]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.7...v0.4.8

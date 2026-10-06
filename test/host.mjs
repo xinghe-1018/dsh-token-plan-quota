@@ -574,6 +574,15 @@ ok('业务失败判失败', typeof rpcEnvelopeOk({ Code: 'NotAuthorized', Messag
 ok('NotAuthorized 提示指向只读授权', String(hintFor('NotAuthorized')).includes('AliyunBSSReadOnlyAccess'))
 check('未知错误码不编造提示', hintFor('TotallyNewCode'), undefined)
 ok('无凭据有提示', String(hintFor('NoCredentials')).includes('credentials'))
+// 提示里点名的域名必须是插件**真的会打**的那台主机。2026-10-06 的实机截图就是反例：
+// 提示让人在 Network 里筛 bailian-cs，而预设打的是 cs-data.qianwenai.com —— 筛出来一条都没有，
+// 用户永远抄不对 Cookie（提示指向错域名 = 这条错误永远修不好）。
+{
+  const cookieHint = String(hintFor('BailianGateway.Login.NotLogined'))
+  const consoleHost = new URL(PRESETS['token-plan-console'].url).host
+  ok('Cookie 失效提示指向预设实际调用的主机', cookieHint.includes(consoleHost), cookieHint)
+  ok('Cookie 失效提示不再指向插件从不调用的控制台域名', !cookieHint.includes('console.aliyun.com'), cookieHint)
+}
 
 /* ============================================ 8. 工具函数 */
 

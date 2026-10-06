@@ -267,10 +267,12 @@ JSON 优先级更高）：
 
 Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
-想看到千问的**真实余量**（订阅页那种「剩余量 65.1% / 总额度 10,000」）：登录打开
-[订阅页](https://platform-home.qianwenai.com/analytics/token-plan/individual) → F12 Network → 复制任一请求的
-**整行 `Cookie:`** → 存成一行 `BAILIAN_CONSOLE_COOKIE: <内容>` → 点面板「更新于」刷新。Cookie 通常能用几周，
-过期后该源报错并自动退回实测卡，重贴即恢复。
+想看到千问的**真实余量**（订阅页那种「剩余量 76.2% / 总额度 10,000」）：登录打开
+[订阅页](https://platform-home.qianwenai.com/analytics/token-plan/individual) → 按 F5 → F12 Network（勾**保留日志**）
+→ 筛选框输入 `cs-data` → 复制 **`cs-data.qianwenai.com/data/api.json`**（`action=BroadScopeAspnGateway`）那条请求的
+**整行 `Cookie:`** → 存成一行 `BAILIAN_CONSOLE_COOKIE: <内容>` → 点面板「更新于」刷新。
+**要抄的就是插件实际调用的那台主机**：Cookie 按域隔离，从别的控制台域名抄来的这份用不了（2026-10 实机踩过：
+按旧提示筛 `bailian-cs` 是一条请求都筛不出来的）。Cookie 通常能用几周，过期后该源报错并自动退回实测卡，重贴即恢复。
 
 ### 自定义源
 
@@ -397,7 +399,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 379 项，离线
+node test/host.mjs                 # 381 项，离线
 node test/client.mjs               # 217 项，假 React/DOM/fetch
 node test/guards.mjs               # 94 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
@@ -406,7 +408,7 @@ node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 379/217 项 + guards 94 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 381/217 项 + guards 94 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

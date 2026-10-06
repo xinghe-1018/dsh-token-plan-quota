@@ -306,11 +306,14 @@ re-resolved on every query, so swapping a key needs no restart.
 
 Reference names can be overridden per source with `bearerRef` / `cookieRef`.
 
-To see the **real** Qwen Token Plan quota (the "65.1% left / 10,000 total" from the subscription page):
+To see the **real** Qwen Token Plan quota (the "76.2% left / 10,000 total" from the subscription page):
 sign in and open the [subscription page](https://platform-home.qianwenai.com/analytics/token-plan/individual) →
-F12 → Network → copy the **entire `Cookie:` request header line** → store it as one line
-`BAILIAN_CONSOLE_COOKIE: <content>` → click "updated" in the panel to refresh. Cookies usually last a few weeks;
-when one expires the source reports an error and the measured card takes over until you re-paste.
+press F5 → F12 → Network (tick **Preserve log**) → filter by `cs-data` → copy the **entire `Cookie:` request header line**
+of the **`cs-data.qianwenai.com/data/api.json`** request (`action=BroadScopeAspnGateway`) → store it as one line
+`BAILIAN_CONSOLE_COOKIE: <content>` → click "updated" in the panel to refresh.
+**Copy it from the host the plugin actually calls**: cookies are domain-scoped, so one copied from another console
+domain will not work (seen in the field in 2026-10: filtering by the old hint's `bailian-cs` matched no request at all).
+Cookies usually last a few weeks; when one expires the source reports an error and the measured card takes over until you re-paste.
 
 ### Custom sources
 
@@ -458,7 +461,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 379 assertions, offline
+node test/host.mjs                  # 381 assertions, offline
 node test/client.mjs                # 217 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 94 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
@@ -468,7 +471,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 379/217 tests plus 94 guards assertions" - and checks them
+config table, 8 sources, 8 declared outbound hosts, 381/217 tests plus 94 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

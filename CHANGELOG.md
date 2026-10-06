@@ -35,6 +35,14 @@ All notable changes to this project are documented here. The format follows
   每加一处用途就得改这个魔数（这次就是它先红，还把 `check-docs` 一起带红）。改成认结构：
   换算只有一处、徽标与次级计量都走它、实测卡一律不出条。
 
+- **「控制台 Cookie 失效」的提示把人指去了插件从不调用的域名**（2026-10-06 实机）：提示写着
+  "在 Network 筛选器输入 `bailian-cs`，复制 `bailian-cs.console.aliyun.com/data/api.json` 那条的 Cookie"，
+  而预设打的是 `POST https://cs-data.qianwenai.com/data/api.json?action=BroadScopeAspnGateway`
+  （`DECLARED_HOSTS` 里也只有后者）。结果是用户在筛选框里打 `bailian-cs` **一条请求都筛不出来**，
+  永远抄不对 Cookie。现在提示与中英 README 都点名 `cs-data.qianwenai.com` 那条请求，并说清
+  "Cookie 按域隔离、要抄插件实际调用的那台主机"；host 侧新增守卫：该提示必须含预设 URL 的主机名、
+  且不得出现 `console.aliyun.com`。
+
 ### Changed
 
 - **`dsh.engines.dsh` 与 `dshhub.compatibility.dsh` 补上 `^0.2.0-0`**：插件一直跑得动 0.2

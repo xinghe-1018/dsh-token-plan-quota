@@ -201,7 +201,7 @@ JSON 优先级更高）：
 }
 ```
 
-下表 18 行：17 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
+下表 19 行：18 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
 通过 `regionConfigKey` 读取的区选择器。**一个键一行，单位都写在键名里**（`Minutes`/`Seconds`/`Ms`）。
 
 | 键 | 默认 | 含义 |
@@ -216,6 +216,7 @@ JSON 优先级更高）：
 | `exposeTool` | `true` | 是否注册模型可调用工具 `token_plan_quota` |
 | `debug` | `false` | 明细里常驻回显上游响应的**字段骨架**（值打码、跳过凭据字段名）。与 `GET /token-plan-quota/probe?source=<id>` 输出同一份东西，区别是 debug 常驻、probe 按需单次且不用改配置 |
 | `endpoint` | `business.aliyuncs.com` | 仅阿里云费用中心三个源使用：OpenAPI 接入点（国际站要换）。会自动剥掉 `https://` 与末尾斜杠 |
+| `allowUndeclaredHosts` | `false` | 出站白名单的**用户侧开关**：默认只允许 `dshhub.permissions.network` 里声明过的 8 个主机（回环除外），其余在请求发出前就被拒（错误码 `HostNotDeclared`）。自定义源指向别处时必须显式打开——打开后快照里会留一条 notice，不静默降级。内置源报这条说明代码与声明不一致，`lib/index.js` 的 `DECLARED_HOSTS` 与 `package.json` 要一起改 |
 | `regionId` | 无 | 仅阿里云使用：OpenAPI 的 `RegionId` |
 | `accessKeyIdRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` | 仅阿里云使用：AccessKeyId 的凭据引用名 |
 | `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 仅阿里云使用：AccessKeySecret 的凭据引用名 |
@@ -397,7 +398,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 ```bash
 npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 379 项，离线
-node test/client.mjs               # 207 项，假 React/DOM/fetch
+node test/client.mjs               # 217 项，假 React/DOM/fetch
 node test/guards.mjs               # 94 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
@@ -405,7 +406,7 @@ node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 17 个键、配置表 18 行、8 个数据源、声明 8 个出站主机、测试 379/207 项 + guards 94 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 379/217 项 + guards 94 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

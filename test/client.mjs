@@ -297,7 +297,8 @@ function makeFetch(mode) {
     const throughput = mode === 'idle-tp'
       ? { ...SNAPSHOT.throughput, tpm60: 0, out60: 0, outTps60: 0, calls60: 0, cacheRead60: 0, tokens300: 0, calls300: 0, activeSeconds: 0, genTps: null, byProvider: [] }
       : SNAPSHOT.throughput
-    const consoleCard = mode === 'console-err'
+    // console-only-err 复用"报错的控制台卡"，只是卡表里不放实测窗口卡。
+    const consoleCard = mode === 'console-err' || mode === 'console-only-err'
       ? {
         id: 'token-plan-console',
         label: 'Token Plan 余量',
@@ -332,7 +333,11 @@ function makeFetch(mode) {
         error: null,
         sourceNote: '阿里云百炼控制台网关（Cookie 会话）· tokenplan/personal/api/v2',
       }
-    const cards = mode === 'console-ok' || mode === 'console-err' ? [...emptyCards, consoleCard] : emptyCards
+    // console-only-err：只剩那枚报错的控制台卡 —— 用它钉「报错卡的正面文案」。
+    const onlyErrorCard = SNAPSHOT.cards.find(card => card.id === 'instance-usage')
+    const cards = mode === 'console-ok' || mode === 'console-err' || mode === 'console-only-err'
+      ? (mode === 'console-only-err' ? [onlyErrorCard, consoleCard] : [...emptyCards, consoleCard])
+      : emptyCards
     return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, config, throughput, cards, notices: mode === 'empty' ? ['当前没有官方额度源返回数据'] : SNAPSHOT.notices }) }
   }
 }
@@ -544,8 +549,9 @@ async function settle(render, rounds = 4) {
   ok('重连前：徽标跟着第一份目录 store 出 DeepSeek 卡', flat.includes('DeepSeek 余额'))
   dirs[0].set({ ...dirs[0].snapshot, current: null })
   flat = JSON.stringify(await settle(render, 2))
-  // 目录被重建的瞬间 provider 为 null —— 按已定口径**不许藏空**，退回全量显示。
-  ok('目录被重建的瞬间：徽标退回全量而不是藏空', flat.includes('tpq-chip') && flat.includes('DeepSeek 余额'))
+  // 目录被重建的瞬间 provider 为 null —— 按已定口径**不许藏空**；现在是"只挑一张有数的"，
+  // 挑到正在服务请求的那条路由上的实测窗口卡（不再按官方数组顺序撞余额卡）。
+  ok('目录被重建的瞬间：徽标不藏空，挂上有数的卡', flat.includes('tpq-chip') && flat.includes('123.5万 tok'))
   sessionsStore.set({ current: 's1' })
   flat = JSON.stringify(await settle(render, 3))
   ok('同一个会话 id 的重新发布也要重挂目录（自愈）', flat.includes('Token Plan 实测'))
@@ -731,8 +737,11 @@ function findChip(node) {
   dirStore.set({ ...dirStore.snapshot, current: { provider: 'minimax-cn', model: 'MiniMax-M2.5' } })
   flat = JSON.stringify(await settle(render, 2))
   // 匹配不到当前路由就不出徽标，过去是**整个 0×0 隐藏**——用户只会以为插件又坏了
-  // （实机反馈："匹配不到就改成全量显示"）。现在退回全量选择，徽标与面板都不空。
-  ok('未绑定供应商 → 徽标退回全量显示而不是消失', flat.includes('tpq-chip') && flat.includes('DeepSeek 余额'))
+  // （实机反馈："匹配不到就改成全量显示"）。现在退成"只挑一张**有数的**"：
+  // 优先正在服务请求的那条路由上的卡，绝不是按数组顺序撞上的报错卡。
+  ok('未绑定供应商 → 徽标不消失，且优先挂正在服务请求的路由上那张有数的卡',
+    flat.includes('tpq-chip') && flat.includes('123.5万 tok') && flat.includes('Token Plan 实测')
+      && !flat.includes('无官方额度数据'))
   // 面板在前一步就点开了，这里不能再点徽标——再点一下就关了。
   const unmatchedPanel = JSON.stringify(await settle(render, 3))
   ok('收敛后一张不剩 → 面板也退回全量', unmatchedPanel.includes('DeepSeek 余额')
@@ -1046,6 +1055,99 @@ function findChip(node) {
   ok('官方卡没数 → 实测兜底卡回到面板', JSON.stringify(await settle(render, 3)).includes('Token Plan 实测'))
 }
 
+/* 2026-10-06 实机回归（本条由线上现场反推）：
+ *  (1) DSH 0.2 起 `sessions.list` 是 `{ ids, byId, phase }`，**没有 `current`** ——
+ *      客户端老写法读 `.current`，于是 provider 恒为 null，徽标永远走降级挑选；
+ *  (2) 降级挑选又把"有数字"和"报错"混在同一档且只看官方卡，于是报错的控制台卡
+ *      按数组顺序先命中，正面只剩「无官方额度数据」，而同一时刻实测窗口有 3400 万 tokens。
+ *  两条一起修，两条一起锁。 */
+{
+  // ① 新外壳形状（byId + retainedBy.mainView）必须能认出现行会话 → 徽标才跟随模型。
+  const { api, registered } = await loadBundle('ok')
+  const dirStore = makeStore({
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  const mainViewList = (id) => makeStore({ ids: [id], byId: { [id]: { id, retainedBy: { mainView: 1 } } }, phase: 'ready' })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: mainViewList('s1') },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  // provider=deepseek 时挂的是 DeepSeek 官方卡（¥45.29）；未修时只会挂降级挑出的窗口卡。
+  ok('新外壳（byId + retainedBy.mainView）能认出现行会话 → 徽标跟随模型',
+    flat.includes('¥45.29') && !flat.includes('123.5万 tok'), flat.slice(0, 400))
+
+  // 反向对照：同一份目录，列表里既没有 current 也没有 mainView → 认不出会话 → 退回降级挑选。
+  const second = await loadBundle('ok')
+  second.api.apply(makeCtx(second.registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ ids: [], byId: {}, phase: 'ready' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  resetHooks()
+  const component2 = second.registered[0].component
+  const flat2 = JSON.stringify(await settle(() => {
+    beginRender()
+    return component2()
+  }))
+  ok('认不出会话也不崩：退回降级挑选，挑到有数的卡', flat2.includes('123.5万 tok'))
+}
+
+{
+  // ② 实机症状原样复现：控制台卡报错 + 会话解析不出来（provider=null）+ 实测窗口卡
+  //    正挂在"正在服务请求的那条路由"上 → 徽标必须是那枚有数的实测卡。
+  const { api, registered } = await loadBundle('console-err')
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ ids: [], byId: {}, phase: 'ready' }) },
+    modelDirectories: {
+      directoryFor: () => ({
+        store: makeStore({ current: null, routable: null, groups: [], failures: [], status: 'loading', error: null }),
+        load: async () => {},
+      }),
+    },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const flat = JSON.stringify(await settle(() => {
+    beginRender()
+    return component()
+  }))
+  ok('路由解析不出 + 官方卡报错 → 徽标挂有数的实测卡，不再是「无官方额度数据」',
+    flat.includes('123.5万 tok') && flat.includes('实测') && !flat.includes('无官方额度数据'), flat.slice(0, 400))
+}
+
+{
+  // ③ 只剩报错卡（没有任何可显示的卡）：正面文案必须是「失败」，不是「无官方额度数据」；
+  //    错误码与修复提示仍留在 tooltip。
+  const { api, registered } = await loadBundle('console-only-err')
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('只有报错卡时正面说「查询失败」而不是「无官方额度数据」',
+    flat.includes('查询失败') && !flat.includes('无官方额度数据'), flat.slice(0, 400))
+  const chip = findChip(await settle(render, 1))
+  check('报错卡徽标标成 bad（红）', chip?.props?.['data-sev'], 'bad')
+  ok('错误码与修复提示仍在 tooltip 里', String(chip?.props?.title ?? '').includes('NoCredentials'))
+}
+
 /* 拖拽/缩放态 CSS 禁碰 animation-name：none↔tpq-rise 的开关会被浏览器当成新动画重播
  * （「松手后重播渐入」事故的回归锁）。 */
 {
@@ -1307,8 +1409,13 @@ function findChip(node) {
 {
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok('手写 CJS 壳不再用 var（no-var）', !/^\s+var\s+(module|exports)\s*=/m.test(code))
+  // 不数调用点：每加一处用途就要改这个魔数，守卫会退化成抄写作业（这次正是它先红）。
+  // 认三件事：换算只有一处（remainingPercentOf）、徽标与次级计量都走它、实测卡一律不出条。
   ok('余量百分比只留一份算法（徽标与明细卡共用同一个函数）',
-    (code.match(/remainingPercentOf\(/g) ?? []).length === 3
+    /function remainingPercentOf\(card\) \{/.test(code)
+      && (code.match(/100 - (?:card|meter)\.usedPercent/g) ?? []).length <= 1
+      && /const barPct = remainingPercentOf\(card\)/.test(code)
+      && /const pct = allowBar \? remainingPercentOf\(meter\) : null/.test(code)
       && !/isMeasured\(card\) \? null :/.test(code))
   ok('手势监听有卸载收口（拖拽中途被卸掉不再漏绑）',
     /const gestureRelease = React\.useRef\(null\)/.test(code)

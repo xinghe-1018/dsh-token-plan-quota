@@ -235,7 +235,7 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
-The table below has 18 rows: 17 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+The table below has 19 rows: 18 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
 not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
 part of every name** (`Minutes` / `Seconds` / `Ms`).
 
@@ -251,6 +251,7 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `exposeTool` | `true` | Register the `token_plan_quota` model tool |
 | `debug` | `false` | Permanently echo the upstream response's **field skeleton** (values masked, credential-like keys skipped) in the panel. Same output as `GET /token-plan-quota/probe?source=<id>`; the difference is that debug is always on while probe is one-off and needs no config change |
 | `endpoint` | `business.aliyuncs.com` | Aliyun BSS sources only: OpenAPI endpoint (change it for the international site). A leading `https://` and trailing slashes are stripped |
+| `allowUndeclaredHosts` | `false` | User-side switch for the outbound allowlist: by default only the 8 hosts declared in `dshhub.permissions.network` are reachable (loopback excepted) - anything else is refused before the request goes out (`HostNotDeclared`). A custom source pointing elsewhere must opt in explicitly; when it is on, the snapshot carries a notice so nothing degrades silently. A built-in source reporting this means code and declaration drifted, so `DECLARED_HOSTS` in `lib/index.js` and `package.json` must be changed together |
 | `regionId` | none | Aliyun only: the OpenAPI `RegionId` |
 | `accessKeyIdRef` | `ALIBABA_CLOUD_ACCESS_KEY_ID` | Aliyun only: credential reference name for the AccessKeyId |
 | `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | Aliyun only: credential reference name for the AccessKeySecret |
@@ -458,7 +459,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 379 assertions, offline
-node test/client.mjs                # 207 assertions, fake React/DOM/fetch
+node test/client.mjs                # 217 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 94 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
@@ -466,8 +467,8 @@ node scripts/check-refs.mjs         # living docs must not cite "file:line" loca
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "17 DEFAULTS keys, an 18-row
-config table, 8 sources, 8 declared outbound hosts, 379/207 tests plus 94 guards assertions" - and checks them
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
+config table, 8 sources, 8 declared outbound hosts, 379/217 tests plus 94 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

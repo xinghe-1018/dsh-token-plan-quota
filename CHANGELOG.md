@@ -42,6 +42,11 @@ All notable changes to this project are documented here. The format follows
   永远抄不对 Cookie。现在提示与中英 README 都点名 `cs-data.qianwenai.com` 那条请求，并说清
   "Cookie 按域隔离、要抄插件实际调用的那台主机"；host 侧新增守卫：该提示必须含预设 URL 的主机名、
   且不得出现 `console.aliyun.com`。
+- **网关回 `NotLogined` 时不再只说"没登录"**（同一天的第二次实机）：光说结论没法行动 —— 用户抄来的
+  是另一台主机的反爬 Cookie 集（`cna`/`cnaui`/`aui`/`sca`/`atpsida`/`tfstk`/`isg`/`partitioned_cookie_flag`
+  + `login_aliyunid_csrf`），里面没有千问控制台的登录票据。现在错误里会写清**插件打的是哪台主机**、
+  **收到的 Cookie 有哪些名字**（只列名字，值绝不进提示），并在缺 `login_qianwenai_ticket` 时点名。
+  中英 README 的抄 Cookie 步骤也补上两条硬要求：同一台主机 + 必须含登录票据。host 侧从 381 项涨到 388 项。
 
 ### Changed
 

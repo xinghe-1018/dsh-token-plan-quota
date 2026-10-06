@@ -311,9 +311,18 @@ sign in and open the [subscription page](https://platform-home.qianwenai.com/ana
 press F5 → F12 → Network (tick **Preserve log**) → filter by `cs-data` → copy the **entire `Cookie:` request header line**
 of the **`cs-data.qianwenai.com/data/api.json`** request (`action=BroadScopeAspnGateway`) → store it as one line
 `BAILIAN_CONSOLE_COOKIE: <content>` → click "updated" in the panel to refresh.
-**Copy it from the host the plugin actually calls**: cookies are domain-scoped, so one copied from another console
-domain will not work (seen in the field in 2026-10: filtering by the old hint's `bailian-cs` matched no request at all).
-Cookies usually last a few weeks; when one expires the source reports an error and the measured card takes over until you re-paste.
+Two hard requirements - miss either one and the gateway answers `NotLogined`:
+
+- **It must come from the host the plugin actually calls** (`cs-data.qianwenai.com`). Cookies are domain-scoped, so one
+  copied from another console domain will not work (seen twice in the field in 2026-10: filtering by the old hint's
+  `bailian-cs` matched no request at all, and cookies taken from the Aliyun side - `cna/cnaui/... + login_aliyunid_csrf` -
+  were rejected just the same).
+- **It must contain the login ticket `login_qianwenai_ticket`.** Anti-bot cookies alone (`cna`, `cnaui`, `aui`, `sca`,
+  `atpsida`, `tfstk`, `isg`, `partitioned_cookie_flag`) mean you copied a request that carries no login state.
+
+Cookies usually last a few weeks; when one expires the source reports an error and the measured card takes over until you
+re-paste. On rejection the panel error **lists the cookie names received and the host the plugin calls**, so you can see
+at a glance which request went wrong.
 
 ### Custom sources
 
@@ -461,7 +470,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 381 assertions, offline
+node test/host.mjs                  # 388 assertions, offline
 node test/client.mjs                # 217 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 94 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
@@ -471,7 +480,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 381/217 tests plus 94 guards assertions" - and checks them
+config table, 8 sources, 8 declared outbound hosts, 388/217 tests plus 94 guards assertions" - and checks them
 against the code and a real
 test run, so a drifting
 number turns CI red (verified with a deliberately broken copy that it does fail).

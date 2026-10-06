@@ -18,7 +18,7 @@ const {
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
   rpcEnvelopeOk, httpEnvelopeOk, parseEnvelope, pickPath, pickFirst, pickString, toNumber, toEpochMs,
   buildListCard, buildSingleCard, evalDerive, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
-  hintFor, formatAmount, formatMoneyText, summarizeText, publicCard,
+  hintFor, formatAmount, formatMoneyText, summarizeText, publicCard, cookieNames,
   querySource, buildStatus, invalidateSources,
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
@@ -414,6 +414,14 @@ check('真值计量保留百分比', finalizeMeter({ key: 'w', total: 1000, rema
 check('没有分母就没有百分比（任何档位）', [finalizeMeter({ key: 'w', remaining: 42 }, true).usedPercent, finalizeMeter({ key: 'w', remaining: 42 }, false).usedPercent], [undefined, undefined])
 check('publicCard 透传 meters', publicCard(consoleCard).meters.length, 2)
 
+/* Cookie 诊断只列**名字**：名字不是秘密，值是。 */
+{
+  const diag = cookieNames('cna=AAA; cnaui=BBB; login_qianwenai_ticket=SECRET_CANARY')
+  ok('cookieNames 列出全部名字', diag.text.includes('cna') && diag.text.includes('login_qianwenai_ticket'))
+  ok('cookieNames 不把值带出来', !diag.text.includes('AAA') && !diag.text.includes('SECRET_CANARY'), diag.text)
+  check('名字个数写进描述', cookieNames('a=1; b=2').text.endsWith('（2 个）'), true)
+}
+
 // 没配 Cookie → NoCredentials 卡（不联网）。
 const noCookie = await querySource(consolePreset, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
 check('缺 Cookie → NoCredentials', noCookie.errorCode, 'NoCredentials')
@@ -455,6 +463,32 @@ try {
   ok('回环：Cookie 全程带上', seenB.every(entry => entry.cookie === 'login_qianwenai_ticket=t'))
 } finally {
   await new Promise(resolve => serverB.close(resolve))
+}
+
+/* 网关回 NotLogined 时，提示要把"打的是哪台主机 + 收到的 Cookie 名"说出来。
+ * 2026-10-06 实机：用户抄来的是另一台主机的反爬 Cookie 集（cna/cnaui/… + login_aliyunid_csrf），
+ * 提示只写"没登录"时无从下手；名字列出来一眼就能看出抄错了。值绝不允许出现在提示里。 */
+{
+  const serverC = createServerB((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: { errorCode: 'BailianGateway.Login.NotLogined', errorMsg: 'not logged in' } }))
+  })
+  await new Promise(resolve => serverC.listen(0, '127.0.0.1', resolve))
+  try {
+    const wrongSite = {
+      ...consolePreset,
+      url: `http://127.0.0.1:${serverC.address().port}/data/api.json`,
+      infoUrl: `http://127.0.0.1:${serverC.address().port}/tool/user/info.json`,
+      _cookie: 'cna=AAA; cnaui=BBB; login_aliyunid_csrf=SECRET_CANARY',
+    }
+    const rejected = await querySource(wrongSite, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+    ok('被拒时提示列出收到的 Cookie 名', String(rejected.error).includes('cna') && String(rejected.error).includes('cnaui'), rejected.error)
+    ok('被拒时提示点出缺的是登录票据（login_qianwenai_ticket）', String(rejected.error).includes('login_qianwenai_ticket'), rejected.error)
+    ok('被拒时提示写清插件打的是哪台主机', String(rejected.error).includes(String(serverC.address().port)), rejected.error)
+    ok('Cookie 的值绝不进提示', !String(rejected.error).includes('SECRET_CANARY') && !String(rejected.error).includes('AAA'), rejected.error)
+  } finally {
+    await new Promise(resolve => serverC.close(resolve))
+  }
 }
 
 /* ============================================ 5c. Moonshot（多区 + 静态币种 + 源级 hint）——新增一家的模板 */

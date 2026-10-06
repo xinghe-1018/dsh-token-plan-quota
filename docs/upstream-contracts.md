@@ -52,6 +52,8 @@
 3. 点面板底部「更新于」强制刷新即可生效（宿主每次查询重读凭据，不用重启）。
 
 - `sec_token` 全自动（`tool/user/info.json` → `data.secToken`），手配 `BAILIAN_CONSOLE_SECTOKEN` 只作兜底；
+- 登录票据是 `login_qianwenai_ticket`：网关回 `NotLogined` 时，插件会把**收到的 Cookie 名**与目标主机写进错误里，
+  抄错主机（只有 `cna`/`cnaui`/`tfstk` 这类反爬 Cookie）当场看得出来（2026-10-06 实机踩过）；
 - `consoleSite=QIANWENAI`（百炼控制台是 `BAILIAN_ALIYUN`）；
 - 剩余 ＝ `quota[specCode].weekly × (1 − per1WeekPercentage)`，与订阅页「剩余量/总额度」同源；
 - Cookie 一般能用几周（响应里有 `sessionExpireTimeStamp`），过期后该源报错、自动退回实测卡；

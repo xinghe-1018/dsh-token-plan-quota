@@ -1422,8 +1422,10 @@ ok('release.yml 用 fetch-depth: 0（check-docs 要能看见所有 tag）',
   /fetch-depth:\s*0/.test(releaseYml))
 ok('release.mjs 在 CI 上补 git 身份（runner 上没配 user.email，`git tag -a` 会挂）',
   /IS_CI[\s\S]*?git\('config',\s*'user\.name'/.test(releaseMjs))
-ok('release.mjs 用 HEAD:main 推，且与 tag 同一次 push（detached HEAD 下 `git push origin main` 会把旧 tip 又推一遍；分两条推则给 main 的 CI 留下看不到新 tag 的窗口）',
+ok('release.mjs 用 HEAD:main 推，与 tag 同一次 push，且带 --atomic（detached HEAD 下 `git push origin main` 会把旧 tip 又推一遍；分两条推给 main 的 CI 留下看不到 tag 的窗口；多 refspec 默认不原子。参数顺序也是被钉的形状之一）',
   /git\('push',\s*'--atomic',\s*'origin',\s*'HEAD:main',\s*`v\$\{target\}`\)/.test(releaseMjs))
+ok('release.mjs 不把 tag 单独拆成第二条 push（那两条之间的窗口就是 ci#51 的根因；guards 里另有反向断言）',
+  !/git\('push',\s*'origin',\s*`v\$\{target\}`\s*\)/.test(releaseMjs))
 ok('publish.yml 建 GitHub Release：抽取 + softprops + 只在 tag push 时跑',
   /name:\s*build release notes/.test(publishYml)
     && /uses:\s*softprops\/action-gh-release@v2/.test(publishYml)

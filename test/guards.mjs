@@ -254,8 +254,11 @@ ok('抽取 散文中孤立 ]( 不算链接', extractLinkTargets('随手写 ](x) 
 // 临时副本 `exit 0→1`，而 main 上全绿）。假红比没有检查更坏——它训练人忽略红灯，
 // 所以"应当放行"的这一半跟"应当报"的那一半一样重要。
 const DIAGRAM = 'docs/images/architecture.png'
-const OWN = 'xinghe-1018/dsh-token-plan-quota'   // 远端形态只认本仓库（见下面新用例）
-const mentionsDiagram = (text, own = OWN) => mentionsTarget(text, DIAGRAM, own)
+// owner/repo 只有一个来源：package.json#repository.url（同 repo-path.mjs 的立场——各处再写一份，
+// 仓库改名后这两组用例测的是个已不存在的'本仓库'，而门禁不会提醒）。
+const OWN = repoPathFromUrl(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).repository?.url)
+if (typeof OWN !== 'string') { failed += 1; console.log(`FAIL 派生不出 owner/repo，远端形态的用例失去落点`) }
+const mentionsDiagram = (text, own = OWN) => mentionsTarget(text, DIAGRAM, own ?? null)
 ok('引用 内联图片', mentionsDiagram('![x](docs/images/architecture.png)'))
 ok('引用 带 title', mentionsDiagram('![x](docs/images/architecture.png "t")'))
 ok('引用 ./ 前缀', mentionsDiagram('![x](./docs/images/architecture.png)'))
@@ -275,18 +278,28 @@ ok('引用 远端同尾不同路径不算', mentionsDiagram('![x](https://exampl
 // 本轮评审第 3/4/5 条补的用例：假绿比假红更坏，两种都要有反例钉住。
 ok('引用 别家仓库的同尾路径不算（钉到本仓库 owner/repo，否则任意远端都能让断言变绿）',
   mentionsDiagram("![x](https://github.com/anyone/else/blob/main/docs/images/architecture.png)") === false)
-ok('引用 不给 owner/repo 时远端形态一律不算',
-  mentionsDiagram("![x](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/docs/images/architecture.png)", null) === false)
-ok('引用 本仓库 blob 形态算',
-  mentionsDiagram("![x](https://github.com/" + OWN + "/blob/main/docs/images/architecture.png)"))
+ok('引用 不给 owner/repo 时远端形态一律不算（默认参数就是 null：不给就不认）',
+  mentionsDiagram('![x](https://github.com/' + OWN + '/blob/main/docs/images/architecture.png)', null) === false)
+// host 不同的另一条远端形态：raw.githubusercontent.com 走同一个 pathname 判定。
+ok('引用 本仓库 raw host 形态也算',
+  mentionsDiagram('![x](https://raw.githubusercontent.com/' + OWN + '/main/docs/images/architecture.png)'))
 // 单引号、等号两侧空白、大写属性名都是合法 HTML：只认双引号小写就是第四种假红（004 的 Lens 1 只收了前三）。
 const srcSingle = "<img src='docs/images/architecture.png' alt='x'>"
 ok('引用 单引号 src 形态算（第四种无害写法，004 的 Lens 1 没收这条）', mentionsDiagram(srcSingle))
 ok('引用 大写 SRC 属性名算', mentionsDiagram('<IMG SRC="docs/images/architecture.png">'))
 ok('引用 等号两侧有空白的 src 算', mentionsDiagram('<img src  =  "docs/images/architecture.png">'))
+ok('引用 裸值（不带引号）src 算——抽取器自称认三种引号形态，裸值这一种原本没人钉',
+  mentionsDiagram('<img src=docs/images/architecture.png>'))
 ok('src= 已进 extractLinkTargets（越界与存在性检查因此也看得见这种形态）',
   extractLinkTargets('<img src="docs/images/architecture.png">').includes('docs/images/architecture.png'))
-ok('src= 写成仓库外路径时被分类抓住', classifyTarget('../../outside/x.png').kind === 'escape')
+const srcEscape = extractLinkTargets('<img src="../../outside/x.png">')
+ok('src= 写成仓库外路径时，走完整链（抽取 → 分类）被抓',
+  srcEscape.length > 0 && classifyTarget(srcEscape[0]).kind === 'escape')
+// 过度匹配的反例：属性名前面必须是空白或 < 。`\b` 在连字符后也成立，所以旧写法会把
+// `<img data-src="…">`（懒加载标记）当成 src：凭空造出一个待检查目标，
+// 而一张根本不渲染的占位图就能把'两侧引同一张图'喂绿。
+ok('引用 `data-src` 这类同名后缀属性不算', mentionsDiagram('<img data-src="docs/images/architecture.png">') === false)
+ok('src 前面是字母也不算（xsrc= 形态）', extractLinkTargets('<img xsrc="docs/images/architecture.png">').length === 0)
 
 /* ---------- 五、入口判定不得静默失效 ---------- */
 
@@ -404,9 +417,16 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
  * 而窗口只在发版当下存在，人工重跑永远是绿的，所以钉在源码形状上（与宪法 V「宣称与实际一致」同理）。 */
 {
   const releaseSrc = readFileSync(join(ROOT, 'scripts', 'release.mjs'), 'utf8')
-  ok('release 用一次 push 同时更新 main 与 tag', releaseSrc.includes("git('push', '--atomic', 'origin', 'HEAD:main', `v${target}`)"))
-  ok('release 不再单独推 tag（那会在两条 push 之间留下 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main', `v${target}`)"))
-  ok('release 不再单独推 main（同上：两个 ref 必须同一事务）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main')"))
+  ok('release 用一次 push 同时更新 main 与 tag，且带 --atomic（三条断言钉的分别是：合并形态、不再单独推 tag、失败提示不教两步 push）',
+    releaseSrc.includes("git('push', '--atomic', 'origin', 'HEAD:main', `v${target}`)"))
+  // 反向那半不能被正向覆盖掉：单独推 tag 这一行如果回来，ci#51 的窗口就回来了。
+  ok('release 不再单独推 tag（两条 push 之间就是 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', `v${target}`)"))
+  ok('release 不再单独推 main（两个 ref 必须同一事务）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main')"))
+  // 提示行才是人在压力下照抄的那一条：本轮修的就是它教了两步 push，而上面三条只看 git() 调用，
+  // 提示被改回去时全绿（宪法 V：宣称与实际一致）。
+  ok('release 的失败提示不再教两步 push（提示才是人在压力下照抄的那一条；正向只查 git() 调用时，提示被改回去仍全绿）',
+    /console\.error\('（修好后重跑本脚本[^\n]*git push --atomic origin HEAD:main/.test(releaseSrc)
+      && !/git push origin main && git push origin/.test(releaseSrc))
 }
 
 /* 门禁的扫描面只有一份跳过集合。0.4.12 对齐发布线时只改了 check-refs 那半，编码护栏仍带着

@@ -91,7 +91,12 @@ export function extractLinkTargets(text) {
  */
 export function extractHtmlTargets(stripped) {
   const out = []
-  for (const m of stripped.matchAll(/\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=]+))/gi)) {
+  // 属性名前面必须是空白或 `<`。用 `\b(?:href|src)\b` 那种写法会过度匹配：
+  // `\b` 在连字符后面也成立，于是 `<img data-src="x.png">`（懒加载标记，合法 HTML）被当成 `src`，
+  // 凭空造出一个待检查目标（`data-src="../../outside/x.png"` 就是又一记假红），
+  // 而一张根本不渲染的占位图还能把"两侧引同一张图"的断言喂绿。三种引号形态（双/单/裸值）都要留。
+  const attrRe = /(?:^|[\s<])(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=]+))/gi
+  for (const m of stripped.matchAll(attrRe)) {
     const value = m[1] ?? m[2] ?? m[3]
     if (value !== undefined && value !== '') out.push(value)
   }

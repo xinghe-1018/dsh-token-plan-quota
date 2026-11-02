@@ -10,6 +10,43 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **
+`
+data-src
+`
+ 这类同名后缀属性会被当成 
+`
+src
+`
+ 收进引用检查**（第二轮 Open Code Review 的第 6 条，已复现）：
+  HTML 属性抽取用了 
+`
+\b(?:href|src)\b
+`
+ 这类词边界写法，而 
+`
+\b
+`
+ 在连字符后面同样成立——
+  
+`
+<img data-src="docs/images/a.png">
+`
+（懒加载标记，合法 HTML）于是凭空造出一个待检查目标，
+  
+`
+data-src="../../outside/x.png"
+`
+ 会制造一记假红，更坏的是**一张根本不渲染的占位图能把「两侧引同一张图」
+  这条断言喂绿**。现在要求属性名前是空白或 
+`
+<
+`
+（
+`
+xsrc=
+`
+ 之类也一并排除），正反两组用例都进了行为矩阵。
 - **结构图的引用口径自相矛盾**（Open Code Review 第 2 条，已复现）：合并时把 `architecture.png` 塞进了截图套
   的存在性清单，而那份清单同时喂给逐语言的引用集合——集合只认 markdown 行内图片（对 `<img src=x.png>`，
   `extractImageTargets` 返回空数组）。于是谁把结构图改写成已被声明为无害的 `<img src>` 形态，

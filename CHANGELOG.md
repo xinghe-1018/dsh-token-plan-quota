@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-11-02
+
 ### Fixed
 
 - **ROADMAP §6 那 13 条 low 与 1 条增强全部清掉**（第五轮审查的尾巴，逐条附反证或行为验证）：
@@ -120,7 +122,6 @@ All notable changes to this project are documented here. The format follows
   草稿或可重生成物。实机数过：旧集合会把 27 份草稿读进扫描面，其中 1 份是 markdown——活文档门禁会为了
   一个不在仓库里的文件判红），并去掉装饰性的 shebang（同目录的纯库模块都不带；带 shebang 的应当是可跑的
   门禁）。
-
 
 ## [0.4.12] - 2026-11-02
 
@@ -817,6 +818,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.13]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.9...v0.4.10

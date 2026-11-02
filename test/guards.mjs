@@ -23,6 +23,7 @@ import { findLineRefs } from '../scripts/check-refs.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
 import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
 import { repoPathFromUrl } from '../scripts/repo-path.mjs'
+import { SKIP_DIRS } from '../scripts/walk-skip.mjs'
 import { __internals } from '../lib/index.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -391,6 +392,19 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('release 用一次 push 同时更新 main 与 tag', releaseSrc.includes("git('push', 'origin', 'HEAD:main', `v${target}`)"))
   ok('release 不再单独推 tag（那会在两条 push 之间留下 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', `v${target}`)"))
   ok('release 不再单独推 main（同上：两个 ref 必须同一事务）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main')"))
+}
+
+/* 门禁的扫描面只有一份跳过集合。0.4.12 对齐发布线时只改了 check-refs 那半，编码护栏仍带着
+ * 自己的清单跑，于是同一句「扫描面不含 IDE 缓存」在两份代码里一半真一半假（Open Code Review
+ * 第一条发现，实核：旧清单会枚举进 57 份 .qoder 生成文档）。与「换算只有一处」同理，钉在源码上。 */
+{
+  const docsSrc = readFileSync(join(ROOT, 'scripts', 'check-docs.mjs'), 'utf8')
+  const refsSrc = readFileSync(join(ROOT, 'scripts', 'check-refs.mjs'), 'utf8')
+  ok('check-docs 与 check-refs 都从 walk-skip.mjs 取跳过集合',
+    /from '.\/walk-skip.mjs'/.test(docsSrc) && /from '.\/walk-skip.mjs'/.test(refsSrc))
+  ok('两份门禁不再各自持有 SKIP_DIRS 字面量（各写一份必然漂）',
+    !/const SKIP_DIRS = new Set\(/.test(docsSrc) && !/const SKIP_DIRS = new Set\(/.test(refsSrc))
+  ok('共享集合覆盖 IDE 与可重生成缓存', SKIP_DIRS.has('.qoder') && SKIP_DIRS.has('.dsh') && SKIP_DIRS.has('.shots-work'))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
 // 出站主机的推导与比对抽成单一实现（可被 test/guards.mjs 喂正反例），见该文件的头注释。
 import { compareHosts, deriveHostsFromCode } from './outbound-hosts.mjs'
+import { SKIP_DIRS } from './walk-skip.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -284,7 +285,7 @@ const TEXT_EXT = new Set(['.md', '.mjs', '.cjs', '.js', '.json', '.yml', '.yaml'
 // 而不变量 VI 点名的正是这一条，旧实现却把它漏在扫描面外）。
 const TEXT_NAMES = new Set(['LICENSE', 'pre-commit', 'post-commit', 'commit-msg', 'pre-push',
   '.gitattributes', '.gitignore', '.npmrc'])
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work'])
+// 跳过集合与 check-refs 共用一份（理由见 scripts/walk-skip.mjs 头注释）。
 /** 递归枚举文本文件。不用 `{ recursive: true }`：它会跟随 symlink/junction 到仓库外（同 check-refs 的理由）。 */
 function walkTextFiles(absDir, rel, out) {
   for (const dirent of readdirSync(absDir, { withFileTypes: true })) {

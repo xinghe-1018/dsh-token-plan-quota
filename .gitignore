@@ -14,5 +14,6 @@ package-lock.json
 .dsh/
 
 # Qoder IDE 生成的 repowiki 缓存（54 份自动文档，内含大量 file:line 引用）：
-# 可重生成、不入库，也不是本项目的活文档，所以门禁的扫描面不含它。
+# 可重生成、不入库，也不是本项目的活文档。门禁的扫描面不含它：
+# check-refs 与 check-docs 共用 scripts/walk-skip.mjs 那一份跳过集合。
 .qoder/

@@ -32,6 +32,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripFences } from './markdown-strip.mjs'
+import { SKIP_DIRS } from './walk-skip.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -101,13 +102,6 @@ export function findLineRefs(text) {
  * 路径长度上限，而指向仓库外的 `.md` 会被真读进来。那等于给这道新门禁加了一个"读仓库外文件"的面。
  * 遇到 `isSymbolicLink()` 直接跳过：实测 junction 与文件 symlink 都会报 true，一条挡住"环"与"越界"。
  */
-/**
- * 递归时跳过的目录：`.git` 里没有活文档（而且量极大）、node_modules 与截图中间产物同理；
- * `.qoder`（IDE 生成的 repowiki 缓存）与 `.dsh`（Spec Kit 重新生成的技能）同理——两者都已在
- * `.gitignore` 里，不属于仓库，也就不属于"活文档"这个扫描面。把它们读进来只会制造假红：
- * 2026-11-02 合 main 后本机 `check-refs` 一次报出 1693 条，全部来自 `.qoder/`。
- */
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work', '.qoder', '.dsh'])
 
 function walkMarkdown(absDir, rel, out) {
   for (const dirent of readdirSync(absDir, { withFileTypes: true })) {

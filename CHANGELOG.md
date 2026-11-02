@@ -10,6 +10,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **「门禁的扫描面不含 IDE 缓存」当时只做了一半**（Open Code Review 的第一条发现，已核）：对齐发布线时
+  只给 `check-refs` 加了 `.qoder`/`.dsh`，而 `check-docs` 的编码护栏跑的是它自己那份
+  `SKIP_DIRS`，仍会把 57 份生成文档读进来判编码。今天没红只是因为那些文件恰好干净——
+  红了却修不了（文件不在仓库里）。现在抽出 `scripts/walk-skip.mjs` 作为唯一来源，两份门禁共用，
+  `test/guards.mjs` 钉住「谁再各写一份字面量就红」。
 - **发布流水线分两次 push，把每次发版自己的 main 门禁推红**（0.4.12 实发）：
   `git push origin HEAD:main` 与 `git push origin v0.4.12` 之间那几秒，main 的 push 事件
   已经拉起 `ci`，它的 checkout 还看不到尚未落地的 tag —— `check-docs` 的「CHANGELOG 引用的

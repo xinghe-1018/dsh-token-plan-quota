@@ -10,17 +10,38 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- **「门禁的扫描面不含 IDE 缓存」当时只做了一半**（Open Code Review 的第一条发现，已核）：对齐发布线时
-  只给 `check-refs` 加了 `.qoder`/`.dsh`，而 `check-docs` 的编码护栏跑的是它自己那份
-  `SKIP_DIRS`，仍会把 57 份生成文档读进来判编码。今天没红只是因为那些文件恰好干净——
-  红了却修不了（文件不在仓库里）。现在抽出 `scripts/walk-skip.mjs` 作为唯一来源，两份门禁共用，
-  `test/guards.mjs` 钉住「谁再各写一份字面量就红」。
-- **发布流水线分两次 push，把每次发版自己的 main 门禁推红**（0.4.12 实发）：
-  `git push origin HEAD:main` 与 `git push origin v0.4.12` 之间那几秒，main 的 push 事件
-  已经拉起 `ci`，它的 checkout 还看不到尚未落地的 tag —— `check-docs` 的「CHANGELOG 引用的
-  tag 必须存在」判红（ci#51），而同一时刻从 tag ref 起跑的 `publish#16` 是绿的、npm 也确实上架了。
-  红的是 main，不是包；最坏后果是下次发版前没人再信绿灯。现在两个 ref 在同一次 push 事务里落地，
-  `test/guards.mjs` 加三条源码形状守卫钉住它（拆回两条就红）。
+- **结构图的引用口径自相矛盾**（Open Code Review 第 2 条，已复现）：合并时把 `architecture.png` 塞进了截图套
+  的存在性清单，而那份清单同时喂给逐语言的引用集合——集合只认 markdown 行内图片（对 `<img src=x.png>`，
+  `extractImageTargets` 返回空数组）。于是谁把结构图改写成已被声明为无害的 `<img src>` 形态，
+  报错会来自截图契约、指向错的契约。现在拆成两份清单：`SCREENSHOTS` 进引用集合，
+  `DIAGRAM` 只做存在性检查与 `mentionsTarget` 点名断言；该常量也挪到模块作用域，不再两处各写一遍。
+- **`src=` 形态只有半个检查面看得见**（评审第 1/3/5 条）：`mentionsTarget` 自己补了一条只认
+  双引号小写的正则，而存在性、越界、随包发布三条检查走 `extractLinkTargets`（HTML 分支只有 `href`）。
+  后果是 `<img src="../../outside/x.png">` 对越界检查完全隐形，却能让点名断言变绿；
+  而 `<img src='x.png'>`、`<img src  = "x.png">`、`<IMG SRC=…>` 一律被判成没引用
+  （004 的 Lens 1 收了前三类，这是第四类）。现在 HTML 属性形态抽成 `extractHtmlTargets`，href 与 src 共用、
+  三种引号形态与等号空白、大小写都认，两个口径重新合成一条实现。
+- **远端同尾路径能让「双语同源」断言假绿**（评审第 4 条）：`pathname.endsWith('/' + wanted)` 对任意 host、任意
+  仓库都放行——别家仓库的 blob 链接或 CDN 上的过期副本都算已引用，本地那张可以一次都没被引到。现在绝对链接
+  必须落在本仓库 `owner/repo` 前缀下才算（调用方从 `package.json#repository.url` 取），不给就不认远端形态。
+- **发布脚本的失败提示把刚修掉的竞态又教了一遍**（评审第 7 条）：回退提示仍写着两步 push，照它做等于手动重建
+  `ci` 看不到 tag 的窗口；而且它写的是 `main`，在 detached HEAD 的 runner 上会把旧 tip 再推一遍。
+  改成一次推两个 ref，并补 `--atomic`：多 refspec 的 push 默认不保证原子，main 被拒时 tag 仍可能落地，
+  正是这道发布门要拦的「有 tag、main 却没有对应提交」。
+- **「门禁的扫描面不含 IDE 缓存」当时只做了一半**（评审第 1 条的前置，已核）：对齐发布线时只给 `check-refs` 加了
+  `.qoder`/`.dsh`，而 `check-docs` 的编码护栏跑的是它自己那份 `SKIP_DIRS`，仍会把 57 份生成文档
+  读进来判编码。今天没红只是因为那些文件恰好干净；红了却修不了（文件不在仓库里）。现在抽出
+  `scripts/walk-skip.mjs` 作为唯一来源，两份门禁共用，`test/guards.mjs` 钉住「谁再各写一份字面量就红」。
+- **发布流水线分两次 push，把每次发版自己的 main 门禁推红**（0.4.12 实发）：`git push origin HEAD:main` 与
+  `git push origin v0.4.12` 之间那几秒，main 的 push 事件已经拉起 `ci`，它的 checkout 还看不到尚未
+  落地的 tag —— `check-docs` 的「CHANGELOG 引用的 tag 必须存在」判红（ci#51），而同一时刻从 tag ref 起跑的
+  `publish#16` 是绿的、npm 也确实上架了。红的是 main 不是包；最坏后果是下次发版前没人再信绿灯。
+
+### Changed
+
+- **`scripts/walk-skip.mjs` 的跳过集合补上 `.scratch`（与 `.qoder`/`.dsh` 同类：都在 `.gitignore` 里、
+  都是本地草稿或可重生成物。实机数过：旧集合会把 27 份草稿读进扫描面，其中 1 份是 markdown——活文档门禁会为了
+  一个不在仓库里的文件判红），并去掉装饰性的 shebang（同目录的纯库模块都不带；带 shebang 的应当是可跑的门禁）。
 
 ## [0.4.12] - 2026-11-02
 

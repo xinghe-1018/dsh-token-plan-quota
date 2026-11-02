@@ -27,6 +27,7 @@ import { __internals } from '../lib/index.js'
 // 出站主机的推导与比对抽成单一实现（可被 test/guards.mjs 喂正反例），见该文件的头注释。
 import { compareHosts, deriveHostsFromCode } from './outbound-hosts.mjs'
 import { SKIP_DIRS } from './walk-skip.mjs'
+import { repoPathFromUrl } from './repo-path.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget } from './link-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -329,6 +330,8 @@ for (const rel of textFiles) {
   if (hasCjkChar && hasPuaChar) problems.push(`${rel} 同时含中日韩文字与私用区字符，是 GBK 误读 UTF-8 的典型残骸`)
 }
 
+const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图（中英共用一张，产出方见 AGENTS.md）
+
 /* 10) 截图物料：占位块必须已被真图取代，图必须真实存在且非零字节。
  *     截图是合成数据生成的（scripts/shots/），所以这里同时跑一次 fixture 自检——
  *     产品口径（实测卡不带百分比、百分比与 remaining/total 自洽、键 ⊆ publicCard 白名单、
@@ -336,7 +339,9 @@ for (const rel of textFiles) {
  *     架构图与截图套不同源（它由 diagrams/ 的源规格产出、两种语言共用一张），
  *     所以除了下面这条存在性清单，还有一条**点名**的双语引用断言。 */
 {
-  const images = [
+  // 截图套（中英两套，出自 scripts/shots/make-shots.mjs）：只有这份进逐语言的引用集合，
+  // 因为截图契约认的是 markdown 行内图片（生成器写出的就是这个形态）。
+  const SCREENSHOTS = [
     'docs/images/badge-follows-model.gif',
     'docs/images/panel-official-plus-meters.png',
     'docs/images/floating-panel.png',
@@ -350,9 +355,14 @@ for (const rel of textFiles) {
     'docs/images/en/cookie-fallback-measured.png',
     'docs/images/en/state-deepseek-balance.png',
     'docs/images/en/state-token-plan-credits.png',
-    // 架构图不属于中英两套截图：它是全仓库唯一的结构图，两侧引同一张（产出方见 AGENTS.md）。
-    'docs/images/architecture.png',
   ]
+  // 结构图与截图套不同源（由 diagrams/ 的规格产出、中英共用一张），所以它只进**存在性**清单，
+  // 不进截图契约：截图集合按 `extractImageTargets`（只认行内图片）核对，而结构图的引用
+  // 口径是 `mentionsTarget`（行内 / `<img src>` / 引用式定义 / 本仓库绝对链接都算）。
+  // 混进同一份清单会让两种口径互相打脸：谁把结构图改写成 `<img src>` 形态，报错来自截图契约、
+  // 指向的还是错的契约——004 的 Lens 1 要消灭的正是这类假红（本轮评审第 2 条，已复现：
+  // 对 `<img src="x.png">` 那种写法，`extractImageTargets` 返回空数组）。产出方规则见 AGENTS.md。
+  const images = [...SCREENSHOTS, DIAGRAM]
   for (const rel of images) {
     const abs = join(root, rel)
     if (!existsSync(abs)) { problems.push(`${rel} 不存在：README 引了张没有的图`); continue }
@@ -362,16 +372,14 @@ for (const rel of textFiles) {
   // 占位串留着就说明图没换干净（也防有人把图删了退回占位块还自称通过）。
   if (zh.includes('截图位')) problems.push('README.md 仍留着「截图位」占位块')
   if (en.includes('Screenshots (4 to add before release)')) problems.push('README.en.md 仍留着截图占位块')
-  // 两份 README 都得真的引到图，缺一张就是图文不符。
-  // 英文套少一张是**有意的**：「本实例还没调用过」那句说明宿主只有中文（lib/index.js:376）。
-  // 两份 README 都得真的引到图。**按集合核对，不是"引够 N 张"**：旧实现只数条数，
-// 同一张图引 7 次即过，而"13 张图存在"由上面那份硬编码清单保证——两者从不交汇。
-// 英文套少 state-no-history 是**有意的**：「本实例还没调用过」那句说明宿主只有中文
-// （lib/index.js 的 emptyReason 是写死的中文），所以它只出现在中文套。
-const requiredImageRefs = {
-  'README.md': images.filter(rel => !rel.startsWith('docs/images/en/')),
-  'README.en.md': images.filter(rel => rel.startsWith('docs/images/en/')),
-}
+  // 两份 README 都得真的引到图，缺一张就是图文不符。**按集合核对，不是"引够 N 张"**：
+  // 旧实现只数条数，同一张图引 7 次即过，而"13 张图存在"由上面那份硬编码清单保证——两者从不交汇。
+  // 英文套少 state-no-history 是**有意的**：「本实例还没调用过」那句 emptyReason 是写死的中文
+  // （lib/index.js），所以它只出现在中文套。
+ const requiredImageRefs = {
+   'README.md': SCREENSHOTS.filter(rel => !rel.startsWith('docs/images/en/')),
+   'README.en.md': SCREENSHOTS.filter(rel => rel.startsWith('docs/images/en/')),
+ }
 for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
   const refs = extractImageTargets(text)
   if (refs.length === 0) problems.push(`${name} 一张图都没引用`)
@@ -397,9 +405,11 @@ for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
  * 判"引用"用 `mentionsTarget`：归一化相对路径、`<img src>`、引用式定义、绝对 GitHub 链接
  * 都算引用（初版只认行内图片，会把三种无害写法判红——004 的 Lens 1 实测），
  * 代码围栏里的示例与 HTML 注释里的引用不算。行为矩阵常驻 `test/guards.mjs`。 */
-const DIAGRAM = 'docs/images/architecture.png'
+const ownRepoPath = repoPathFromUrl(pkg.repository?.url) ?? null
+if (ownRepoPath === null) problems.push('package.json#repository.url 里取不到 owner/repo：结构图的绝对链接形态无法核对')
 for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-  if (!mentionsTarget(text, DIAGRAM)) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
+  // 第三参数把绝对链接钉到本仓库：任何 host 上串尾相同的图片都算"已引用"是假绿（本轮评审第 4 条）。
+  if (!mentionsTarget(text, DIAGRAM, ownRepoPath)) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
 }
   try {
     const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')

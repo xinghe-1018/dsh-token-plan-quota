@@ -74,8 +74,28 @@ export function extractLinkTargets(text) {
   const targets = scanInlineTargets(stripped).map(item => item.target)
   // 引用式定义：允许最多 3 个前导空格（CommonMark 的列表缩进形态）。
   for (const m of stripped.matchAll(/^ {0,3}\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])
-  for (const m of stripped.matchAll(/href="([^"]+)"/g)) targets.push(m[1])   // HTML
+  for (const value of extractHtmlTargets(stripped)) targets.push(value)      // HTML（href 与 src）
   return targets
+}
+
+/**
+ * HTML 属性形态的引用目标：`<a href="…">` 与 `<img src="…">`，三种引号形态
+ * （双引号 / 单引号 / 裸值）、等号两侧空白、标签与属性名大小写都要认。
+ *
+ * 为什么单独抽出来：`href="…"` 那种只认双引号的写法是假红的来源（004 的 Lens 1 修了行内图片
+ * 只认一种形态的问题，本轮评审又在这里发现第四种：`<img src='x.png'>`、`<img src = "x.png">`、
+ * `<IMG SRC="x.png">` 全都算"没引用"）。同时 `src` 必须和 `href` 走同一个抽取器，
+ * 否则 `<img src="../outside/x.png">` 对越界检查完全隐形——那是"单一实现"这条规矩又被破了一次。
+ * @param {string} stripped 已剥代码围栏的文本
+ * @returns {string[]} 原样目标片段
+ */
+export function extractHtmlTargets(stripped) {
+  const out = []
+  for (const m of stripped.matchAll(/\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=]+))/gi)) {
+    const value = m[1] ?? m[2] ?? m[3]
+    if (value !== undefined && value !== '') out.push(value)
+  }
+  return out
 }
 
 /**
@@ -171,22 +191,29 @@ export function classifyTarget(raw) {
  *  - 代码围栏 / 行内代码里的示例（与第 4 项、第 4b 项同一口径：那是文档，不是声明）
  *  - HTML 注释里的引用（`<!-- … -->`）——它不渲染，等于没引用（004 的 Lens 1 实测过这条绕过）
  *
+ * 远端形态（绝对 GitHub 链接）**只在指向本仓库时才计数**：`pathname.endsWith('/' + wanted)`
+ * 那种写法对任何 host、任何仓库都放行——`https://github.com/anyone/else/blob/main/docs/images/
+ * architecture.png` 或某个 CDN 上的过期副本都能让"两侧引同一张图"这条断言变绿，而本地那张
+ * 一次都没被引用。这是假绿，比该函数刻意避免的假红更坏（它悄悄放弃了不变量）。
+ * 所以 `ownRepoPath`（`owner/repo`）必须由调用方给；没给就不认远端形态。
+ *
  * @param {string} text Markdown 原文
  * @param {string} wanted 归一化后的仓库内相对路径，例如 `docs/images/architecture.png`
+ * @param {string|null} ownRepoPath 本仓库的 `owner/repo`（绝对链接只认这一条前缀）；传 `null` 表示不认远端形态
  * @returns {boolean}
  */
-export function mentionsTarget(text, wanted) {
+export function mentionsTarget(text, wanted, ownRepoPath = null) {
   const stripped = stripCode(text).replace(/<!--[\s\S]*?-->/g, '')
-  // 复用 `extractLinkTargets`（内联 / 徽标式 / 引用式 / `href=`）再补一条 `src=`：
-  // 图片走的是 `src`，而那个函数的 HTML 分支只认 `href`——这是 004 的 Lens 1 实测出来的缺口。
-  const raws = [...extractLinkTargets(stripped), ...[...stripped.matchAll(/src="([^"]+)"/g)].map(m => m[1])]
+  // 单一抽取器：内联 / 徽标式 / 引用式 / HTML 的 href 与 src（三种引号形态）——见 extractHtmlTargets。
+  const raws = extractLinkTargets(stripped)
   return raws.some(raw => {
     const decorated = stripTarget(raw)
     if (decorated === '') return false
     if (/^[a-z][a-z0-9+.-]*:/i.test(decorated) || decorated.startsWith('//')) {
+      if (ownRepoPath === null) return false
       try {
         const url = new URL(decorated.startsWith('//') ? 'https:' + decorated : decorated)
-        return url.pathname.endsWith('/' + wanted)
+        return url.pathname.startsWith('/' + ownRepoPath + '/') && url.pathname.endsWith('/' + wanted)
       } catch { return false }
     }
     const { kind, target } = classifyTarget(raw)

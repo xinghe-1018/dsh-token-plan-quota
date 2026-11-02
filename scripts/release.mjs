@@ -199,7 +199,7 @@ function main() {
     if (checkFailed.error !== null) console.error(`  ${checkFailed.step} 连启动都失败：${checkFailed.error}`)
     else console.error(`  失败的是 ${checkFailed.step}（exit ${checkFailed.status}）`)
     console.error(`回退：git tag -d v${target} && git reset --soft HEAD~1`)
-    console.error('（修好后重跑本脚本，或直接 git push origin main && git push origin ' + `v${target}）`)
+    console.error('（修好后重跑本脚本，或直接一次推两个 ref：git push --atomic origin HEAD:main v' + target + '）')
     process.exitCode = 1
     return
   }
@@ -211,7 +211,10 @@ function main() {
   // ci#51 failure（只缺 v0.4.12 这一条，其余 tag 都在，正说明是竞态不是漏打），
   // 同一时刻从 tag ref 起跑的 publish#16 全绿，npm 也确实发出去了 —— 红的是 main 的门禁。
   // check-docs 刻意不打网络（每条提交都要跑的检查不能悄悄发请求），所以只能从源头消除窗口。
-  git('push', 'origin', 'HEAD:main', `v${target}`)
+  // --atomic 是这条链的第二道闸：多 refspec 的 push 默认**不保证原子**，main 被拒（比如
+  // 别人先推了一笔）时 tag 仍可能落地，于是出现`有 tag、main 却没有对应提交`的状态——正是这道发布门要拦的事。
+  // 加了 --atomic 才保住分两条推时'main 推不上就什么都不推'的旧语义。
+  git('push', '--atomic', 'origin', 'HEAD:main', `v${target}`)
   console.log(`\n已推送 ${target} + tag v${target}。`)
   console.log('CI：Actions → publish → npm publish。看 https://github.com/xinghe-1018/dsh-token-plan-quota/actions')
 }

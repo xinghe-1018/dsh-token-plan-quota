@@ -254,24 +254,39 @@ ok('抽取 散文中孤立 ]( 不算链接', extractLinkTargets('随手写 ](x) 
 // 临时副本 `exit 0→1`，而 main 上全绿）。假红比没有检查更坏——它训练人忽略红灯，
 // 所以"应当放行"的这一半跟"应当报"的那一半一样重要。
 const DIAGRAM = 'docs/images/architecture.png'
-const mentionsDiagram = text => mentionsTarget(text, DIAGRAM)
+const OWN = 'xinghe-1018/dsh-token-plan-quota'   // 远端形态只认本仓库（见下面新用例）
+const mentionsDiagram = (text, own = OWN) => mentionsTarget(text, DIAGRAM, own)
 ok('引用 内联图片', mentionsDiagram('![x](docs/images/architecture.png)'))
 ok('引用 带 title', mentionsDiagram('![x](docs/images/architecture.png "t")'))
 ok('引用 ./ 前缀', mentionsDiagram('![x](./docs/images/architecture.png)'))
 ok('引用 尖括号包裹', mentionsDiagram('![x](<docs/images/architecture.png>)'))
 ok('引用 引用式定义', mentionsDiagram('![x][r]\n[r]: docs/images/architecture.png'))
-ok('引用 HTML img[src]（`extractLinkTargets` 只认 href，这里是补上的那一条）',
+ok('引用 HTML img[src]（`extractLinkTargets` 现在同时收 href 与 src，两种口径共用一条实现）',
   mentionsDiagram('<img src="docs/images/architecture.png" alt="x">'))
 ok('引用 HTML a[href]', mentionsDiagram('<a href="docs/images/architecture.png">x</a>'))
-ok('引用 绝对 GitHub 链接', mentionsDiagram('![x](https://github.com/o/r/blob/main/docs/images/architecture.png)'))
-ok('引用 绝对链接带 query', mentionsDiagram('![x](https://github.com/o/r/raw/main/docs/images/architecture.png?raw=true)'))
-// 下面这一半是"不算引用"：它必须**继续不算**，否则断言可以被无渲染的写法满足。
+ok('引用 本仓库绝对 GitHub 链接（blob 形态）', mentionsDiagram('![x](https://github.com/' + OWN + '/blob/main/docs/images/architecture.png)'))
+ok('引用 本仓库 raw 形态带 query 也算', mentionsDiagram('![x](https://github.com/' + OWN + '/raw/main/docs/images/architecture.png?raw=true)'))
 ok('引用 围栏里的示例不算', mentionsDiagram('```\n![x](docs/images/architecture.png)\n```') === false)
 ok('引用 HTML 注释里的不算（004 的 Lens 1 实测过这条绕过）',
   mentionsDiagram('<!-- ![x](docs/images/architecture.png) -->') === false)
 ok('引用 别的文件名不算', mentionsDiagram('![x](docs/images/architecture-old.png)') === false)
 ok('引用 正文提到路径但没有链接语法不算', mentionsDiagram('见 docs/images/architecture.png 这张图') === false)
 ok('引用 远端同尾不同路径不算', mentionsDiagram('![x](https://example.com/docs/images/other.png)') === false)
+// 本轮评审第 3/4/5 条补的用例：假绿比假红更坏，两种都要有反例钉住。
+ok('引用 别家仓库的同尾路径不算（钉到本仓库 owner/repo，否则任意远端都能让断言变绿）',
+  mentionsDiagram("![x](https://github.com/anyone/else/blob/main/docs/images/architecture.png)") === false)
+ok('引用 不给 owner/repo 时远端形态一律不算',
+  mentionsDiagram("![x](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/main/docs/images/architecture.png)", null) === false)
+ok('引用 本仓库 blob 形态算',
+  mentionsDiagram("![x](https://github.com/" + OWN + "/blob/main/docs/images/architecture.png)"))
+// 单引号、等号两侧空白、大写属性名都是合法 HTML：只认双引号小写就是第四种假红（004 的 Lens 1 只收了前三）。
+const srcSingle = "<img src='docs/images/architecture.png' alt='x'>"
+ok('引用 单引号 src 形态算（第四种无害写法，004 的 Lens 1 没收这条）', mentionsDiagram(srcSingle))
+ok('引用 大写 SRC 属性名算', mentionsDiagram('<IMG SRC="docs/images/architecture.png">'))
+ok('引用 等号两侧有空白的 src 算', mentionsDiagram('<img src  =  "docs/images/architecture.png">'))
+ok('src= 已进 extractLinkTargets（越界与存在性检查因此也看得见这种形态）',
+  extractLinkTargets('<img src="docs/images/architecture.png">').includes('docs/images/architecture.png'))
+ok('src= 写成仓库外路径时被分类抓住', classifyTarget('../../outside/x.png').kind === 'escape')
 
 /* ---------- 五、入口判定不得静默失效 ---------- */
 
@@ -389,8 +404,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
  * 而窗口只在发版当下存在，人工重跑永远是绿的，所以钉在源码形状上（与宪法 V「宣称与实际一致」同理）。 */
 {
   const releaseSrc = readFileSync(join(ROOT, 'scripts', 'release.mjs'), 'utf8')
-  ok('release 用一次 push 同时更新 main 与 tag', releaseSrc.includes("git('push', 'origin', 'HEAD:main', `v${target}`)"))
-  ok('release 不再单独推 tag（那会在两条 push 之间留下 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', `v${target}`)"))
+  ok('release 用一次 push 同时更新 main 与 tag', releaseSrc.includes("git('push', '--atomic', 'origin', 'HEAD:main', `v${target}`)"))
+  ok('release 不再单独推 tag（那会在两条 push 之间留下 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main', `v${target}`)"))
   ok('release 不再单独推 main（同上：两个 ref 必须同一事务）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main')"))
 }
 
@@ -404,7 +419,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /from '.\/walk-skip.mjs'/.test(docsSrc) && /from '.\/walk-skip.mjs'/.test(refsSrc))
   ok('两份门禁不再各自持有 SKIP_DIRS 字面量（各写一份必然漂）',
     !/const SKIP_DIRS = new Set\(/.test(docsSrc) && !/const SKIP_DIRS = new Set\(/.test(refsSrc))
-  ok('共享集合覆盖 IDE 与可重生成缓存', SKIP_DIRS.has('.qoder') && SKIP_DIRS.has('.dsh') && SKIP_DIRS.has('.shots-work'))
+  ok('共享集合覆盖 IDE、草稿与可重生成缓存（.scratch 也在 .gitignore 里，草稿里的 file:line 不该把活文档门禁判红）',
+    SKIP_DIRS.has('.qoder') && SKIP_DIRS.has('.dsh') && SKIP_DIRS.has('.shots-work') && SKIP_DIRS.has('.scratch'))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

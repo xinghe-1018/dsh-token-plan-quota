@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * 递归枚举时的跳过集合 —— **两份门禁共用一份**（check-refs 的活文档扫描、check-docs 的编码护栏）。
  *
@@ -12,4 +11,4 @@
  * 不属于仓库，也就不属于「活文档 / 必须无损编码的文本」这两个面。判红它们等于要求用户去修
  * 一份本地根本没有的生成物。
  */
-export const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work', '.qoder', '.dsh'])
+export const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work', '.scratch', '.qoder', '.dsh'])

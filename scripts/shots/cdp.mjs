@@ -150,6 +150,18 @@ export class Cdp {
     })
   }
 
+  /**
+   * 显式关闭会话。
+   *
+   * 为什么要一个 close：`WebSocket` 持有句柄、维持事件循环，原先的调用方只杀浏览器进程、靠对端
+   * 死亡间接断开——那等于把清理依赖在一个 `try { proc.kill() } catch {}` 上（它静默失败时脚本
+   * 打印完结果却迟迟不退出）。见 diagrams/make-diagram-png.mjs 的 finally（§6 第 10 条）。
+   */
+  close() {
+    try { this.ws.close() } catch { /* 已经断了，正是要的效果 */ }
+    this.pending.clear()
+    this.handlers.clear()
+  }
   onMessage(event) {
     let message
     try { message = JSON.parse(String(event.data)) } catch { return }

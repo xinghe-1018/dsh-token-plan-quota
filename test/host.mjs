@@ -631,8 +631,11 @@ try {
      * 反向也要钉：票据真在场时不许再报缺（否则就是又一处假红）。 */
     const otherTicketSite = { ...wrongSite, _cookie: 'cna=AAA; login_aliyunid_ticket=SECRET_CANARY_B; login_aliyunid_csrf=BBB' }
     const rejectedOther = await querySource(otherTicketSite, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
-    ok('另一台主机的 login_aliyunid_ticket 不能顶掉"缺本控制台票据"的提示',
-      String(rejectedOther.error).includes('没有看到登录票据 login_qianwenai_ticket'), rejectedOther.error)
+    // 提示不但要说缺，还要把`看到的那张同类票据`点出来（§6 第 14 条）：那正是另一台主机的指纹，
+    // 用户据此知道该去复制哪条请求，而不是只被告知'缺票据'。
+    ok('另一台主机的 login_aliyunid_ticket 不能顶掉提示，且要被点名',
+      String(rejectedOther.error).includes('看到的是 login_aliyunid_ticket')
+      && String(rejectedOther.error).includes('本控制台要的是 login_qianwenai_ticket'), rejectedOther.error)
     ok('另一种形态的票据名：值仍绝不进提示', !String(rejectedOther.error).includes('SECRET_CANARY_B'), rejectedOther.error)
     const rightTicketSite = { ...wrongSite, _cookie: 'cna=AAA; login_qianwenai_ticket=SECRET_CANARY_C' }
     const rejectedRight = await querySource(rightTicketSite, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })

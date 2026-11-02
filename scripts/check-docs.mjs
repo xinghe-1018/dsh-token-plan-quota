@@ -82,9 +82,24 @@ for (const host of hostDiff.unused) {
  *    又被它误报成声明（002 的 Lens 1/Lens 2 各自独立报过同一处）——同一语义两处实现必有一处先忘。
  *    现在连"要不要碰文件系统"也只由 `classifyTarget` 说了算：**只有 `relative` 才允许 existsSync**。 */
 
-for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
-  for (const raw of new Set(extractLinkTargets(text))) {
+/* 抽取 + 分类**只做一次**，第 4、4b、10 项共用。过去三条检查各自跑一遍 extractLinkTargets /
+ * extractImageTargets（每次都是全文 stripCode + 线性扫描），而 classifyTarget 的分支处理在两处
+ * 各写一份——本文件头注释记的就是"两处各一套实现必有一处先忘"（§6 第 6 条）。 */
+const README_FILES = [['README.md', zh], ['README.en.md', en]]
+const linkFacts = new Map()
+const imageFacts = new Map()
+for (const [file, text] of README_FILES) {
+  const uniq = new Map()
+  for (const raw of extractLinkTargets(text)) {
     const { kind, target } = classifyTarget(raw)
+    uniq.set(kind + String.fromCharCode(0) + target, { kind, target })
+  }
+  linkFacts.set(file, [...uniq.values()])
+  const refs = extractImageTargets(text).map(raw => classifyTarget(raw))
+  imageFacts.set(file, { count: refs.length, refs, relative: refs.filter(item => item.kind === 'relative').map(item => item.target) })
+}
+for (const [file, items] of linkFacts) {
+  for (const { kind, target } of items) {
     if (kind === 'skip') continue
     // 指向仓库外 / 含反斜杠的一律报错。前者本来就没意义，顺带关掉"用存在性探测仓库外路径"那个面
     // （002 的 Lens 2 F5 记为既存问题；003 的 Lens 2 进一步指出旧判定漏了裸 `..` 与 `\` 形态）。
@@ -103,20 +118,18 @@ for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
  *     ——002 的 Lens 1 与 Lens 2 各自独立报了同一处。两处实现必然分叉，所以只留一处。
  *     发布面也不能只按 `files` 字面算：`npm pack` 无论 files 怎么写都会带上 package.json、
  *     README*、LICENSE* 与 main 指向的文件（审阅实测 package.json 在 tarball 里而不在 files）。 */
-const pkgMeta = JSON.parse(read('package.json'))
-const fileList = pkgMeta.files ?? null
+const fileList = pkg.files ?? null
 if (fileList === null) {
   notices.push('README 发布面检查跳过：package.json 没有 files 字段，无法判断哪些文件随包发布')
 } else if (fileList.some(f => f.startsWith('!') || /[*?[\]{}]/.test(f))) {
   notices.push('README 发布面检查可能不准：files 里含否定项或 glob，本检查只做字面/目录前缀比对')
 }
-const alwaysShipped = ['package.json', 'README.md', 'README.en.md', 'LICENSE', 'LICENCE', pkgMeta.main, pkgMeta.types]
+const alwaysShipped = ['package.json', 'README.md', 'README.en.md', 'LICENSE', 'LICENCE', pkg.main, pkg.types]
   .filter(v => typeof v === 'string' && v !== '')
 const publishedFiles = [...(fileList ?? []).filter(f => !f.startsWith('!')), ...alwaysShipped]
 const isPublished = target => publishedFiles.some(f => target === f || target.startsWith(f.replace(/\/$/, '') + '/'))
-for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['README.en.md', en]])) {
-  for (const raw of new Set(extractLinkTargets(text))) {
-    const { kind, target } = classifyTarget(raw)
+for (const [file, items] of (fileList === null ? [] : linkFacts)) {
+  for (const { kind, target } of items) {
     if (kind !== 'relative') continue
     if (!isPublished(target)) {
       problems.push(`${file} 的链接目标不随包发布：${target}（改成绝对链接，或加进 package.json#files）`)
@@ -403,30 +416,28 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
   // 旧实现只数条数，同一张图引 7 次即过，而"13 张图存在"由上面那份硬编码清单保证——两者从不交汇。
   // 英文套少 state-no-history 是**有意的**：「本实例还没调用过」那句 emptyReason 是写死的中文
   // （lib/index.js），所以它只出现在中文套。
- const requiredImageRefs = {
-   'README.md': SCREENSHOTS.filter(rel => !rel.startsWith('docs/images/en/')),
-   'README.en.md': SCREENSHOTS.filter(rel => rel.startsWith('docs/images/en/')),
- }
-for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
-  const refs = extractImageTargets(text)
-  if (refs.length === 0) problems.push(`${name} 一张图都没引用`)
-  const relativeTargets = new Set()
-  for (const ref of refs) {
-    // 与第 4 项同一条规矩：只有 `relative` 才碰文件系统。旧写法直接 `join(root, ref)` + existsSync，
-    // 于是 `![x](../../../../Windows/win.ini)` 也能拿来当"仓库外某个文件是否存在"的神谕
-    // （003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
-    const { kind, target } = classifyTarget(ref)
-    if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
-    else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
-    else if (kind === 'relative') {
-      relativeTargets.add(target)
-      if (!existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
+  const requiredImageRefs = {
+    'README.md': SCREENSHOTS.filter(rel => !rel.startsWith('docs/images/en/')),
+    'README.en.md': SCREENSHOTS.filter(rel => rel.startsWith('docs/images/en/')),
+  }
+  for (const [name, facts] of imageFacts) {
+    if (facts.count === 0) problems.push(`${name} 一张图都没引用`)
+    const relativeTargets = new Set()
+    for (const { kind, target } of facts.refs) {
+      // 与第 4 项同一条规矩、同一份抽取结果（§6 第 6 条）：只有 `relative` 才碰文件系统。
+      // 旧写法直接 `join(root, ref)` + existsSync，于是 `![x](../../../../Windows/win.ini)`
+      // 也能拿来当"仓库外某个文件是否存在"的神谕（003 的 Lens 2 F2：那次宣称的收口没管到第 10 项）。
+      if (kind === 'escape') problems.push(`${name} 引用的图片指向仓库外：${target}`)
+      else if (kind === 'backslash') problems.push(`${name} 引用的图片含反斜杠：${target}`)
+      else if (kind === 'relative') {
+        relativeTargets.add(target)
+        if (!existsSync(join(root, target))) problems.push(`${name} 引用的图片不存在：${target}`)
+      }
+    }
+    for (const expected of requiredImageRefs[name]) {
+      if (!relativeTargets.has(expected)) problems.push(`${name} 没有引用 ${expected}（截图契约按集合核对：每张图都要被引到）`)
     }
   }
-  for (const expected of requiredImageRefs[name]) {
-    if (!relativeTargets.has(expected)) problems.push(`${name} 没有引用 ${expected}（截图契约按集合核对：每张图都要被引到）`)
-  }
-}
 /* 结构图必须**两侧都引到**。上面的集合核对里，架构图只落在中文套的集合里（它不带 en/ 前缀），
  * 英文套漏引是抓不到的——003 把这一类记为已知边界，004 用点名断言收口。
  * 判"引用"用 `mentionsTarget`：归一化相对路径、`<img src>`、引用式定义、绝对 GitHub 链接
@@ -439,7 +450,7 @@ for (const [name, text] of [['README.md', zh], ['README.en.md', en]]) {
   if (!mentionsTarget(text, DIAGRAM, ownRepoPath)) problems.push(`${name} 没有引用 ${DIAGRAM}：结构图必须双语同源`)
 }
   try {
-    const { makeSnapshot, assertFixture, publicCardKeys } = await import('../scripts/shots/fixture.mjs')
+    const { makeSnapshot, assertFixture, publicCardKeys } = await import('./shots/fixture.mjs')
     const whitelist = publicCardKeys()
     if (whitelist.length < 30) problems.push(`publicCard() 白名单只读出 ${whitelist.length} 个键，守卫可能失效`)
     for (const variant of ['panel', 'float', 'cookieDrop', 'badgeSwitch', 'triptych']) {

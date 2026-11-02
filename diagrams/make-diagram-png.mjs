@@ -24,7 +24,7 @@
  * 一律**非零退出并说清原因**，绝不把空数据落盘当成功。
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -73,11 +73,25 @@ function parseArgs(argv) {
   if (matched === null) throw new Error(`--viewport 形如 1600x1000，收到 ${out.viewport}`)
   out.width = Number(matched[1])
   out.height = Number(matched[2])
+  // '0x0' 能通过上面那条正则，但 openPage 里的设备度量是 'if (viewport.width)' 才下发——
+  // 宽为 0 时整个 override 被跳过，页面用的是窗口的真实尺寸，而"SVG 超出视口"那道门报出来的却是
+  // "视口=0x0"：判据与报错自相矛盾，会把排查方向带偏（§6 第 9 条）。
+  if (!(out.width > 0) || !(out.height > 0)) throw new Error('--viewport 的宽高必须是正整数，收到 ' + out.viewport)
   return out
 }
 
 /** PNG 文件签名。 */
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** 只读前 8 字节（PNG 签名的长度）：判断"能不能覆盖"不必把整个文件读进内存。 */
+function readSignature(path) {
+  const fd = openSync(path, 'r')
+  try {
+    const head = Buffer.alloc(8)
+    const n = readSync(fd, head, 0, 8, 0)
+    return n === 8 ? head : Buffer.alloc(0)
+  } finally { closeSync(fd) }
+}
 
 /** 只判签名，不解析结构——用来决定"能不能覆盖这个已存在的文件"。 */
 function isPng(buffer) {
@@ -105,8 +119,14 @@ async function main() {
   // `--out README.md` 手滑就把一个已跟踪文件替换成 PNG 二进制，未跟踪的文件更不可恢复
   // （004 的 Lens 2 F1）。两道守卫：尾缀必须是 .png；目标已存在且不是 PNG 就直接拒绝。
   if (!out.toLowerCase().endsWith('.png')) throw new Error(`--out 必须以 .png 结尾：${out}`)
-  if (existsSync(out) && !isPng(readFileSync(out))) {
-    throw new Error(`目标已存在且不是 PNG，拒绝覆盖（怕把文本/配置换成位图）：${out}`)
+  if (existsSync(out)) {
+    // 原先写的是 'isPng(readFileSync(out))'：目标若是目录 / FIFO / 设备节点，抛出来的是 EISDIR
+    // 之类的底层错误，把这条精心写过的安全提示顶掉；真是一张巨大的 PNG 时还会整文件读进内存
+    // （本脚本别处都在用 statSync）。§6 第 13 条。
+    if (!statSync(out).isFile()) throw new Error(`目标存在但不是普通文件（目录 / FIFO / 设备节点？），拒绝写入：${out}`)
+    if (!isPng(readSignature(out))) {
+      throw new Error(`目标已存在且不是 PNG，拒绝覆盖（怕把文本/配置换成位图）：${out}`)
+    }
   }
 
   const url = pathToFileURL(html).href
@@ -117,8 +137,11 @@ async function main() {
   let png
   let rect
   let rounded
+  // cdp 声明必须在 try 外面：原先写在 try 里，finally 看不见它，WebSocket 句柄只能靠对端死亡
+  // 间接释放（§6 第 10 条）。
+  let cdp = null
   try {
-    const cdp = await Cdp.connect(browser.wsUrl)
+    cdp = await Cdp.connect(browser.wsUrl)
     const page = await cdp.openPage(url, { width: args.width, height: args.height, deviceScaleFactor: 1 })
     // `Target.createTarget` 会立刻开始加载，而设备度量是在附着之后才覆盖的——查看器按**窗口**尺寸
     // 算过一次面板大小就不再看后续变化（实测：窗口 1600x1000 时裁到 w=1192，而同一视口下重载后是
@@ -141,21 +164,29 @@ async function main() {
     }
 
     // 体积只能证明"有内容"，证明不了"是这张图"——所以先核一遍图上真的有字。
-    const textCount = await page.evaluate(`document.querySelector(${JSON.stringify(SVG_SELECTOR)}).querySelectorAll('text').length`)
+    // 不在页面里链式取值：上一行 waitFor 到这里还隔着最长 8s 的字体等待与一次往返，页面若在此期间
+    // 被脚本重排/替换，链式就抛 null 解引用，报出来是"页面求值异常"而不是"SVG 没了"，看不出真因
+    // （§6 第 12 条）。空安全地返回 -1，交给下面的门报人话。
+    const textCount = await page.evaluate(`(() => {
+      const svg = document.querySelector(${JSON.stringify(SVG_SELECTOR)})
+      return svg === null ? -1 : svg.querySelectorAll('text').length
+    })()`)
     console.log(`SVG 文本 : ${textCount} 个 <text>（下限 ${MIN_TEXT}）`)
-    if (!(textCount >= MIN_TEXT)) {
-      throw new Error(`选中的 SVG 只有 ${textCount} 个 <text>（下限 ${MIN_TEXT}）——`
-        + '多半截到了别的元素或标签全丢，已拒绝继续')
-    }
+    if (textCount < 0) throw new Error(`页面里找不到 ${SVG_SELECTOR}（字体等待期间被重排或替换掉了？）——已拒绝继续`)
+    if (textCount < MIN_TEXT) throw new Error(`选中的 SVG 只有 ${textCount} 个 <text>（下限 ${MIN_TEXT}）——多半截到了别的元素或标签全丢，已拒绝继续`)
 
     rect = await page.rectOf(SVG_SELECTOR)
     if (rect === null) throw new Error(`页面上找不到 ${SVG_SELECTOR}（空数据不许当成功）`)
     if (!(rect.width > 0) || !(rect.height > 0)) throw new Error(`SVG 矩形是空的：${JSON.stringify(rect)}`)
 
     const inside = await page.evaluate(`(() => {
-      const r = document.querySelector(${JSON.stringify(SVG_SELECTOR)}).getBoundingClientRect()
-      return { fitsX: r.left >= 0 && r.right <= innerWidth, fitsY: r.top >= 0 && r.bottom <= innerHeight }
+      const svg = document.querySelector(${JSON.stringify(SVG_SELECTOR)})
+      if (svg === null) return { missing: true }
+      const r = svg.getBoundingClientRect()
+      return { missing: false, fitsX: r.left >= 0 && r.right <= innerWidth, fitsY: r.top >= 0 && r.bottom <= innerHeight }
     })()`)
+    // 同上：这一步在截图前最后一刻，页面已经等过字体，SVG 可能已经不在了。
+    if (inside.missing) throw new Error(`截图前一刻 ${SVG_SELECTOR} 又从页面上消失了——已拒绝继续`)
     if (!inside.fitsX || !inside.fitsY) {
       throw new Error(`SVG 超出视口（会被裁掉）：rect=${JSON.stringify(rect)} 视口=${args.width}x${args.height}。`
         + '调大 --viewport 再试——裁一半的图不许落盘。')
@@ -165,6 +196,9 @@ async function main() {
     png = await page.shot({ clip: { ...rounded, scale: args.scale } })
     console.log(`裁剪区  : x=${rounded.x} y=${rounded.y} w=${rounded.width} h=${rounded.height}`)
   } finally {
+    // 顺序要紧：先关会话释放 WebSocket 句柄，再杀浏览器。原先只靠杀进程间接断开，而
+    // browser.close() 里的 kill 是静默 try/catch 的——它失败时脚本会打印完结果却迟迟不退出。
+    if (cdp !== null) cdp.close()
     browser.close()
   }
 
@@ -193,7 +227,21 @@ async function main() {
   console.log(`sha256  : ${sha256}`)
 }
 
+/* 失败路径要说清原因，这是本脚本的核心契约（文件头的自证要求）。三条：
+ *  · 不用 console.error 紧接 process.exit：stderr 接管道（CI 重定向、`| tee`）时 Node 的写是
+ *    **异步**的，exit 会把原因截掉——只能看到"exit code 1"却不知道为什么（§6 第 11 条）。
+ *    改成 writeSync(2, …) 同步落盘后再退出。
+ *  · 抛出非 Error 值时原先打印"失败：undefined"（`error.message` 不存在）。
+ *  · 只打 message 会丢 stack：脚本里大量 page.evaluate / CDP 抛出的原始错误本身就含糊，
+ *    没有调用栈定位不到是本脚本哪一行。 */
 main().catch(error => {
-  console.error('失败：' + error.message)
+  const isReal = error instanceof Error
+  const head = '失败：' + (isReal ? error.message : String(error))
+  const stack = isReal && typeof error.stack === 'string' ? '\n' + error.stack.split('\n').slice(1).join('\n') : ''
+  try {
+    writeSync(2, head + stack + '\n')
+  } catch {
+    console.error(head + stack)   // 连 fd 2 都写不了时的最后一道兜底
+  }
   process.exit(1)
 })

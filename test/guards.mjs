@@ -20,7 +20,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
-import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
+import { classifyTarget, extractHtmlTargets, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
 import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
 import { repoPathFromUrl } from '../scripts/repo-path.mjs'
 import { shouldSkipDir, skipDirNames } from '../scripts/walk-skip.mjs'
@@ -303,7 +303,22 @@ ok('src= 已进 extractLinkTargets（越界与存在性检查因此也看得见�
   extractLinkTargets('<img src="docs/images/architecture.png">').includes('docs/images/architecture.png'))
 const srcEscape = extractLinkTargets('<img src="../../outside/x.png">')
 ok('src= 写成仓库外路径时，走完整链（抽取 → 分类）被抓',
+
   srcEscape.length > 0 && classifyTarget(srcEscape[0]).kind === 'escape')
+
+// §6 第 1/2/3 条：HTML 属性有界、注释不拼接、远端形态钉到本仓库且整段对上。
+ok('HTML 抽取不返回跨行目标（未配对引号不吞文档）', (() => {
+  const s = '这里有一个未配对的引号 \" 后面是很多文字\n第二行也有引号 \" 结束\n<img src=\"docs/x.png\">'
+  return extractHtmlTargets(s).every(v => !v.includes('\n'))
+})())
+ok('散文里的 href= 不算引用（必须在开标签的属性串里）', extractLinkTargets('文档里提到 href=\"../../outside/x.png\" 这种写法').length === 0)
+ok('注释两侧不会被拼成不存在的引用（§6 第 2 条）', mentionsTarget('![x]<!-- 注释 -->(docs/images/architecture.png)', DIAGRAM, OWN) === false)
+ok('远端更深一层的同尾路径不算（endsWith 太松）', mentionsDiagram('![x](https://github.com/' + OWN + '/blob/main/backup/docs/images/architecture.png)') === false)
+ok('非 GitHub 的同尾路径不算（任意 CDN 都放行是假绿）', mentionsDiagram('![x](https://cdn.example.com/' + OWN + '/blob/main/docs/images/architecture.png)') === false)
+ok('owner/repo 大小写不同仍算（GitHub 上大小写不敏感）',
+  mentionsDiagram('![x](https://github.com/Xinghe-1018/Dsh-Token-Plan-Quota/blob/main/docs/images/architecture.png)'))
+ok('远端链接的百分号编码要解码后再比（中文图名不许假红）',
+  mentionsTarget('![x](https://github.com/' + OWN + '/blob/main/docs/%E6%9E%B6%E6%9E%84.png)', 'docs/架构.png', OWN))
 // 过度匹配的反例：属性名前面必须是空白或 < 。`\b` 在连字符后也成立，所以旧写法会把
 // `<img data-src="…">`（懒加载标记）当成 src：凭空造出一个待检查目标，
 // 而一张根本不渲染的占位图就能把'两侧引同一张图'喂绿。

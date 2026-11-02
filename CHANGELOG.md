@@ -10,6 +10,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **ROADMAP §6 那 13 条 low 与 1 条增强全部清掉**（第五轮审查的尾巴，逐条附反证或行为验证）：
+  · `link-targets`：HTML 属性抽取现在限行、限长、且要求属性名前是空白或 `<`（未配对的引号不再吞掉整段
+    文档，`data-src`/`xsrc=` 不再被当成目标）；两个入口共用一次剥壳，HTML 注释替换成空格而不是
+    空串（`![x]<!-- c -->(a.png)` 曾被拼成一条不存在的引用）；远端链接改为解码后比较、owner/repo 忽略大小写、
+    并要求剩余段整段对上 `[blob|raw|tree]/<ref>/<wanted>`（未解码时中文图名永远比不中＝假红，`endsWith` 连
+    更深一层的同尾路径都算＝假绿）；`stripTarget` 的结果改名 `undecorated`。新增 7 条行为用例，四条关键改动
+    逐个改回去验过会红。
+  · `check-docs`：`package.json` 不再读两次；第 4 / 4b / 10 项共用**一次**抽取与分类（过去三处各跑一遍、
+    `classifyTarget` 分支各写一份）；编码护栏读不出的文件改为记违规而不是静默跳过；第 10 项块内缩进归位、
+    路径口径统一；正文里按名字写的 guards 数字纳入核对。
+  · `diagrams/make-diagram-png.mjs`：`--viewport 0x0` 在解析阶段就拒（原先设备度量整个被跳过，
+    报错却打印'视口=0x0'）；覆盖守卫先判 `isFile` 再只读前 8 字节（目录/FIFO 不再抛 EISDIR 顶掉
+    安全提示）；页面求值改成空安全（`SVG 没了` 不再表现为'页面求值异常'）；`cdp.close()` 显式释放
+    WebSocket 句柄（原先靠杀进程间接断开，而那次 kill 是静默 try/catch）；失败出口改为同步写 fd 2 并带上调用栈，
+    非 `Error` 值不再打印'失败：undefined'。成功路径实跑验证（61 s，裁剪区 1410x704 → 产物 2820x1408，
+    尺寸断言按取整后的裁剪区精确对上）。
+  · `NotLogined` 诊断（§6 第 14 条增强）：期望票据不在、但名字里确实有一张 `*ticket*` 时，改为点名'看到的
+    是哪张、本控制台要的是哪张'——那只另一台主机的指纹正是用户最需要的线索。断言随之收紧并验证可证伪。
 - **Windows 绝对路径从越界检查里隐形**（第五轮审查，`link-targets`）：`/^[a-z][a-z0-9+.-]*:/i` 会把 `C:` 当成协议，
   于是 `[x](C:\Windows\win.ini)` 被判成 `skip`、调用方直接 `continue`。这道门禁的立身之说就是"把越界面彻底关掉"，
   而它在**本机平台**上恰好漏掉。现在盘符先于协议判定，归入 `escape`。

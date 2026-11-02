@@ -1656,5 +1656,63 @@ for (const model of ['deepseek-v4.1-flash', 'qwen3.8-flash']) {
     flat.includes('Token Plan 余量') && !flat.includes('¥'), flat.slice(0, 260))
 }
 
+/* 徽标降级挑选的两处顺序问题（第四轮 Open Code Review，lib/client.js 的 cardValueText / pickOne）。
+ *  ① 报错的**余额卡**（metric:money 且没有 remaining）正面写什么：旧写法里 `card.error && !hasNumbers(card)` 那条
+ *     排在 money 早退之后，永远走不到，实机症状就是接口坏了却看着像`没有数据`。fixture 里的
+ *     account-balance 正是这张卡，此前没有任何用例钉它的正面文案。
+ *  ② 降级路径里没有数字的窗口卡（只有 meters）不得排在报错卡之前：前者只能显示`无官方额度数据`，
+ *     后者脸上带着`去配 Cookie`。有数的卡早被上面几档收走，走到这两档的必然是没数的。
+ */
+{
+  const emptyWindow = {
+    id: 'window-empty', label: '千问窗口', metric: 'count', veracity: 'estimated', estimated: true,
+    meters: [{ key: 'weekly', label: '7 天窗口', unit: 'tok', total: null, remaining: null }],
+    items: [], error: null,
+  }
+  const balanceError = SNAPSHOT.cards.find(card => card.id === 'account-balance')
+  const snapshot = {
+    ...SNAPSHOT,
+    throughput: { ...SNAPSHOT.throughput, byProvider: [] },
+    cards: [emptyWindow, balanceError],
+  }
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => snapshot })
+  const { api, registered } = await loadBundle('default', 'zh-CN', fetchImpl)
+  const dirStore = makeStore({
+    current: { provider: 'some-unrelated-relay', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('降级挑选：报错卡优先于只有 meters 的没数窗口卡',
+    flat.includes('阿里云余额') && !flat.includes('千问窗口'), flat.slice(0, 260))
+  ok('报错的余额卡正面说「查询失败」（不再落进 — 或 无官方额度数据）',
+    flat.includes('查询失败') && !flat.includes('无官方额度数据'), flat.slice(0, 260))
+  // 反向那半：有真数字的卡不能被报错卡挤掉——004 那条老教训（报错的控制台卡按数组顺序先命中，
+  // 把有 3400 万 tokens 的实测卡顶成「无官方额度数据」）必须继续成立。
+  const numberedBalance = { ...balanceError, remaining: 12.5, unit: 'CNY', error: null, errorCode: null, hint: null }
+  const snap2 = { ...snapshot, cards: [emptyWindow, numberedBalance] }
+  const second = await loadBundle('default', 'zh-CN', async () => ({ ok: true, status: 200, json: async () => snap2 }))
+  const dirStore2 = makeStore({
+    current: { provider: 'some-unrelated-relay', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  second.api.apply(makeCtx(second.registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore2, load: async () => {} }) },
+  }))
+  second.registered[0].component && resetHooks()
+  const flat2 = JSON.stringify(await settle(() => { beginRender(); return second.registered[0].component() }))
+  ok('有真数字的余额卡仍然优先于没数的窗口卡（不被 meters 档抢走）',
+    flat2.includes('¥12.50') && !flat2.includes('千问窗口'), flat2.slice(0, 260))
+}
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

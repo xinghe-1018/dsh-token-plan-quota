@@ -8,17 +8,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
-
-- **发布流水线的 `verify it landed` 窗口从 60 秒拉到 6 分钟，失败时还会把 registry 当下的
-  `dist-tags` / `versions` 打出来**：v0.4.8 那次 `npm publish` 其实**已经成功**（OIDC trusted
-  publishing + provenance，退出码 0，回执 24 files / 2.3 MB / shasum 齐全），但 runner 在
-  60 秒里连续 6 次 `Cache-Control: no-cache` 查询都拿到旧文档 —— npm 自己还在传播 —— 于是
-  verify 判红，连带把后面的 GitHub Release 跳过了。同一步骤在 0.4.6 那次也被骗过一回，
-  那次根因是 runner 的本地 npm cache 旧快照：**症状一样、根因不一样**，而
-  "绕开客户端缓存"并不等于"服务端已经是新的"。所以这次既拉长窗口（24×15s）又在失败分支里
-  直接打印真相，不再靠事后翻 workflow 注解考古。
-
 ### Fixed
 
 - **额度徽标在 DSH 0.2 上不跟随模型、降级时只剩「无官方额度数据」**（实机反馈"插件又没有正常显示了"）。
@@ -55,6 +44,162 @@ All notable changes to this project are documented here. The format follows
   0.2 的会话列表形状，声明与事实对齐。
 - **补文档同步**：`allowUndeclaredHosts` 进中英 README 配置表，键数 18、配置表 19 行、
   client 测试 217 项一并改齐；`check-docs` 的英文正文断言冠词放宽为 `an?`（19 行时说 "a 19-row"）。
+
+## [0.4.11] - 2026-09-29
+
+### Security
+
+- **上游错误体里的凭据不再随错误信息出网（CWE-209）**：`SourceError` 的 `raw` 早已按值脱敏，但
+  **message** 没有——而 message 同样会随卡片（`card.error`）与 `/probe`（`error: error.message`）
+  出网。真实的注入拦截 / WAF 常把收到的 `Authorization` 原样写进错误体（`Invalid Authentication:
+  Bearer sk-…`），于是报错信息里就躺着真 Key。现在 `SourceError` 新增可选的 `secrets` 参数，把
+  message 与 raw 一起按值脱敏，四条出站路径都把手头的凭据（Cookie / Bearer / 请求体 / AK-SK）传进去；
+  "不传就不脱敏"这条契约也用一组对照断言钉住（边界不是魔法，调用点必须传）。回归用例是端到端的：
+  起一个把 `Authorization` 原样回显进 401 体的回环服务，断言卡片 `error` 与 `raw` 都不含该密钥。
+  （CodeRabbit 在 PR #3 上报出；采纳前我核了代码与四条出站路径。）
+
+### Added
+
+- **出站主机白名单**：`dshhub.permissions.network` 从"文档承诺"变成**运行时断言**——请求发出**之前**
+  核主机在声明集合里，未声明一律 `HostNotDeclared` 拒发（含非绝对 URL 的 `BadUrl`）。自定义源指向
+  别处要显式打开新配置 `allowUndeclaredHosts`，打开后快照里多一条 notice，不静默降级。
+  起因：`endpoint`（用户可配）与自定义源的 `url` 原本能把含 AK/SK 签名的请求打到任意主机而没有任何
+  检查，"声明集合 == 实际出站集合"（宪法 V）于是无法成立。代码侧真值 `DECLARED_HOSTS` 与
+  `package.json` 的声明由门禁**双向**核对；`docs/adding-a-provider.md` 同步要求两处一起改。
+
+### Fixed
+
+- **门禁宣称的覆盖面大于实际覆盖面**（比漏检更坏的假绿）：
+  - 出站主机检查里扫 README 的那行是**死代码**（两份 README 里根本没有那个 URL，实测出现 0 次），
+    而只做**单向**比对；`DEFAULTS.endpoint`（阿里云 BSS 的裸主机名）与 `lib/client.js` 的字体 CDN
+    这两个**真实**出站主机压根不在被检集合里。现在推导逻辑抽成 `scripts/outbound-hosts.mjs`
+    单一实现（预设 + endpoint + FONT_CSS），双向比对，并带扫描面下限自检。
+  - 编码护栏只扫 "11 个顶层文件 + 6 个目录一层"，漏掉 `.githooks/pre-commit`（不变量 VI 点名它依赖
+    shebang，BOM 会让 shebang 失效）与 `scripts/shots/*.mjs`；改为递归全仓文本文件并带下限自检。
+  - 截图契约只数引用条数（同一张图引 7 次即过），而"13 张图存在"由另一份硬编码清单保证，两者从不
+    交汇；改为按**集合**核对：名单里每张图都要被对应 README 引到。
+  - `check-refs` 只扫 ROADMAP + `workflow/` + `specs/`（19 个活文档），漏掉 `scripts/shots/README.md`
+    里那 5 处行号引用；改为全仓 `.md`（豁免 CHANGELOG 与 `reviews/`），现在明确报 34 个活文档。
+  - `test/guards.mjs` 的 `rejects()` 捕任何异常都算通过——夹具自己崩了（TypeError）也是绿；现在要求
+    消息匹配预期，或至少驳回"不像守卫在拒绝"的运行时错误。新增出站主机正反例 10 条。
+
+- **发布流水线三处静默失手**：
+  - **用 `GITHUB_TOKEN` 推的 tag 不会触发 publish.yml**（GitHub 防递归的设计，例外只有
+    `workflow_dispatch` / `repository_dispatch`），而一键发版推 tag 用的正是它——tag 看着推成功、
+    两处注释都宣称 publish 接手，npm 上什么都没有。现在 `release.yml` 推完显式 dispatch
+    （因此补上 `actions: write`）；`publish.yml` 两条入口改为等价（原先 dispatch 路径不建 GitHub Release）。
+  - **CI 下"只在 main 发版"闸门被整条跳过**，而 `workflow_dispatch` 的分支是人在 UI 上选的、推的却是
+    `HEAD:main`；改为 CI 下校验 `GITHUB_REF === refs/heads/main`。
+  - **发布提交撞自家门禁**：先 commit 后 tag，而 CONTRIBUTING 推荐的 pre-commit 钩子会跑 check-docs
+    （它要求 CHANGELOG 引用的 tag 已存在）→ 提交被拒、留下"已改已 add、无 commit"的半途状态；
+    改为 `git commit --no-verify`（脚本本就在打完 tag 之后跑完整七步自检）。
+  - `make_latest: 'true'` 与旁边注释相反（不传该字段才是 API 默认＝新建即标 latest），补发旧版照样
+    抢 Latest；改为显式比较版本：严格更高才标，API 查不通时保守不标并告警。
+
+### 修复（评审轮：CodeRabbit 在 PR #3 上的 7 条发现）
+
+- **手动发布要落在 tag 的那个 commit 上**：dispatch 入口原先只从 `package.json` 取版本号，却不核对
+  "这次 checkout 是不是该 tag 指向的 commit"——tag 推完之后 main 再前进一格，一次手动重跑就会把
+  **后来的代码**以同一个版本号发上 npm，而 GitHub Release 还指着 tag 的 commit（包内容与 tag 不一致）。
+  现在真要发布（`dry_run=false`）时 tag 必须存在且指向本次 checkout；dry run 只告警——它的用途正是
+  在分支上验机制，那里本来就没有对应 tag。
+- **候选版本等于现有 latest 时不再摘掉 latest**：比较从 `>` 改成 `>=`。同一个 release 重跑时，
+  旧写法会发 `false`，等于让 action 取消那条已经标好的 latest。
+- **出站主机比对走归一化 `origin`**：`https://API.DeepSeek.com:443/` 与声明里的
+  `https://api.deepseek.com` 是同一台主机；拿原文比会误报"未声明"（假红）。
+- **结构化 `raw` 与 RPC 的单条凭据也进脱敏**：`parseEnvelope` 把上游失败信封塞进 `raw` 时没把
+  secrets 传给 `configlessTrim`（按键名过滤挡得住"键名叫 sec_token"，挡不住"值里回显了凭据、
+  键名由上游自取"）；`postForm` 原先只把整个请求体当候选值，而上游可能只回显一个 AccessKeyId。
+- **`owner/repo` 抽取保留点号**（`owner/plugin.v2.git` 曾被 `[^/.]+` 抓成 `owner/plugin`，
+  算出的投稿条目文件名跟着错），并抽成 `scripts/repo-path.mjs` **单一实现**——原先
+  `release.mjs` 与 `check-submission.mjs` 各写一份，加 `package.json` 里的 `repository.url` 一共三份。
+- `workflow/ENVIRONMENT.md` 去掉会漂的门禁项数（它写着 379/207/32，实跑是 420/224/91），
+  并把耗时改成实测的 7 秒——该文件开头自己写着"能查到的东西不写在这里，写下来就是一份会过期的缓存"。
+
+### Fixed
+
+- **徽标只剩余额钱数、条状额度不见了**（0.4.10 引入的偏差）。当前路由解析不出供应商时
+  （中转/自定义路由，模型目录不认它），0.4.10 用**模型名**当挑卡线索 —— 而 `deepseek-v4.1-flash`
+  是**模型家族**，实际计费路由是千问 Token Plan，于是绑 `deepseek` 的余额卡把额度卡顶掉了，
+  实机反馈正是"只剩余额的钱数"。现在线索换成**吞吐行里最近真在服务请求的那条路由**（那才是
+  计费路由），再退一步优先"额度/窗口"语义的卡，最后才按官方卡顺序；候选集也补上了"有数字"
+  之外的那些官方卡（否则它们会被余额卡直接顶掉）。回归测试补了一个带官方额度卡的 fixture
+  模式 —— 默认快照里没有那张卡，所以 0.4.10 那版断言测不出这个 bug。
+- 复核口径一并更正：此前几轮的"真宿主真 DOM"证据打的是 3080 的 checkout 实例，而实际使用的是
+  打包版 GUI（19387）。本轮起对实际实例量：胶囊数 1、`Token Plan 余量 51%`、条在。
+
+## [0.4.10] - 2026-09-25
+
+### Changed
+
+- **判定口径：宪法原则 I 升到 v2.0.0**（MAJOR —— 按 Governance 自己的档位，改的是 NON-NEGOTIABLE
+  原则的边界）。原来那句「没有官方分母就永不出现百分比」写成绝对式，是因为写下它的时候百分比
+  **只可能**从 `remaining/total` 派生；现在千问控制台**直接返回** `usage.per1MonthPercentage`，
+  绝对式就自相矛盾：一个可追溯到官方字段名的真值，因为同一次查询里另一路没取到而被丢掉，反而违背
+  原则 I 第一句（每个数字必须可追溯到官方真值）。新口径：**永不自行派生百分比**（`used/total`
+  与任何换算式），**上游直给的比例属官方真值**，可显示、也可照它画余量条（`100 − 已用%` 是同一个
+  官方数的反向写法）；缺分母时**不报绝对剩余量**、必须留诊断。同步改：`.specify/memory/constitution.md`
+  （含 Sync Impact Report）、`AGENTS.md` 同一句、两份 README「不做什么」、`docs/upstream-contracts.md`、
+  `finalizeMeter` 与 `buildConsoleCard` 的注释。修订过程中初稿还写了"缺分母时不画余量条"，实机
+  半小时就被否掉（用户："换回条状显示"）——条画的是同一个官方比例，禁它只是视觉上惩罚用户，
+  不增加任何真值保护；v2.0.0 尚未随任何已发布版本出厂（0.4.9 打的是 1.0.1 口径），所以在它自身的
+  措辞里改掉，不另计版本号。
+
+### Fixed
+
+- **上游慢的时候，千问额度卡整张退回"无数据"** —— 丢掉的正是已经拿到的官方真值。
+  实测：连打 5 次 `?fresh=1`，1 次没有分母，那一次全程 19.8 s（单次 `timeoutMs=15000`，四次调用之间
+  还有 `minIntervalMs=1200` 串行节流），`quota-config` 撞超时抛错，被
+  `catch { /* 拿不到档位额度时仍报已用比例 */ }` 静默吞掉 —— **注释承诺的行为代码没做**：没分母 →
+  顶层算不出 `usedPercent` → 前端 `hasNumbers()` 判定"这张卡没数字" → 卡片收起，而且这张退化卡还会被
+  TTL 缓存 10 分钟。现在：
+  - 宿主半边把上游直给的比例作为顶层 `usedPercent` 发出（不折算绝对剩余量），并给
+    `extra.denominatorFailed`；`emptyReason` 只留给真的一无所有的情况；
+  - 前端 `hasNumbers()` 认这个数（不再当空卡）；`remainingPercentOf()` 认两个合法来源
+    （官方分母派生的 `remainingPercent`，或上游直给的 `usedPercent`），所以徽标照旧是
+    **「余量% + 条」**；绝对值仍然不编；
+  - `summarizeText`（模型工具摘要）同口径报比例而不是"无数据"；"官方有数就收起实测兜底行"的
+    判据**不动**（仍要求官方卡有绝对数字）——把 `usedPercent` 也算进去会让摘要收起而面板仍显示，
+    两半边不一致比多印一行更糟（本轮实测发现并回退）。
+- **当前路由是包装层时，徽标并排冒出两个胶囊**（实机：`Token Plan 94%` + `DeepSeek ¥33.80`）。
+  模型切到 `modlens-qwen-token-plan-cn/deepseek-v4.1-flash` 之后，这个 provider id 既不在余量卡的
+  `bindProviders`（`qwen-token-plan-cn`）里也不在余额卡里，于是四处**精确相等**的比较全部落空，
+  走"匹配不到就全量显示"的兜底 → 两家并排。现在统一用一层按 `-` 边界的容忍匹配
+  （`sameProvider`：任一方是另一方的完整尾段），四处比较共用：徽标选卡、`panelScope: current`
+  的面板过滤、吞吐行归属、以及兜底卡的收起判据。边界是必须的 —— 否则 `qwen` 这类短名会把
+  `qwen-token-plan-cn` 一起吞掉；真正无关的路由仍照旧退回全量（不是藏成 0×0）。
+- 按本轮决定仍**不做**重试、不动缓存时长：退化态下一次缓存周期自然恢复，最坏 10 分钟。
+
+## [0.4.9] - 2026-09-23
+
+### Changed
+
+- **发布流水线的 `verify it landed` 窗口从 60 秒拉到 6 分钟，失败时还会把 registry 当下的
+  `dist-tags` / `versions` 打出来**：v0.4.8 那次 `npm publish` 其实**已经成功**（OIDC trusted
+  publishing + provenance，退出码 0，回执 24 files / 2.3 MB / shasum 齐全），但 runner 在
+  60 秒里连续 6 次 `Cache-Control: no-cache` 查询都拿到旧文档 —— npm 自己还在传播 —— 于是
+  verify 判红，连带把后面的 GitHub Release 跳过了。同一步骤在 0.4.6 那次也被骗过一回，
+  那次根因是 runner 的本地 npm cache 旧快照：**症状一样、根因不一样**，而
+  "绕开客户端缓存"并不等于"服务端已经是新的"。所以这次既拉长窗口（24×15s）又在失败分支里
+  直接打印真相，不再靠事后翻 workflow 注解考古。
+
+### Fixed
+
+- **千问 Token Plan 余量整张卡没有数字（上游把账期改成按月了）**。症状：徽标只剩"实测"卡，面板里
+  那张官方卡既不出百分比也不报余量，`emptyReason` 写"网关 usage 里没有 per1Week/per5Hour 比例"。
+  用 `probe` + debug 核对真实回包后确认：同一个源的 `usage` 只剩 `per1MonthPercentage` /
+  `per1MonthResetTime`，`quota-config` 的档位额度字段也跟着从 `weekly` 改名成 `monthly`（档位表
+  lite / standard / pro / essential 各回 `monthly` + `five_hour`，另有 `addon_quota.extrabundle`），
+  而 `buildConsoleCard` 只认周度与 5 小时两个名字 —— 一条计量都拼不出来。**它不报错**，因为网关
+  那次调用是成功的：这正是"认不出的键不报错、只是没作用"的形态。现在月度与周度**两条都读**，谁回
+  了读数谁当主计量，老套餐继续走 `weekly`；主计量固定排在 `meters[0]`（前端只渲染
+  `meters.slice(1)`，顺序错了就是徽标报一个窗口、明细报另一个）。`addon_quota.extrabundle` 不并进
+  分母：官方没说明它与档位额度的关系，折进去就是估算（原则 I）。
+- **`probe` 对自动检测出来的源永远回 `unknown-source`**。零配置安装里源不在配置文件里，而是
+  `computeStatus` 跑 `applyAutoDetect` 时现挂到那份 config 上的；路由每次从 `getConfig()` 拿一份
+  新配置，于是唯一一个"能看上游实际字段集"的入口，对最需要它的源（`token-plan-console`）恰好不可用
+  —— 这次诊断就是被它逼着去临时改配置开 debug 的。现在查不到会补跑一次检测再查（检测只做本地解析
+  与凭据探测，不打额度端点，同名去重、可重入），404 里的 `known` 列表也跟着变准。
 
 ## [0.4.8] - 2026-09-15
 
@@ -556,6 +701,9 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.11]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.10...v0.4.11
+[0.4.10]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.9...v0.4.10
+[0.4.9]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.5...v0.4.6

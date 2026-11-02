@@ -54,8 +54,10 @@
 - `SOURCE_META[id]`：`veracity`（`verified` 官方真值 / `local` 本实例实测）＋ `sourceNote`
   （**这张卡的口径**，会进 tooltip；写清端点与已知边界）；
 - `errorHints`（源级）或 `ERROR_HINTS`（全局）：报错必须给**下一步动作**，不要只复述状态码；
-- `package.json` → `dshhub.permissions.network`：**加一家就加一条 host**。
-  `node scripts/check-manifest.mjs` 会检查格式，CI 会跑。
+- `package.json` → `dshhub.permissions.network`：**加一家就加一条 host**；
+- **同一处也要改 `lib/index.js` 的 `DECLARED_HOSTS`**：那是运行时的出站白名单（请求发出前就核，
+  未声明一律拒发），两份由 `check-docs` 第 3 项双向核对——只改一处会红。
+  `node scripts/check-manifest.mjs` 检查格式，CI 会跑。
 
 ## 4. 让自动检测认识它（`lib/detect.js`）
 

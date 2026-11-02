@@ -98,7 +98,7 @@ OAuth 文件 / Admin key）；**C＝官方没有额度接口**（只能走本实
 | **枚举当数字** | 智谱 `unit`：3=5 小时、6=周、1=天、5=分钟 | 预设声明 `unitEnum` 映射表，未识别的枚举值**不猜**，落到 `debug` 骨架里 |
 | **信封先判再取** | Moonshot `code==0 && status==true`；智谱 `code:200, success` | 已有 `envelopeOk` 机制（`httpEnvelopeOk` L1353），新家用 `okWhen` 声明，别新写一套 |
 | **数字可能是字符串** | Codex `individual_limit.{limit,used,remaining_percent}` | `toNumber` 已剥逗号/空白，够用；加一条单测锁住 |
-| **配置 ≠ 额度** | 千问 `quota-config` 给**每个档位都躺着**一个 `five_hour` 上限，但 `usage` 只回 `per1Week*`——**这个套餐根本没有 5 小时窗口**。拿配置去拼一行「额度上限 <那个配置值>」就是把噪声当额度（2026-09-06 用户实拍打回；具体数值属于个人账号，不记） | **一条计量只在该窗口真回了读数时才存在**；档位配了却无读数只记 `extra.fiveHourConfiguredNoReading` 供 debug，前端再把"没有任何可说数字"的次级计量整行丢弃。接 GLM 多窗口家时同规则：`limits[]` 里没出现的 type/unit 组合不出条 |
+| **配置 ≠ 额度** | 千问 `quota-config` 给**每个档位都躺着**一个 `five_hour` 上限，但 `usage` 只回**当前账期那一个**比例（2026-09-06 实测是 `per1Week*`；2026-09-23 上游改成按月，只剩 `per1Month*`）——**没回读数的窗口就不是这个账号的额度**。拿配置去拼一行「额度上限 <那个配置值>」就是把噪声当额度（2026-09-06 用户实拍打回；具体数值属于个人账号，不记） | **一条计量只在该窗口真回了读数时才存在**；档位配了却无读数只记 `extra.fiveHourConfiguredNoReading` 供 debug，前端再把"没有任何可说数字"的次级计量整行丢弃。接 GLM 多窗口家时同规则：`limits[]` 里没出现的 type/unit 组合不出条 |
 | **别拿宿主 DOM 属性做交互判定** | `InputBar.tsx` 源码里有 `data-composer-card`/`data-input-scroll`，但**浏览器真正加载的产物里没有**（抓 `/assets/index-*.js` 直接 grep 验证过）→ 用"点哪里算宿主输入区"来豁免关面板必然漏 | 交互语义自己定，不依赖宿主实现细节：明细面板改成**常驻小窗**（取消「点外面就关」，只留徽标 toggle + Esc），从此不需要认识宿主输入区 |
 | **探测会产生费用** | xAI 探活会补一条真实对话消息 | **本插件永不做"猜测式探活"**；只用只读端点，`probe` 路由也只打配置好的源 |
 

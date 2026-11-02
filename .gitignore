@@ -12,3 +12,7 @@ package-lock.json
 # `specify init --here --integration dsh` 重新生成，不入库。
 # .specify/ 相反——constitution/specs/templates 是本项目的规格资产，要入库。
 .dsh/
+
+# Qoder IDE 生成的 repowiki 缓存（54 份自动文档，内含大量 file:line 引用）：
+# 可重生成、不入库，也不是本项目的活文档，所以门禁的扫描面不含它。
+.qoder/

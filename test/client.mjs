@@ -240,6 +240,50 @@ function makeFetch(mode) {
       const broken = SNAPSHOT.cards.map(card => ({ ...card, retry: { provider: 'deepseek', attempts: 2 } }))
       return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: broken }) }
     }
+    if (mode === 'with-console') {
+      // 默认快照里没有"官方额度卡"（只有余额卡 + 实测卡），而真实快照有。补一张用来复现
+      // "路由解析不出时该挑额度卡、不该被余额卡顶掉"。
+      const official = {
+        id: 'token-plan-console',
+        label: 'Token Plan 余量',
+        labelEn: 'Token Plan quota',
+        metric: 'credits',
+        unit: 'Credits',
+        veracity: 'verified',
+        bindProviders: ['qwen-token-plan-cn'],
+        total: 45000,
+        remaining: 41850,
+        usedPercent: 7,
+        remainingPercent: 93,
+        meters: [{ key: 'monthly', label: '本月窗口', labelEn: 'Monthly window', unit: 'Credits', total: 45000, remaining: 41850, usedPercent: 7, remainingPercent: 93, resetAt: Date.now() + 6 * 86_400_000 }],
+        items: [],
+        error: null,
+        sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
+      }
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [official, ...SNAPSHOT.cards] }) }
+    }
+    if (mode === 'ratio-only') {
+      // 真实形态（2026-09-23 实测：5 次里 1 次）：quota-config 那一路超时，上游只回了
+      // per1MonthPercentage。宪法 v2.0.0 之后这张卡照报官方比例，但不画条、不报绝对余量。
+      const ratioCard = {
+        id: 'token-plan-console',
+        label: 'Token Plan 余量',
+        labelEn: 'Token Plan quota',
+        metric: 'credits',
+        unit: 'Credits',
+        veracity: 'verified',
+        bindProviders: ['qwen-token-plan-cn'],
+        usedPercent: 3.3,
+        expiresAt: Date.now() + 7 * 86_400_000,
+        items: [],
+        meters: [{ key: 'monthly', label: '本月窗口', labelEn: 'Monthly window', unit: 'Credits', usedPercent: 3.3, resetAt: Date.now() + 7 * 86_400_000 }],
+        extra: { usedPercent: 3.3, denominatorFailed: true, specCode: 'standard', addonTotal: 20000 },
+        error: null,
+        sourceNote: '千问AI平台控制台数据网关（Cookie 会话）',
+      }
+      const restRatio = SNAPSHOT.cards.filter(card => card.id !== 'token-plan-window' && card.veracity !== 'verified')
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, cards: [ratioCard, ...restRatio] }) }
+    }
     if (mode === 'meter-cap-only') {
       // 档位配了 5 小时上限、这个套餐却没回读数：次级计量没有可说的数，整行都不该出现。
       const capOnly = {
@@ -709,7 +753,9 @@ function findChip(node) {
   ok('胶囊不挂天数/速度/重试标签（详细内容交给面板）',
     !flat.includes('tpq-tag') && !flat.includes('tpq-speed'))
   ok('吞吐速度收进胶囊 tooltip（数字仍在 title 里，只是不占位）', flat.includes('42 tok/s'))
-  ok('徽标无状态圆点、无表情符号', !flat.includes('tpq-dot') && !flat.includes('⚡'))
+  // 原先这条查的是 `tpq-dot` 与 `⚡`——两个字符串在实现与夹具里都不存在，断言恒真。
+  // 改成对所有渲染输出做表情符号扫描：真加了 emoji 就会红。
+  ok('徽标不出现表情符号（原断言查的 tpq-dot 实现里根本没有，恒真）', !/\p{Extended_Pictographic}/u.test(flat), flat.slice(0, 200))
 
   // 点开 → panelScope=current：只列当前供应商的卡 + 本实例实测，DeepSeek 不再常驻。
   const openChip = findChip(await settle(render, 1))
@@ -1411,7 +1457,7 @@ function findChip(node) {
   ok('手写 CJS 壳不再用 var（no-var）', !/^\s+var\s+(module|exports)\s*=/m.test(code))
   // 不数调用点：每加一处用途就要改这个魔数，守卫会退化成抄写作业（这次正是它先红）。
   // 认三件事：换算只有一处（remainingPercentOf）、徽标与次级计量都走它、实测卡一律不出条。
-  ok('余量百分比只留一份算法（徽标与明细卡共用同一个函数）',
+  ok('余量百分比只留一份算法（徽标、值文案、明细主卡、次级窗口行共用同一个函数）',
     /function remainingPercentOf\(card\) \{/.test(code)
       && (code.match(/100 - (?:card|meter)\.usedPercent/g) ?? []).length <= 1
       && /const barPct = remainingPercentOf\(card\)/.test(code)
@@ -1504,6 +1550,110 @@ function findChip(node) {
     .filter(({ line }) => !/toFixed\(\d\)\}[万亿]/u.test(line))
   ok('COPY 之外没有进画面的中文字面量（要加先加进字典）', offenders.length === 0,
     offenders.map(entry => `L${entry.no} ${entry.line.trim().slice(0, 90)}`).join(' ⏎ '))
+}
+
+/* 有官方比例、没取到档位额度（quota-config 超时）：徽标照旧出「余量% + 条」——
+ * 条的两个合法来源是 remainingPercent 与**上游直给**的 usedPercent（宪法原则 I v2.0.0），
+ * 唯一不报的是绝对剩余量（没分母就是算不出来）。 */
+{
+  const { api, registered } = await loadBundle('ratio-only')
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('缺分母时徽标出余量百分比（100 − 官方已用比例）', flat.includes('97%'), flat)
+  ok('这种卡照样画条：条来自官方给的比例，不是估算', flat.includes('tpq-bar'), flat)
+  ok('但不报绝对剩余量（没分母就是不报那个数）', !flat.includes('/ 45,000'), flat)
+  findChip(await settle(render, 1)).props.onClick()
+  const panel = JSON.stringify(await settle(render, 3))
+  ok('明细里报「已用 3.3%」而不编造「剩余 / 上限」', panel.includes('已用 3.3%') && !panel.includes('/ 45,000'))
+  ok('实测兜底卡不被这张卡收起（它确实有官方数字）', panel.includes('Token Plan 余量'))
+}
+
+/* 同一张卡在英文界面下走 usedOnly。 */
+{
+  const { api, registered } = await loadBundle('ratio-only', 'en-US')
+  globalThis.document.documentElement.lang = 'en'
+  const dirStore = makeStore({
+    current: { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  ok('英文界面同一形态也出余量百分比（走 en 字典标签）', flat.includes('97%') && flat.includes('Token Plan quota'), flat.slice(0, 300))
+}
+
+/* 当前路由 id 是包装层（`modlens-qwen-token-plan-cn` 之于 `qwen-token-plan-cn`）：
+ * 过去精确相等匹配不到任何卡 → 退化成"全量并排"，实机反馈是**两个胶囊同时出现**
+ * （余量 + 余额），但只需要一个。现在按 `-` 边界容忍；边界是为了别让 `qwen` 这种短名乱吞。 */
+{
+  const { api, registered } = await loadBundle()
+  const dirStore = makeStore({
+    current: { provider: 'modlens-qwen-token-plan-cn', model: 'deepseek-v4.1-flash' },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  const chipCount = (flat.match(/tpq-chip/g) ?? []).length
+  ok('包装层路由只挂一张卡：胶囊数为 1', chipCount === 1, `chips=${chipCount}`)
+  ok('挂的是 Token Plan 那张，余额那张不出现', flat.includes('Token Plan') && !flat.includes('¥33.80'), flat.slice(0, 300))
+  ok('吞吐行也认得包装层（速度仍跟着这张卡）', flat.includes('tok/s'), flat.slice(0, 300))
+}
+
+/* 路由解析不出时（目录不认这条路由，如中转/自定义路由）**只出一张**，且挑的是
+ * "最近真在服务请求的那条路由"绑定的卡 —— **不是模型名匹配**：初版用模型名当线索，
+ * `deepseek-v4.1-flash`（模型家族）把绑 `deepseek` 的余额卡挑了出来，实机反馈
+ * "只剩余额的钱数、条状额度不见了"。这里两条模型名都必须是额度卡胜出。 */
+for (const model of ['deepseek-v4.1-flash', 'qwen3.8-flash']) {
+  const { api, registered } = await loadBundle('with-console')
+  const dirStore = makeStore({
+    current: { provider: 'some-unrelated-relay', model },
+    routable: true, groups: [], failures: [], status: 'ready', error: null,
+  })
+  api.apply(makeCtx(registered, new Set(['conversation.input.left', 'conversation.input.dock']), [], {
+    sessions: { list: makeStore({ current: 's1' }) },
+    modelDirectories: { directoryFor: () => ({ store: dirStore, load: async () => {} }) },
+  }))
+  const component = registered[0].component
+  resetHooks()
+  const render = () => {
+    beginRender()
+    return component()
+  }
+  const flat = JSON.stringify(await settle(render))
+  const chipCount = (flat.match(/tpq-chip/g) ?? []).length
+  ok(`路由不认时只出一枚胶囊（model=${model}）`, chipCount === 1, `chips=${chipCount}`)
+  ok('挑的是额度卡（Token Plan 余量），不是余额卡',
+    flat.includes('Token Plan 余量') && !flat.includes('¥'), flat.slice(0, 260))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

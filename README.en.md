@@ -72,8 +72,12 @@ This stance matters more than the feature list:
   so there is no key here that expresses "period + limit". `token-plan-window` is **not** a custom-window
   preset - it is the local measured ledger for Qwen Token Plan (no network, only calls that passed through
   this instance);
-- **No denominator, no percentage**: a measured card never draws a progress bar and never shows a percentage -
-  it reports only "how many tokens / how many requests were used in this window";
+- **No denominator, no *derived* percentage**: nothing computed out of `used/total` or `100 - used%` is ever
+  shown - a measured card never draws a bar and never shows a percentage, reporting only how many tokens / requests
+  were used in its window. A percentage **the API returns itself** is official truth, though: when the plan-limit call
+  times out (it does, intermittently), the chip still shows "used 3.3%", because that number came straight from
+  `usage.per1MonthPercentage` - **with the bar** (it draws that same official ratio) but **without an absolute remaining amount** (what cannot be
+  computed is not displayed), and with an `extra.denominatorFailed` diagnostic instead of going silent;
 - **Plan configuration is not your quota**: a window exists only when that plan actually reports a reading
   (a `five_hour` cap sitting in `quota-config` does not mean your account has a 5-hour window);
 - **Never guess**: detection would rather show one card fewer than pin another vendor's balance to the model
@@ -380,8 +384,9 @@ shows up as "the card stays empty", not as a failed start. This table is the aut
 **Keys outside this table are reserved for built-in presets - do not copy them into a hand-written entry**:
 `builder`, `apiPrefix`, `consoleSite`, `gatewayAction`, `gatewayProduct`, `infoUrl`, `secTokenRef`,
 `dashboardURL`, `regionConfigKey`, `errorHints`, `keywords` all drive vendor-specific signing / CSRF / envelope
-flows that only hold for the matching preset. In particular, **multi-row window cards** (the "5 hour" + "weekly"
-pair in the panel) are produced **only by `token-plan-console`**; one hand-written entry yields one reading, so
+flows that only hold for the matching preset. In particular, **multi-row window cards** (the current billing-period
+row plus "5 hour" - monthly or 7-day, depending on which reading the upstream returns for this account) are produced
+**only by `token-plan-console`**; one hand-written entry yields one reading, so
 write two sources to show two windows. For a measured window use
 `{"kind":"window","providers":["my-provider"],"label":"My window","windowDays":30}` or the
 `window:<provider>` shorthand. The full onboarding checklist is in
@@ -390,7 +395,10 @@ write two sources to show two windows. For a measured window use
 #### The card is empty and nothing errored - triage in this order
 
 1. `GET /token-plan-quota/probe?source=<id>` (or temporarily set `"debug": true`) - look at which field names the
-   upstream **actually** returned;
+   upstream **actually** returned. Sources added by auto-detection are not in the config file, so `probe` now
+   **re-runs detection** when its first lookup misses (before 2026-09-23 it always answered `unknown-source` for
+   exactly those sources, which switched off the most useful diagnostic). That is how the missing Qwen quota was
+   traced: `usage` actually returns `per1MonthPercentage`, while the code only knew `per1Week` / `per5Hour`;
 2. Check every key against the authoritative table above: **an unrecognised key does not fail, it just does
    nothing**, which is exactly why the symptom is an empty card rather than a failed start;
 3. Confirm the `fields` paths really hit this response (the same API has shipped with and without a `data`
@@ -470,9 +478,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 388 assertions, offline
-node test/client.mjs                # 217 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 94 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 430 assertions, offline
+node test/client.mjs                # 235 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 110 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -480,10 +488,9 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 388/217 tests plus 94 guards assertions" - and checks them
-against the code and a real
-test run, so a drifting
-number turns CI red (verified with a deliberately broken copy that it does fail).
+config table, 8 sources, 8 declared outbound hosts, 430/235 tests plus 110 guards assertions" - and checks them against
+the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
+fail).
 
 This repository also runs on a written engineering loop. Those directories live in the repo but are **not
 published in the npm package**: `specs/` (three specification cycles: roadmap reconciliation, publish-surface

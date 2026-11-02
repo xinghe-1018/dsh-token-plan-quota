@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **发布流水线分两次 push，把每次发版自己的 main 门禁推红**（0.4.12 实发）：
+  `git push origin HEAD:main` 与 `git push origin v0.4.12` 之间那几秒，main 的 push 事件
+  已经拉起 `ci`，它的 checkout 还看不到尚未落地的 tag —— `check-docs` 的「CHANGELOG 引用的
+  tag 必须存在」判红（ci#51），而同一时刻从 tag ref 起跑的 `publish#16` 是绿的、npm 也确实上架了。
+  红的是 main，不是包；最坏后果是下次发版前没人再信绿灯。现在两个 ref 在同一次 push 事务里落地，
+  `test/guards.mjs` 加三条源码形状守卫钉住它（拆回两条就红）。
+
 ## [0.4.12] - 2026-11-02
 
 ### Fixed

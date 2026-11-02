@@ -205,8 +205,13 @@ function main() {
   }
   // 用 `HEAD:main` 而不是 `main` —— actions/checkout 默认是 detached HEAD，本地分支指针
   // 不会跟着我们的 commit 走，`git push origin main` 在 runner 上会把旧 tip 又推一遍。
-  git('push', 'origin', 'HEAD:main')
-  git('push', 'origin', `v${target}`)
+  // 一次 push 同时更新 main 与 tag。分两条推时，main 的 push 事件在第一条返回后立刻拉起 ci，
+  // 而第二条（tag）要几秒后才落地 —— 那个窗口里 checkout 看不到新 tag，
+  // check-docs 的「CHANGELOG 引用的 tag 必须存在」就判红。2026-11-02 发 0.4.12 实发：
+  // ci#51 failure（只缺 v0.4.12 这一条，其余 tag 都在，正说明是竞态不是漏打），
+  // 同一时刻从 tag ref 起跑的 publish#16 全绿，npm 也确实发出去了 —— 红的是 main 的门禁。
+  // check-docs 刻意不打网络（每条提交都要跑的检查不能悄悄发请求），所以只能从源头消除窗口。
+  git('push', 'origin', 'HEAD:main', `v${target}`)
   console.log(`\n已推送 ${target} + tag v${target}。`)
   console.log('CI：Actions → publish → npm publish。看 https://github.com/xinghe-1018/dsh-token-plan-quota/actions')
 }

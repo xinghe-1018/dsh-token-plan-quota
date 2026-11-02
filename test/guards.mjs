@@ -383,5 +383,15 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     codeDeclared.size === realDeclared.size && mismatched.length === 0)
 }
 
+/* release 流水线的 push 形状：main 与 tag 必须同一次 push 落地。
+ * 动机是 0.4.12 那次实发（ci#51 假红）——拆成两条推就等于给 CI 留一个看不到 tag 的窗口，
+ * 而窗口只在发版当下存在，人工重跑永远是绿的，所以钉在源码形状上（与宪法 V「宣称与实际一致」同理）。 */
+{
+  const releaseSrc = readFileSync(join(ROOT, 'scripts', 'release.mjs'), 'utf8')
+  ok('release 用一次 push 同时更新 main 与 tag', releaseSrc.includes("git('push', 'origin', 'HEAD:main', `v${target}`)"))
+  ok('release 不再单独推 tag（那会在两条 push 之间留下 CI 看不到 tag 的窗口）', !releaseSrc.includes("git('push', 'origin', `v${target}`)"))
+  ok('release 不再单独推 main（同上：两个 ref 必须同一事务）', !releaseSrc.includes("git('push', 'origin', 'HEAD:main')"))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

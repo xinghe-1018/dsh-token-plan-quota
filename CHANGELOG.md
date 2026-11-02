@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-11-02
+
 ### Fixed
 
 - **额度徽标在 DSH 0.2 上不跟随模型、降级时只剩「无官方额度数据」**（实机反馈"插件又没有正常显示了"）。
@@ -701,6 +703,7 @@ All notable changes to this project are documented here. The format follows
 > 注：本仓库的公开历史始于 0.2.0（根提交即 `feat: dsh-token-plan-quota v0.2`），
 > 0.1.0 没有对应提交，因此**不打 `v0.1.0` tag**——留一个指向不存在的 tag 的链接就是假链接。
 
+[0.4.12]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/xinghe-1018/dsh-token-plan-quota/compare/v0.4.8...v0.4.9

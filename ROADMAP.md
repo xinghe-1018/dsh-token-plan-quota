@@ -412,3 +412,33 @@ DSH 生态的"插件存放处"是**三层**，本插件三层都要过：
 
 ①做完（多家）→ ②做完（零配置，卖点成型）→ §1.4 差异化写完 → README 中英双份 → npm 发版 →
 最后提 awesome（拿到 `Install ▾ via dsh-market` 那一行，才算"开源完成"）。
+
+---
+
+## 6. 第五轮 Open Code Review 未处理项（全部 low，按成本排序）
+
+来源：2026-11-02 的整文件扫描与分提交审查（session 见 `/.opencodereview/sessions/ 下本仓库目录）。
+同轮的高/中优先级已修，这里只留**明确记账、当时未修**的，避免下次重新发现一遍。
+判据都是可复现的输入形态，不是风格偏好；改哪条就先照"证据"那一列造反例。
+
+| # | 项 | 位置 | 证据 / 后果 | 成本 |
+|---|---|---|---|---|
+| 1 | HTML 属性的引号分支不限行：`/src="…` 若文档里有未配对的引号，匹配会一路吞到下一处引号，交回来的是跨多行的"目标" | scripts/link-targets.mjs 的 `extractHtmlTargets` | 取一段带孤立 `"` 的散文即可复现；随后被当作 relative 去 `existsSync`。行内扫描器 (`scanInlineTargets) 刻意用换行终止并带 `TARGET_SCAN_CAP`，HTML 这边没有同一约束 | 小 |
+| 2 | `extractLinkTargets` 自称收原文并自己 `stripCode`，而 `mentionsTarget` 已剥过一遍 → 同一份工作做两次，正确性依赖 `stripCode` 幂等；且 HTML 注释被替换成空串（不是空格），会把注释两侧的文字**拼成一行**，可能凭空造出 `]` 与属性的配对 | scripts/link-targets.mjs | 构造 "…<!-- x --> (a.md)" 之类的串可复现 | 小 |
+| 3 | `mentionsTarget` 对远端链接比的是未解码的 `url.pathname`：仓库里若有非 ASCII 或带空格的文件名（如中文图名），百分号编码后永远不相等 → 又一处假红；GitHub 的 owner/repo 大小写不敏感，而这里是精确前缀；`endsWith` 还允许更深的同尾路径 | scripts/link-targets.mjs | 用 `https://github.com/Owner/Repo/blob/main/…` 或中文文件名各测一次 | 中 |
+| 4 | 变量名 `decorated` 装的其实是**剥掉装饰**后的值，与名字相反；同一命名在两处 | scripts/link-targets.mjs | 读代码即见 | 小 |
+| 5 | `package.json` 被读两次、`JSON.parse` 两次（`pkg` 与 `pkgMeta` 指同一份真值），日后只改一个就会漂 | scripts/check-docs.mjs | 读代码即见 | 小 |
+| 6 | 第 4/4b 项与第 10 项各自重跑同一批抽取，两处 `classifyTarget` 分支必须手工保持同步（本文件头注释记录的正是"两处各一套实现必有一处先忘"） | scripts/check-docs.mjs | 建议预取一份 Map 复用 | 中 |
+| 7 | 第 10 项裸块里的缩进塌陷（块内代码按 0/1 列写），读起来像顶层代码，日后在 `}` 之后追加语句会踩空 | scripts/check-docs.mjs | 读代码即见 | 小 |
+| 8 | 同一块里三种路径口径混用（`'../scripts/shots/fixture.mjs'` vs `join(root, …)` vs `read(…)`） | scripts/check-docs.mjs | 把脚本挪目录即暴露 | 小 |
+| 9 | `--viewport 0x0` 能通过解析，而 `openPage` 里 `if (viewport.width)` 会让整个设备度量下发被跳过 → "SVG 超出视口"这道门拿到的是真实窗口尺寸，报错却打印"视口=0x0" | diagrams/make-diagram-png.mjs | 解析阶段挡掉非正数 | 小 |
+| 10 | CDP 会话没有显式关闭，只靠杀浏览器进程间接断开；`cdp` 声明在 `try` 内，`finally` 看不见 | diagrams/make-diagram-png.mjs | 若 `proc.kill` 静默失败，脚本会在打印 sha256 后继续挂着 | 小 |
+| 11 | 顶层只打印 `error.message`（丢 stack），且 `console.error` 后立刻 `process.exit` —— stderr 接管道时有截掉失败原因的风险，而"说清原因"是这脚本的核心契约；非 `Error` 值会打印"失败：undefined" | diagrams/make-diagram-png.mjs | 用 `\| tee` 跑一次可复现截断 | 小 |
+| 12 | `page.evaluate` 里对 `querySelector` 结果直接链式取 `querySelectorAll`：中间隔着一次最长 8s 的字体等待，页面被重排就抛 null 解引用，报出来是"页面求值异常"而不是"SVG 没了" | diagrams/make-diagram-png.mjs | 写成空安全表达式，交给下面的下限门报可读错误 | 小 |
+| 13 | `readFileSync(out)` 假设目标是普通文件：`--out` 指向同名目录/FIFO 时抛 `EISDIR` 顶掉"拒绝覆盖非 PNG"这条安全提示；大文件也整读进内存（别处都在用 `statSync`） | diagrams/make-diagram-png.mjs | 先判 `isFile`，签名只取前 8 字节 | 小 |
+| 14 | 票据名收紧成精确匹配后，丢了一条有用的线索：期望名不在、但名字里确实有一张 `*ticket` 时，应当说"看到的是 X（多半是另一台主机的票据），本控制台要的是 Y" | lib/index.js 的 `NotLogined` 诊断 | 这是增强不是缺陷：现在的文案已经不再误报 | 中 |
+
+已核**不成立**的一条，记在这里防止重复劳动：第五轮有一条声称"CHANGELOG 有 `[0.4.11]:` 却没有
+`[0.4.12]:` 链接，说明这版不是 release.mjs 一次写出来的"——实测 `[0.4.12]:` 链接在（本次核查输出为证），
+那是模型误读。但它提议的**反向**门禁（最新已发布章节 == `package.json#version`、且版本必须有链接行）
+是对的，已落地。

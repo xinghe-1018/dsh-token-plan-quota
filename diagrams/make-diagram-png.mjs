@@ -46,6 +46,7 @@ const MIN_BYTES = 60_000
  *  004 的 Lens 1 实测：注入第二个 `svg[data-quality-profile]`（标签全丢）后产物 96,856 B，
  *  照样越过了体积下限。真图有几十个 `<text>`，这里取 8 只是"这确实是一张渲染出来的图"的下限。 */
 const MIN_TEXT = 8
+const RELOAD_TIMEOUT_MS = Number(process.env.TPQ_DIAGRAM_RELOAD_TIMEOUT_MS || 60000)   // 有界等待：见 reload 处的注释
 
 /** 体积上限：对齐 `docs/images/` 现有兄弟文件 106–342 KB 的量级，别让 README 多背一张 1 MB 的图。 */
 const MAX_BYTES = 400_000
@@ -115,13 +116,21 @@ async function main() {
   const browser = await launchEdge({ width: args.width, height: args.height, edge: args.edge })
   let png
   let rect
+  let rounded
   try {
     const cdp = await Cdp.connect(browser.wsUrl)
     const page = await cdp.openPage(url, { width: args.width, height: args.height, deviceScaleFactor: 1 })
     // `Target.createTarget` 会立刻开始加载，而设备度量是在附着之后才覆盖的——查看器按**窗口**尺寸
     // 算过一次面板大小就不再看后续变化（实测：窗口 1600x1000 时裁到 w=1192，而同一视口下重载后是
     // w=1338）。重载一次，让"读到的视口"和"算面板用的视口"是同一个，否则产物尺寸会随启动窗口漂。
-    await page.reloadAndSettle()
+    // reloadAndSettle 里面 await 的是 Page.loadEventFired，**没有任何超时**：本文件自己就承认
+    // 离线时 CDN 字体本就会失败，而同一环境下 <head> 里的 CDN 请求可能既不快速失败也不结束，
+    // load 永远不来 → 脚本既不落盘也不非零退出（违背头注释的"一律非零退出并说清原因"）。
+    // 包一层有界等待，把它变成一条能读的失败。
+    await Promise.race([
+      page.reloadAndSettle(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('页面在 ' + RELOAD_TIMEOUT_MS + 'ms 内没有完成加载（离线或 CDN 不可达？），已中止')), RELOAD_TIMEOUT_MS)),
+    ])
     await page.waitFor(`!!document.querySelector(${JSON.stringify(SVG_SELECTOR)})`, { label: '架构图 SVG 出现' })
 
     // 字体晚到会让文字排版在两张截图之间漂移；等不到就只是告警（离线时 CDN 字体本就会失败）。
@@ -152,7 +161,7 @@ async function main() {
         + '调大 --viewport 再试——裁一半的图不许落盘。')
     }
 
-    const rounded = { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+    rounded = { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
     png = await page.shot({ clip: { ...rounded, scale: args.scale } })
     console.log(`裁剪区  : x=${rounded.x} y=${rounded.y} w=${rounded.width} h=${rounded.height}`)
   } finally {
@@ -160,8 +169,11 @@ async function main() {
   }
 
   const size = pngSize(png)
-  const expectW = Math.round(rect.width * args.scale)
-  const expectH = Math.round(rect.height * args.scale)
+  // 断言要用**真正传给 shot 的那组数**（rounded），不是未取整的 rect：位图宽 ≈ rounded.width × scale，
+  // 用 rect 反推时偏差 ≈ (rect.width - rounded.width) × scale，--scale 3/4 时能差到 2px，
+  // 一张完全正常的图会被自己的尺寸门误拒（第五轮审查第 1 条）。
+  const expectW = rounded.width * args.scale
+  const expectH = rounded.height * args.scale
   if (Math.abs(size.width - expectW) > 1 || Math.abs(size.height - expectH) > 1) {
     throw new Error(`产物尺寸与预期不符：得到 ${size.width}x${size.height}，预期约 ${expectW}x${expectH}`)
   }

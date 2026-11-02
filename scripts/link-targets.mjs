@@ -73,7 +73,10 @@ export function extractLinkTargets(text) {
   const stripped = stripCode(text)
   const targets = scanInlineTargets(stripped).map(item => item.target)
   // 引用式定义：允许最多 3 个前导空格（CommonMark 的列表缩进形态）。
-  for (const m of stripped.matchAll(/^ {0,3}\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1])
+  // 引用式定义只在**同一行**有目的地时成立，且行尾只允许空白或可选 title（CommonMark）。
+  // 旧写法两条都漏：`\s*` 跨行 → `[1]:` 这种空定义会把下一行第一个词吞成目标；没有行尾锚 → 正文里以
+  // 方括号开头的句子（`[TODO]: finish this section`）造出一个假目标 `finish`，第 4 项于是报"链接目标不存在"。
+  for (const m of stripped.matchAll(/^ {0,3}\[[^\]]+\]:[ \t]*([^\s]+?)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/gm)) targets.push(m[1])
   for (const value of extractHtmlTargets(stripped)) targets.push(value)      // HTML（href 与 src）
   return targets
 }
@@ -121,7 +124,10 @@ export function extractImageTargets(text) {
  * @returns {string} 去掉装饰后的目标
  */
 function stripTarget(raw) {
-  let t = raw.trim().replace(/\s+"[^"]*"$/, '')            // markdown 的 title 属性
+  // markdown 的 title 有三种写法（双引号 / 单引号 / 括号）。原先只剥双引号那一种，于是
+  // `[x](docs/a.md 't')` 留着尾巴 `docs/a.md 't'` 被当成相对路径去 `existsSync`，制造一记指向错契约的假红
+  // ——而 HTML 那边（extractHtmlTargets）是刻意支持三种引号的，两边口径必须一致。
+  let t = raw.trim().replace(/\s+(?:"[^"]*"|'[^']*'|\([^)]*\))$/, '')   // markdown 的 title 属性（三种写法）
   if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1)
   return t.split('#')[0].split('?')[0].replace(/^\.\//, '') // 片段 / 查询串 / ./ 前缀
 }
@@ -161,6 +167,10 @@ export function normalizeTarget(raw) {
  */
 export function classifyTarget(raw) {
   const decorated = stripTarget(raw)
+  // 盘符必须先于 scheme 判定：`/^[a-z][a-z0-9+.-]*:/i 会把 `C:` 当成协议，于是 `C:/Windows/win.ini`
+  // 与 `D:\x\y.md` 都被判成 skip —— 调用方对 skip 一律 continue，Windows 绝对路径于是从越界检查里
+  // 隐形。本模块存在的理由正是"把那条越界面彻底关掉"，而它在**本机平台**上成立（评审第 1 条）。
+  if (/^[a-z]:([/\\]|$)/i.test(decorated)) return { kind: 'escape', target: decorated }
   if (decorated === '' || decorated.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(decorated)) {
     return { kind: 'skip', target: decorated }
   }

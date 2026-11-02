@@ -35,7 +35,7 @@ git grep -nI -E '40\.33|40\.74|2117|2661|2957|3620|3,677|934 字符|specCode: st
 
 ```bash
 cd ~/.dsh/plugins/dsh-token-plan-quota
-git push origin main --follow-tags        # 未推送的提交 + 3 个 tag
+git push --atomic origin HEAD:main v0.2.0      # 提交与 tag 同一次 push（见下方第 1 步说明）
 git ls-remote --tags origin               # 确认 v0.2.0 … v0.4.1 都在
 ```
 
@@ -78,7 +78,7 @@ npm run release -- --patch
     并补 compare 链接
   4 git commit + git tag vX.Y.Z
   5 本地跑 npm run check（不过就什么都不推）
-  6 git push origin main && git push origin vX.Y.Z
+  6 git push --atomic origin HEAD:main vX.Y.Z
                                         ──►  tag 推上去 = 触发 publish.yml
                                               a 核 tag ↔ package.json ↔ CHANGELOG
                                                 三处一致（不一致直接拒）
@@ -278,8 +278,11 @@ git push origin :refs/tags/v0.4.2             # 撤 tag（GitHub release 也要�
 
 ```bash
 # 0) 决定 ROADMAP.md 去留（见上），然后
-git push origin main --follow-tags
+npm run release -- --patch        # 改版本 + 搬 CHANGELOG + 打 tag + 一次 push（main 与 tag 同一事务）
+#    ↑ 你的手到这里为止：npm publish 由 tag 触发的 CI 用 Trusted Publishing 做，
+#      本机不需要 npm login、也不需要 NPM_TOKEN（身份不在你电脑上，见 §3.1）。
+#      不要拆成两条命令（先推 main、再推 tag）：那两条之间的窗口会让
+#      main 的 CI 看不到 tag 而假红（0.4.12 的 ci#51 实测），也没有 --atomic 的原子性。
 gh repo edit xinghe-1018/dsh-token-plan-quota --add-topic dsh-plugin
-npm login && npm publish --access public
 # 4) 往 awesome-dsh-plugin 提一个 data/plugins/xinghe-1018__dsh-token-plan-quota.yml
 ```

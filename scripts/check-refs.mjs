@@ -22,6 +22,10 @@
  *    看到了什么"的冻结证据，允许其行号随代码漂移。这正是 `REVIEW-CHECKLIST.md` 里
  *    「评审期间冻结工作树」那条规则存在的原因。
  *  - 源码注释里的行号：实现者对自己刚看过的位置的就地批注，腐烂半径小。
+ *  - 跳过目录里的 `*.md`：见 `scripts/walk-skip.mjs` 的 `SKIP_DIRS`（`.git` / `node_modules` /
+ *    `.shots-work` / `.scratch` / `.qoder` / `.dsh`）——后四个都在 `.gitignore` 里，不属于仓库，
+ *    也就不属于`活文档`这个面。**这份清单与编码护栏共用一条**，所以这里写下的
+ *    就是实际扫的面（宪法 V：宣称的覆盖面必须等于实际覆盖面）。
  *  - 代码围栏（```）里的内容：那是命令输出或复现记录，`file:line` 在那里是**证据**。
  *
  * **刻意不认的形态**：`L44` / `L1189` 这类不带文件名的裸行号。它和本项目给评审发现起的编号
@@ -32,7 +36,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripFences } from './markdown-strip.mjs'
-import { SKIP_DIRS } from './walk-skip.mjs'
+import { shouldSkipDir } from './walk-skip.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -108,7 +112,7 @@ function walkMarkdown(absDir, rel, out) {
     const childRel = rel === '' ? dirent.name : `${rel}/${dirent.name}`
     if (dirent.isSymbolicLink()) continue
     if (dirent.isDirectory()) {
-      if (!SKIP_DIRS.has(dirent.name)) walkMarkdown(join(absDir, dirent.name), childRel, out)
+      if (!shouldSkipDir(dirent.name)) walkMarkdown(join(absDir, dirent.name), childRel, out)
     } else if (dirent.name.endsWith('.md')) out.push(childRel)
   }
 }

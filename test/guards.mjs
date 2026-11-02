@@ -23,7 +23,7 @@ import { findLineRefs } from '../scripts/check-refs.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
 import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
 import { repoPathFromUrl } from '../scripts/repo-path.mjs'
-import { SKIP_DIRS } from '../scripts/walk-skip.mjs'
+import { shouldSkipDir, skipDirNames } from '../scripts/walk-skip.mjs'
 import { __internals } from '../lib/index.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -214,6 +214,15 @@ ok('分类 仓库外 上级目录', kind('../x') === 'escape')
 ok('分类 仓库外 裸 `..`（旧实现漏判，Lens 2 F1）', kind('..') === 'escape')
 ok('分类 仓库外 `a/../..` 归一后是 `..`', kind('a/../..') === 'escape')
 ok('分类 仓库外 绝对路径', kind('/abs/path') === 'escape')
+// 第五轮审查（link-targets）三条：盘符被当成协议→skip；单引号/括号 title 没剥→假红；
+// 引用式定义没有行尾锚→正文里的 [TODO]: finish 造出假目标。
+ok('分类 Windows 盘符绝对路径判越界（不被当成协议 skip）', kind('C:\\Users\\me\\x.md') === 'escape')
+ok('分类斜杠形态的盘符同理', kind('D:/x/y.md') === 'escape')
+ok('归一化剥掉单引号 title', normalizeTarget(`docs/a.md 't'`) === 'docs/a.md')
+ok('归一化剥掉括号 title', normalizeTarget('docs/a.md (t)') === 'docs/a.md')
+ok('引用式定义不把下一行的词当目标（空定义）', extractLinkTargets('[1]:\n下一行的词').length === 0)
+ok('正文里以方括号开头的句子不造出假目标', extractLinkTargets('[TODO]: finish this section').length === 0)
+ok('正常引用式定义仍然被抽出', extractLinkTargets('![x][r]\n[r]: docs/images/architecture.png').includes('docs/images/architecture.png'))
 ok('分类 反斜杠 一律非法（平台无关，Lens 2 F1/F6）', kind('..\\..\\..\\Windows\\win.ini') === 'backslash')
 // 应放行成 relative：仓库内相对路径。
 ok('分类 仓库内 相对路径', kind('docs/x.md') === 'relative')
@@ -439,8 +448,30 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /from '.\/walk-skip.mjs'/.test(docsSrc) && /from '.\/walk-skip.mjs'/.test(refsSrc))
   ok('两份门禁不再各自持有 SKIP_DIRS 字面量（各写一份必然漂）',
     !/const SKIP_DIRS = new Set\(/.test(docsSrc) && !/const SKIP_DIRS = new Set\(/.test(refsSrc))
-  ok('共享集合覆盖 IDE、草稿与可重生成缓存（.scratch 也在 .gitignore 里，草稿里的 file:line 不该把活文档门禁判红）',
-    SKIP_DIRS.has('.qoder') && SKIP_DIRS.has('.dsh') && SKIP_DIRS.has('.shots-work') && SKIP_DIRS.has('.scratch'))
+  ok('跳过集合覆盖 IDE、草稿与可重生成缓存（.scratch 也在 .gitignore 里，草稿里的 file:line 不该把活文档门禁判红）',
+    shouldSkipDir('.qoder') && shouldSkipDir('.dsh') && shouldSkipDir('.shots-work') && shouldSkipDir('.scratch') && shouldSkipDir('.git'))
+  ok('导出的是判定函数而不是活的 Set（消费者 add/delete 会改掉另一道门禁的面）', Object.isFrozen(skipDirNames))
+  // 第五轮 A3：.gitignore 里的目录条目与跳过集合必须同涨同落。否则「只改 .gitignore 的人」
+  // 不会让任何东西变红，而下一份 IDE 缓存又会像 0.4.12 那样被读进门禁。
+  const giDirs = readFileSync(join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/)
+    .map(line => line.trim()).filter(line => line.endsWith('/') && !line.startsWith('#'))
+    .map(line => line.slice(0, -1))
+  const notSkipped = giDirs.filter(name => !shouldSkipDir(name))
+  ok('gitignore 里每个目录条目都在跳过集合内（不一致：' + (notSkipped.join(',') || '无') + '）', notSkipped.length === 0)
+  const notIgnored = skipDirNames.filter(name => name !== '.git' && !giDirs.includes(name))
+  ok('跳过集合不含 gitignore 之外的目录（那会跳掉已跟踪的活文档，比漏跳更坏；不一致：' + (notIgnored.join(',') || '无') + '）', notIgnored.length === 0)
+}
+
+/* 发布手册与发布脚本必须说同一件事。0.4.12 的 ci#51 之后脚本改成一次 --atomic push，
+ * 但 RELEASE.md 的流水线图与「一句话版」还留着两步 push（甚至留着本机 npm publish）——
+ * 人在压力下照抄的是文档，而上一轮的反向断言只扫 scripts/release.mjs，文档漂回去全绿
+ * （第三/四两轮审查各报了一次，宪法 V：宣称的覆盖面 = 实际覆盖面）。 */
+{
+  const releaseDoc = readFileSync(join(ROOT, 'RELEASE.md'), 'utf8')
+  ok('RELEASE.md 不再教两步 push（提交与 tag 必须同一次事务）',
+    !/git push origin main && git push origin v/.test(releaseDoc) && !/git push origin main --follow-tags/.test(releaseDoc))
+  ok('RELEASE.md 的推送写法与脚本一致（带 --atomic 且用 HEAD:main）', /git push --atomic origin HEAD:main v/.test(releaseDoc))
+  ok('RELEASE.md 不再叫人在本机 npm publish（身份在 CI 那台机器上）', !/^npm login && npm publish/m.test(releaseDoc))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

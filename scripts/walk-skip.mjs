@@ -11,4 +11,17 @@
  * 不属于仓库，也就不属于「活文档 / 必须无损编码的文本」这两个面。判红它们等于要求用户去修
  * 一份本地根本没有的生成物。
  */
-export const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work', '.scratch', '.qoder', '.dsh'])
+// 导出**判定函数**而不是 Set：Set 是活的，任何消费者在 require 时 add/delete 一笔，
+// 改的就是另一道门禁的扫描面——而这个模块存在的前提正是「谁也不持有私有副本」（第五轮审查）。
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.shots-work', '.scratch', '.qoder', '.dsh'])
+
+/**
+ * @param name - 目录名（不是路径）。
+ * @returns 递归枚举时是否跳过该目录。
+ */
+export function shouldSkipDir(name) {
+  return SKIP_DIRS.has(name)
+}
+
+/** 供守卫与调试使用：当前跳过集合的只读快照。 */
+export const skipDirNames = Object.freeze([...SKIP_DIRS])

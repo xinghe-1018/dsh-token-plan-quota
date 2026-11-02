@@ -31,6 +31,17 @@ if (pkg.dependencies !== undefined && Object.keys(pkg.dependencies).length > 0) 
 }
 if (!/^\d+\.\d+\.\d+$/.test(String(pkg.version))) problems.push(`version 不是 x.y.z：${pkg.version}`)
 
+/* 兼容区间有两份**手写副本**（dsh.engines.dsh / dshhub.compatibility.dsh，以及
+ * engines.node / dshhub.compatibility.node）。JSON 里做不到共享来源，所以把等式钉住：
+ * 只改一处时宿主装得上而目录站拒收（或反过来），而在这条之前 npm run check 全绿。
+ * CHANGELOG 的 0.4.11 一节记过同一族事故（「兼容声明在预发布线上自相矛盾」）。 */
+if (pkg?.dsh?.engines?.dsh !== pkg?.dshhub?.compatibility?.dsh) {
+  problems.push(`dsh.engines.dsh 与 dshhub.compatibility.dsh 不相等（兼容区间只能有一个真值）：宿主侧 ${JSON.stringify(pkg?.dsh?.engines?.dsh)} vs 目录站 ${JSON.stringify(pkg?.dshhub?.compatibility?.dsh)}`)
+}
+if (pkg?.engines?.node !== pkg?.dshhub?.compatibility?.node) {
+  problems.push(`engines.node 与 dshhub.compatibility.node 不相等：${JSON.stringify(pkg?.engines?.node)} vs ${JSON.stringify(pkg?.dshhub?.compatibility?.node)}`)
+}
+
 if (problems.length > 0) {
   console.error('check-manifest: 不通过')
   for (const problem of problems) console.error(`  - ${problem}`)

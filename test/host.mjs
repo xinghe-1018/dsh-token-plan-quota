@@ -639,6 +639,17 @@ try {
     ok('票据在场时不再报缺票据（只报主机与名字，不制造假红）',
       !String(rejectedRight.error).includes('没有看到登录票据'), rejectedRight.error)
     ok('票据在场时仍然点出打的是哪台主机', String(rejectedRight.error).includes(String(serverC.address().port)), rejectedRight.error)
+    // 第四轮审查第 3 条：预设里新增的 loginTicketCookie 其实没被钉住——lib 里留着同名兜底，
+    // 把预设字段拼错甚至整行删掉，上面几条仍全绿。用「换一个名字」的源证明文案跟着预设走：
+    const renamed = { ...wrongSite, loginTicketCookie: 'canary_ticket', _cookie: 'cna=AAA; login_qianwenai_ticket=SECRET_CANARY_D' }
+    const rejectedRenamed = await querySource(renamed, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+    ok('缺票据提示用的是预设给出的票据名（字段真的驱动文案，而不是兜底字面量）',
+      String(rejectedRenamed.error).includes('canary_ticket') && !String(rejectedRenamed.error).includes('没有看到登录票据 login_qianwenai_ticket'), rejectedRenamed.error)
+    // 空串覆盖必须退回具名默认值，否则文案退化成「没有看到登录票据 ——」这种悬空半句。
+    const emptied = { ...wrongSite, loginTicketCookie: '', _cookie: 'cna=AAA' }
+    const rejectedEmpty = await querySource(emptied, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+    ok('loginTicketCookie 被覆盖成空串时退回具名默认（不产生悬空文案）',
+      String(rejectedEmpty.error).includes('没有看到登录票据 login_qianwenai_ticket'), rejectedEmpty.error)
   } finally {
     await new Promise(resolve => serverC.close(resolve))
   }

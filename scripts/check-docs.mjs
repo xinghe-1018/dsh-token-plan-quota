@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { __internals } from '../lib/index.js'
 // 出站主机的推导与比对抽成单一实现（可被 test/guards.mjs 喂正反例），见该文件的头注释。
 import { compareHosts, deriveHostsFromCode } from './outbound-hosts.mjs'
-import { SKIP_DIRS } from './walk-skip.mjs'
+import { shouldSkipDir } from './walk-skip.mjs'
 import { repoPathFromUrl } from './repo-path.mjs'
 import { classifyTarget, extractImageTargets, extractLinkTargets, mentionsTarget } from './link-targets.mjs'
 
@@ -131,7 +131,17 @@ for (const [file, text] of (fileList === null ? [] : [['README.md', zh], ['READM
 const SUITES = ['host', 'client', 'guards']
 const counts = {}
 for (const suite of SUITES) {
-  const out = execFileSync(process.execPath, [join(root, 'test', `${suite}.mjs`)], { encoding: 'utf8' })
+  // 套件**失败时 execFileSync 直接抛**：旧写法让本脚本带着未捕获堆栈终止，于是下面「有 N 项失败」
+  // 那条分支永远执行不到（死代码），而 6b / 6 / 10 项与汇总行全不跑；报错文案还把「文档门禁」和
+  // 「测试失败」混成一坨（宪法 V：报错必须落在正确的契约上）。不带 maxBuffer 时，输出超 1MB
+  // 还会以 ERR_CHILD_PROCESS_STDIO_MAXBUFFER 再炸一次。
+  let out = ''
+  try {
+    out = execFileSync(process.execPath, [join(root, 'test', `${suite}.mjs`)], { encoding: 'utf8', maxBuffer: 64 * 1048576 })
+  } catch (error) {
+    out = String(error.stdout ?? '')
+    problems.push(`test/${suite}.mjs 实跑失败：${out === '' ? String(error.message).slice(0, 200) : '见该套件输出，退出码 ' + error.status}`)
+  }
   const match = /(\d+) passed, (\d+) failed/.exec(out)
   if (match === null) problems.push(`test/${suite}.mjs 没给出可解析的结果行`)
   else if (match[2] !== '0') problems.push(`test/${suite}.mjs 有 ${match[2]} 项失败`)
@@ -174,11 +184,19 @@ else {
   if (sources !== tally.sources) problems.push(`README.en.md says ${sources} sources, actual ${tally.sources}`)
   if (hostCount !== tally.hosts) problems.push(`README.en.md says ${hostCount} declared outbound hosts, actual ${tally.hosts}`)
 }
-/* 6b) 正文里成对写的"N/M tests"也是声明。这条原本没人管，英文 README 就一直漂着 324/102。 */
+/* 6b) 正文里成对写的"N/M tests"也是声明。这条原本没人管，英文 README 就一直漂着 324/102。, *    位置耦合是真实风险：m[1]/m[2] 的含义纯靠"正文里恰好按 host/client 的顺序写"，谁写成, *    client/guards 就会凭空造出两条假红。所以这里把**顺序写进注释**，并另加一条按套件名, *    锚定的 guards 核对（第五轮审查第 4 条：三个套件都声称要核，6b 却只覆盖两个）。 */
 for (const [file, text] of [['README.md', zh], ['README.en.md', en]]) {
   for (const m of text.matchAll(/(\d+)\/(\d+)\s*(?:tests|项)/g)) {
     if (counts.host !== undefined && Number(m[1]) !== counts.host) problems.push(`${file} 正文写 ${m[1]}/${m[2]} tests，host 实跑 ${counts.host}`)
     if (counts.client !== undefined && Number(m[2]) !== counts.client) problems.push(`${file} 正文写 ${m[1]}/${m[2]} tests，client 实跑 ${counts.client}`)
+  }
+  // guards 的数字在两份 README 里都是单独写的（中文"guards 141 项"/英文"141 guards assertions"），
+  // 位置耦合的那条正则覆盖不到它——按名字锚定单独核一遍。
+  for (const m of text.matchAll(/guards\s+(\d+)\s*项/g)) {
+    if (counts.guards !== undefined && Number(m[1]) !== counts.guards) problems.push(`${file} 正文写 guards ${m[1]} 项，实跑 ${counts.guards}`)
+  }
+  for (const m of text.matchAll(/(\d+) guards assertions/g)) {
+    if (counts.guards !== undefined && Number(m[1]) !== counts.guards) problems.push(`${file} says ${m[1]} guards assertions, actual ${counts.guards}`)
   }
 }
 
@@ -218,9 +236,15 @@ if (seen.tags === null) {
   for (const tag of referenced.sort()) {
     if (!tags.includes(tag)) problems.push(`CHANGELOG 引用了 ${tag}，但仓库没有这个 tag${hint}`)
   }
-  if (pkg.version !== '0.0.0' && !referenced.some(t => t === `v${pkg.version}`) && tags.includes(`v${pkg.version}`) === false) {
-    // 当前版本尚未在 CHANGELOG 里出现时，至少要有对应章节
+  // 「当前版本要有章节」这条原来被两个前置条件短路（tag 已在、链接已引用），
+  // 而正常发布恰恰是**先有 tag**：缺章节照样绿灯，宣称的覆盖面≠实际覆盖面（审查第 2 条 high）。
+  // 现在无条件要求，并补上反方向：CHANGELOG 里最新的已发布章节必须等于 package.json 的版本，
+  // 且该版本必须有链接定义行（只有 `## [X]` 没有 `[X]:` 的半次发布也一并抓住）。
+  if (pkg.version !== '0.0.0') {
     if (!changelog.includes(`## [${pkg.version}]`)) problems.push(`CHANGELOG 缺当前版本 ${pkg.version} 的章节`)
+    if (!new RegExp(`^\\[${pkg.version.replace(/\\./g, '\\.')}\\]:`, 'm').test(changelog)) problems.push(`CHANGELOG 缺 [${pkg.version}] 的链接定义行（发布没走完或手改了一半）`)
+    const published = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map(m => m[1])
+    if (published.length > 0 && published[0] !== pkg.version) problems.push(`CHANGELOG 最新的已发布章节是 ${published[0]}，而 package.json 说 ${pkg.version}（两个来源必须同时改）`)
   }
 }
 
@@ -293,7 +317,7 @@ function walkTextFiles(absDir, rel, out) {
     if (dirent.isSymbolicLink()) continue
     const childRel = rel === '' ? dirent.name : `${rel}/${dirent.name}`
     if (dirent.isDirectory()) {
-      if (!SKIP_DIRS.has(dirent.name)) walkTextFiles(join(absDir, dirent.name), childRel, out)
+      if (!shouldSkipDir(dirent.name)) walkTextFiles(join(absDir, dirent.name), childRel, out)
       continue
     }
     const dot = dirent.name.lastIndexOf('.')
@@ -311,7 +335,10 @@ for (const rel of textFiles) {
   let raw
   try {
     raw = readFileSync(join(root, rel)).toString('utf8')
-  } catch {
+  } catch (error) {
+    // 静默跳过 = 「这个文件没被检查过而门禁全绿」。下面的扫描面自检按**枚举数**统计，
+    // 所以读失败不会被它抓住；Windows 上占用/权限/路径异常都很常见。
+    problems.push(`编码护栏读不了 ${rel}（${error.code ?? error.message}）：它仍在扫描面内，不能当无事发生`)
     continue
   }
   if (raw.charCodeAt(0) === 0xFEFF) {

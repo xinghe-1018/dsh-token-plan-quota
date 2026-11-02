@@ -10,6 +10,44 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Windows 绝对路径从越界检查里隐形**（第五轮审查，`link-targets`）：`/^[a-z][a-z0-9+.-]*:/i` 会把 `C:` 当成协议，
+  于是 `[x](C:\Windows\win.ini)` 被判成 `skip`、调用方直接 `continue`。这道门禁的立身之说就是"把越界面彻底关掉"，
+  而它在**本机平台**上恰好漏掉。现在盘符先于协议判定，归入 `escape`。
+- **markdown title 只剥双引号那一种**（同轮）：`[x](docs/a.md 't')` 留下尾巴被当成相对路径去 `existsSync`，
+  制造指向错契约的假红；HTML 那边（`extractHtmlTargets`）是刻意支持三种引号的，两边口径现在一致（双/单/括号）。
+- **引用式定义正则两处过宽**（同轮）：`\s*` 跨行，`[1]:` 这种空定义会把**下一行**第一个词吞成目标；
+  没有行尾锚，正文里 `[TODO]: finish this section` 会造出假目标 `finish` 并报"链接目标不存在"。
+  改为要求目的地与可选 title 同行、行尾收住。
+- **文档门禁在测试套件失败时拿不到结论**（同轮，high）：`execFileSync` 在套件非零退出时直接抛，
+  本脚本带着未捕获堆栈终止，于是"有 N 项失败"那条分支从来执行不到（死代码），后面的 6b/6/10 项与汇总
+  全不跑，报错文案还把「文档门禁」与「测试失败」混成一坨。现在捕获输出、给出结构化结论（反向验证：
+  故意让一条用例红 → `test/guards.mjs 实跑失败… 有 1 项失败`，不再是堆栈），并补 `maxBuffer`。
+- **"当前版本必须有 CHANGELOG 章节"被自己的前置条件短路**（同轮，high）：正常发布流程就是先有 tag，
+  而这条要求 `tags.includes(v) === false` 才检查——缺章节照样绿灯，宣称的覆盖面≠实际覆盖面。
+  现在无条件要求，并补**反方向**：CHANGELOG 最新的已发布章节必须等于 `package.json#version`，
+  且该版本必须有 `[X]:` 链接定义行（半次发布也抓住）。
+- **兼容区间有两份手写副本却没有等值门禁**（同轮）：`dsh.engines.dsh` 与 `dshhub.compatibility.dsh`
+  （以及两处 `node` 区间）本轮就被同时改了两遍——只改一处时宿主装得上而目录站拒收，而 `npm run check`
+  全绿。`check-manifest` 现在断言两组等式。
+- **编码护栏读不出文件时静默跳过**（同轮）：扫描面自检按**枚举数**统计，所以读失败不会被它抓住；
+  Windows 上占用/权限/路径异常很常见，那是"零违规通过"的假绿。现在记一条违规。
+- **发布手册教的路径与脚本相反**（同轮，两次审查各报一次）：`RELEASE.md` 的流水线图与「一句话版」
+  仍写着 `git push origin main` 后再推 tag（正是被本轮消灭的竞态），还留着本机 `npm login && npm publish`
+  ——而 §3.1 的标题就是"npm 的身份不在你电脑上"。两处已同步成 `git push --atomic origin HEAD:main`，
+  并在 `test/guards.mjs` 给文档加了与脚本同口径的反向断言（漂回旧写法立刻红）。
+- `NotLogined` 诊断的票据名有两处字面量（预设 + `??` 兜底）：预设改名而兜底忘改，诊断就会点一张不存在
+  的票据；`??` 也挡不住被覆盖成空串（文案退化成悬空半句）。现在 `DEFAULT_LOGIN_TICKET_COOKIE` 是唯一来源
+  （预设显式引用），兜底用 `||`，并补两条用例证明**字段真的驱动文案**、空串退回具名默认。
+- `walk-skip.mjs` 导出的是活的 `Set`：任何消费者 require 时 `add/delete` 一笔，改的就是另一道门禁的
+  扫描面——而该模块的前提正是「谁也不持有私有副本」。改为导出 `shouldSkipDir` 与冻结快照，
+  `.gitignore` 的目录条目与跳过集合之间加了双向核对（只改 .gitignore 的人现在会立刻撞红）。
+- `diagrams/make-diagram-png.mjs`：尺寸断言原本拿**未取整**的 `rect` 反推，而裁剪用的是 `rounded`
+  （`--scale 3/4` 时差到 2px 就会误拒一张正常的图）；`reloadAndSettle` 内部只等 load 事件、**没有任何超时**，
+  离线/CDN 被劫持时脚本既不落盘也不非零退出（与文件头"一律非零退出并说清原因"的自证相违）。
+  现在断言以真正传给 shot 的那组数为准，等待加了有界超时。
+- 正文里 `guards N 项` 这类按名字写的数字此前没人核（6b 只按位置核 host/client 两个数）——现在按
+  套件名单独锚定，中英两份都核。
+
 - **报错的余额卡正面显示"没有数据"而不是"查询失败"**（第四轮审查，lib/client.js 的 `cardValueText`）：
   0.4.12 那条「报错且无数字 → 正面说失败」排在 `metric:"money"` 与实测卡的早退**之后**，
   所以对余额卡永远走不到——而凭据未配置时宿主给的正是这样一张卡（`lib/index.js` 的 Bearer 门不分

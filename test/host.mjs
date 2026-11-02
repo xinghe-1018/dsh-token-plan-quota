@@ -624,6 +624,21 @@ try {
     ok('被拒时提示点出缺的是登录票据（login_qianwenai_ticket）', String(rejected.error).includes('login_qianwenai_ticket'), rejected.error)
     ok('被拒时提示写清插件打的是哪台主机', String(rejected.error).includes(String(serverC.address().port)), rejected.error)
     ok('Cookie 的值绝不进提示', !String(rejected.error).includes('SECRET_CANARY') && !String(rejected.error).includes('AAA'), rejected.error)
+
+    /* 回归（第二轮 Open Code Review 第 1 条）：泛匹配 `/ticket/i` 会被**另一台主机的票据**顶掉。
+     * 用户抄 aliyun 控制台那条请求时，Cookie 里本来就有 login_aliyunid_ticket，旧写法据此判定
+     * "有票据"、把最关键的那半句吞掉——而那恰恰是本条诊断要认的错事。
+     * 反向也要钉：票据真在场时不许再报缺（否则就是又一处假红）。 */
+    const otherTicketSite = { ...wrongSite, _cookie: 'cna=AAA; login_aliyunid_ticket=SECRET_CANARY_B; login_aliyunid_csrf=BBB' }
+    const rejectedOther = await querySource(otherTicketSite, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+    ok('另一台主机的 login_aliyunid_ticket 不能顶掉"缺本控制台票据"的提示',
+      String(rejectedOther.error).includes('没有看到登录票据 login_qianwenai_ticket'), rejectedOther.error)
+    ok('另一种形态的票据名：值仍绝不进提示', !String(rejectedOther.error).includes('SECRET_CANARY_B'), rejectedOther.error)
+    const rightTicketSite = { ...wrongSite, _cookie: 'cna=AAA; login_qianwenai_ticket=SECRET_CANARY_C' }
+    const rejectedRight = await querySource(rightTicketSite, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+    ok('票据在场时不再报缺票据（只报主机与名字，不制造假红）',
+      !String(rejectedRight.error).includes('没有看到登录票据'), rejectedRight.error)
+    ok('票据在场时仍然点出打的是哪台主机', String(rejectedRight.error).includes(String(serverC.address().port)), rejectedRight.error)
   } finally {
     await new Promise(resolve => serverC.close(resolve))
   }

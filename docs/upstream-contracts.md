@@ -53,6 +53,8 @@
 
 - `sec_token` 全自动（`tool/user/info.json` → `data.secToken`），手配 `BAILIAN_CONSOLE_SECTOKEN` 只作兜底；
   **取不到时单独报 `MissingSecToken`** 并带原因（`no-token` / `http-<状态>` / `network:<错误名>`），不把它混进 Cookie 的问题里；
+  原因写成 `no-token` 时错误里再附那份响应的**键名骨架**（`jsonKeyShape`：只下探一层、只列名字与类型），
+  用来判断 token 是改名、挪层还是会话压根没发——这是 2026-11-03 之后才有的线索，之前只能盲猜重抄；
 - 登录票据是 `login_qianwenai_ticket`：网关回 `NotLogined` 时，插件会把**收到的 Cookie 名**与目标主机写进错误里，
   抄错主机（只有 `cna`/`cnaui`/`tfstk` 这类反爬 Cookie）当场看得出来（2026-10-06 实机踩过）；
   三种成因分流到 2026-11-03 才分得开——票据在场而 token 没附上时上游同样回 `NotLogined`，旧文案一律断言"多半抄错了

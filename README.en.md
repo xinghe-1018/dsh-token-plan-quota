@@ -326,7 +326,9 @@ Three hard requirements - miss any one and this card errors, and **the error cod
 - **A `sec_token` must be attachable.** The plugin fetches it automatically from
   `platform-home.qianwenai.com/tool/user/info.json` with that same cookie; when it cannot get one the source reports
   **`MissingSecToken`** with the reason (`no-token` / `http-<status>` / `network:<error>`). **This is not a mis-copied
-  cookie**: refresh once, or store the response's `secToken` as `BAILIAN_CONSOLE_SECTOKEN`. Field case 2026-11-03: the
+  cookie**: refresh once, or store the response's `secToken` as `BAILIAN_CONSOLE_SECTOKEN`. When the reason is
+  `no-token` the message also carries the response's **key skeleton** (names and types only - never values), which is
+  how you tell whether the token was renamed, moved a level deeper, or simply never issued for this session. Field case 2026-11-03: the
   ticket was plainly there while the old wording kept asserting "probably a cookie from another host", so re-pasting
   the cookie could never fix it.
 
@@ -485,7 +487,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 451 assertions, offline
+node test/host.mjs                  # 460 assertions, offline
 node test/client.mjs                # 240 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 148 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
@@ -495,7 +497,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 451/240 tests plus 148 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 460/240 tests plus 148 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

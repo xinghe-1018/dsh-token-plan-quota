@@ -30,7 +30,7 @@ const {
   percentEncode, signRpcParams, flattenParams, utcTimestamp,
   rpcEnvelopeOk, httpEnvelopeOk, parseEnvelope, pickPath, pickFirst, pickString, toNumber, toEpochMs,
   buildListCard, buildSingleCard, evalDerive, buildDeepseekCard, buildWindowCard, buildConsoleCard, cookieValue, providerModelTotals, finalizeCard, finalizeMeter, mergePages,
-  hintFor, formatAmount, formatMoneyText, summarizeText, publicCard, cookieNames,
+  hintFor, formatAmount, formatMoneyText, summarizeText, publicCard, cookieNames, jsonKeyShape,
   querySource, buildStatus, invalidateSources,
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
@@ -539,6 +539,18 @@ check('字段错位：配置上限只留诊断', mismatched.extra.monthlyConfigu
   check('名字个数写进描述', cookieNames('a=1; b=2').text.endsWith('（2 个）'), true)
 }
 
+/* 响应骨架同一条纪律：MissingSecToken 要报"回了哪些字段"，靠的是名字，值绝不出现。 */
+{
+  check('骨架列名字与类型', jsonKeyShape({ code: 'CANARY_V', data: { secToken: 'CANARY_T' } }), 'code:string, data{secToken}')
+  check('数组只报长度不报元素', jsonKeyShape({ list: [1, 2] }), 'list:array(2)')
+  check('只下探一层（再深的层不展开）', jsonKeyShape({ data: { inner: { deep: 1 } } }), 'data{inner}')
+  check('空对象写明是空', jsonKeyShape({ data: {} }), 'data{}')
+  check('null 有单独形态，不与 string 混成一片', jsonKeyShape({ a: null, b: 1 }), 'a:null, b:number')
+  ok('超过上限时点名总数', jsonKeyShape({ a: 1, b: 2, c: 3 }, 2).endsWith(' 等 3 个'), jsonKeyShape({ a: 1, b: 2, c: 3 }, 2))
+  ok('骨架里没有任何值', !jsonKeyShape({ token: 'SECRET_CANARY', nested: { secret: 'CANARY_2' } }).includes('CANARY'))
+  check('非对象响应退回类型（不抛）', jsonKeyShape('boom'), 'string')
+}
+
 // 没配 Cookie → NoCredentials 卡（不联网）。
 const noCookie = await querySource(consolePreset, effectiveConfig({ minIntervalMs: 0 }, ctxStub), { configured: false })
 check('缺 Cookie → NoCredentials', noCookie.errorCode, 'NoCredentials')
@@ -671,7 +683,8 @@ try {
       res.end(JSON.stringify(infoMode === 'token'
         ? { code: '200', successResponse: true, data: { secToken: 'SECTOKEN_CANARY' } }
         // info.json 活着但没有 token：这正是"取不到"的常见形态（会话半失效）。
-        : { code: '200', successResponse: true, data: { errorCode: 'BailianGateway.Login.NotLogined' } }))
+        // 值全用 canary，好让"骨架只列名字不列值"这条断言真的可证伪。
+        : { code: 'INFO_CODE_CANARY', successResponse: true, data: { errorCode: 'INFO_TENANT_CANARY' } }))
       return
     }
     res.writeHead(200, { 'content-type': 'application/json' })
@@ -702,6 +715,9 @@ try {
   const noToken = await serve('no-token', withTicket)
   check('票据在场但 sec_token 取不到 → MissingSecToken', noToken.card.errorCode, 'MissingSecToken')
   ok('MissingSecToken 带上失败原因（info.json 有响应但没 token）', String(noToken.card.error).includes('no-token'), noToken.card.error)
+  // 骨架是这一步唯一的下一步线索：分不清"token 改名 / 挪层 / 会话没发 token"时，用户只能瞎重抄 Cookie。
+  ok('MissingSecToken 报出 info.json 的键名骨架',
+    String(noToken.card.error).includes('data{errorCode}') && String(noToken.card.error).includes('code:string'), noToken.card.error)
   ok('MissingSecToken 不再把责任推给 Cookie', !String(noToken.card.error).includes('另一台主机'), noToken.card.error)
   const busy = await serve('busy', withTicket)
   ok('info.json 非 2xx 时把状态码写进原因（重试即可，不是重抄 Cookie）', String(busy.card.error).includes('http-503'), busy.card.error)
@@ -710,7 +726,9 @@ try {
   ok('缺票据那半句照旧说出来', String(noTicket.card.error).includes('没有看到登录票据 login_qianwenai_ticket'), noTicket.card.error)
   for (const one of [expired, noToken, busy, noTicket]) {
     ok('凭据值一律不进文案',
-      !String(one.card.error).includes('TICKET_CANARY') && !String(one.card.error).includes('SECTOKEN_CANARY') && !String(one.card.error).includes('AAA'), one.card.error)
+      !String(one.card.error).includes('TICKET_CANARY') && !String(one.card.error).includes('SECTOKEN_CANARY')
+      && !String(one.card.error).includes('AAA')
+      && !String(one.card.error).includes('INFO_CODE_CANARY') && !String(one.card.error).includes('INFO_TENANT_CANARY'), one.card.error)
   }
   const secHint = String(hintFor('MissingSecToken'))
   ok('MissingSecToken 的提示给出可操作兜底（info.json 与 SECTOKEN 引用名）',

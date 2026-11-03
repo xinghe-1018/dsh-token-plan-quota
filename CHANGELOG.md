@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`MissingSecToken` 带出 info.json 的键名骨架**：分流只解决"赖谁"，不解决"下一步查什么"——
+  原因写成 `no-token` 时，光说"没拿到 token"分不清是字段改名、挪了一层，还是这个会话压根没发 token。
+  新增 `jsonKeyShape`（与 `cookieNames` 同一条纪律：**名字不是秘密，值才是**；只下探一层、每层限量 12、
+  非标量只报类型、数组只报长度），`fetchConsoleSecToken` 在 `no-token` 分支带回骨架，错误文案追加
+  `；那份响应的字段名：code:string, data{errorCode}`。新增 9 项断言（骨架 8 项 + 端到端 1 项），
+  并把 canary 值纳入"凭据值不进文案"那条循环。
+
 ### Fixed
 
 - **`NotLogined` 不再一律断言"多半抄的是另一台主机"**（2026-11-03 实机）：表现是用户照着提示把 Cookie 重抄几遍也修不好——

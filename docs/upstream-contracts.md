@@ -52,8 +52,11 @@
 3. 点面板底部「更新于」强制刷新即可生效（宿主每次查询重读凭据，不用重启）。
 
 - `sec_token` 全自动（`tool/user/info.json` → `data.secToken`），手配 `BAILIAN_CONSOLE_SECTOKEN` 只作兜底；
+  **取不到时单独报 `MissingSecToken`** 并带原因（`no-token` / `http-<状态>` / `network:<错误名>`），不把它混进 Cookie 的问题里；
 - 登录票据是 `login_qianwenai_ticket`：网关回 `NotLogined` 时，插件会把**收到的 Cookie 名**与目标主机写进错误里，
   抄错主机（只有 `cna`/`cnaui`/`tfstk` 这类反爬 Cookie）当场看得出来（2026-10-06 实机踩过）；
+  三种成因分流到 2026-11-03 才分得开——票据在场而 token 没附上时上游同样回 `NotLogined`，旧文案一律断言"多半抄错了
+  主机"，于是重抄 Cookie 永远修不好；现在只有"票据与 token 都在仍被拒"才指向会话过期；
 - `consoleSite=QIANWENAI`（百炼控制台是 `BAILIAN_ALIYUN`）；
 - 剩余 ＝ `quota[specCode].monthly × (1 − per1MonthPercentage)`，与订阅页「剩余量/总额度」同源；
   **2026-09-23 起账期改成按月**（`usage` 只回 `per1Month*`，档位额度字段从 `weekly` 改名 `monthly`），

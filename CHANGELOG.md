@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`NotLogined` 不再一律断言"多半抄的是另一台主机"**（2026-11-03 实机）：表现是用户照着提示把 Cookie 重抄几遍也修不好——
+  那份 Cookie 里 `login_qianwenai_ticket` 明明在场，真正缺的是 `sec_token`。真因有三层：
+  `fetchConsoleSecToken` 把非 2xx / 无字段 / 超时统统吞成 `undefined`；`callConsoleGateway` 在 token 为空时
+  **干脆不发这个字段**、请求照旧发出；而上游对"抄错主机""会话过期""没带 token"回的是同一个 `NotLogined`。
+  对策：`fetchConsoleSecToken` 改为返回 `{token, why}`（`no-token` / `http-<状态>` / `network:<错误名>` / `no-info-url`），
+  新增 `resolveConsoleSecToken` 归一三条来路（显式引用 > info.json > Cookie）并保留失败原因；网关侧按
+  `hasTicket × attached` 分流——票据在场而 token 没附上时改报 **`MissingSecToken`**（带原因，明确写"问题不在 Cookie 抄错"），
+  票据与 token 都在仍被拒时才说"会话多半已过期"，缺票据那支照旧（不把 Cookie 的问题伪装成 token 的问题）。
+  `BailianGateway.Login.NotLogined` 的固定提示同步改写成三种成因并列。只在上游这个码本身含 `NotLogined` 时改判，
+  `NotAuthorised` 等别的码继续按原码报，不吞线索。新增 14 项断言（含四条"凭据值不进文案"），
+  两处修复各自反向改回都变红（分流 3 条红、文案 1 条红）。
+
 ## [0.4.13] - 2026-11-02
 
 ### Fixed

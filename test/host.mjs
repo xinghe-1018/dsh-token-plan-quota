@@ -658,6 +658,69 @@ try {
   }
 }
 
+/* 回归（2026-11-03 实机）：Cookie 里 `login_qianwenai_ticket` 明明在场，缺的其实是 sec_token，
+ * 而 NotLogined 的提示只断言"多半抄的是另一台主机"——照着提示把 Cookie 重抄几遍也不会好。
+ * 三条成因现在分得开：token 取到仍被拒＝会话过期；token 取不到＝MissingSecToken（带失败原因）；
+ * 缺票据＝照旧报缺票据，不许反过来把 Cookie 的问题伪装成 token 的问题。 */
+{
+  const gatewayOf = infoMode => createServerB((req, res) => {
+    const u = new URL(req.url, 'http://x')
+    if (u.pathname === '/tool/user/info.json') {
+      if (infoMode === 'busy') { res.writeHead(503); res.end('busy'); return }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(infoMode === 'token'
+        ? { code: '200', successResponse: true, data: { secToken: 'SECTOKEN_CANARY' } }
+        // info.json 活着但没有 token：这正是"取不到"的常见形态（会话半失效）。
+        : { code: '200', successResponse: true, data: { errorCode: 'BailianGateway.Login.NotLogined' } }))
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: { errorCode: 'BailianGateway.Login.NotLogined', errorMsg: 'not logged in' } }))
+  })
+  const serve = async (infoMode, cookie) => {
+    const server = gatewayOf(infoMode)
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const port = server.address().port
+      const source = {
+        ...consolePreset,
+        url: `http://127.0.0.1:${port}/data/api.json`,
+        infoUrl: `http://127.0.0.1:${port}/tool/user/info.json`,
+        _cookie: cookie,
+      }
+      const card = await querySource(source, effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), { configured: false })
+      return { card, port }
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
+  }
+  const withTicket = 'cna=AAA; login_qianwenai_ticket=TICKET_CANARY'
+  const expired = await serve('token', withTicket)
+  check('票据与 sec_token 都在仍被拒 → 仍按 NotLogined 报', expired.card.errorCode, 'BailianGateway.Login.NotLogined')
+  ok('这一支说清是会话过期，不再断言抄错主机',
+    String(expired.card.error).includes('会话多半已过期') && !String(expired.card.error).includes('另一台主机'), expired.card.error)
+  const noToken = await serve('no-token', withTicket)
+  check('票据在场但 sec_token 取不到 → MissingSecToken', noToken.card.errorCode, 'MissingSecToken')
+  ok('MissingSecToken 带上失败原因（info.json 有响应但没 token）', String(noToken.card.error).includes('no-token'), noToken.card.error)
+  ok('MissingSecToken 不再把责任推给 Cookie', !String(noToken.card.error).includes('另一台主机'), noToken.card.error)
+  const busy = await serve('busy', withTicket)
+  ok('info.json 非 2xx 时把状态码写进原因（重试即可，不是重抄 Cookie）', String(busy.card.error).includes('http-503'), busy.card.error)
+  const noTicket = await serve('no-token', 'cna=AAA; isg=BBB')
+  check('缺票据仍按 NotLogined 报（不把 Cookie 的问题伪装成 token 的问题）', noTicket.card.errorCode, 'BailianGateway.Login.NotLogined')
+  ok('缺票据那半句照旧说出来', String(noTicket.card.error).includes('没有看到登录票据 login_qianwenai_ticket'), noTicket.card.error)
+  for (const one of [expired, noToken, busy, noTicket]) {
+    ok('凭据值一律不进文案',
+      !String(one.card.error).includes('TICKET_CANARY') && !String(one.card.error).includes('SECTOKEN_CANARY') && !String(one.card.error).includes('AAA'), one.card.error)
+  }
+  const secHint = String(hintFor('MissingSecToken'))
+  ok('MissingSecToken 的提示给出可操作兜底（info.json 与 SECTOKEN 引用名）',
+    secHint.includes('user/info.json') && secHint.includes('BAILIAN_CONSOLE_SECTOKEN'), secHint)
+  // 提示本身也不许再单断言"另一台主机"：它现在把三条成因并列，具体哪条由错误正文里的诊断决定。
+  const cookieHint = String(hintFor('BailianGateway.Login.NotLogined'))
+  ok('NotLogined 提示并列三种成因而非只怪抄错主机',
+    cookieHint.includes('MissingSecToken') && cookieHint.includes('会话已过期'), cookieHint)
+}
+
 /* ============================================ 5c. Moonshot（多区 + 静态币种 + 源级 hint）——新增一家的模板 */
 
 const moonshotDefault = normalizeSources(['moonshot-balance'], ctxStub)[0]

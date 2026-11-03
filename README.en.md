@@ -315,18 +315,25 @@ sign in and open the [subscription page](https://platform-home.qianwenai.com/ana
 press F5 → F12 → Network (tick **Preserve log**) → filter by `cs-data` → copy the **entire `Cookie:` request header line**
 of the **`cs-data.qianwenai.com/data/api.json`** request (`action=BroadScopeAspnGateway`) → store it as one line
 `BAILIAN_CONSOLE_COOKIE: <content>` → click "updated" in the panel to refresh.
-Two hard requirements - miss either one and the gateway answers `NotLogined`:
+Three hard requirements - miss any one and this card errors, and **the error code says which one**:
 
 - **It must come from the host the plugin actually calls** (`cs-data.qianwenai.com`). Cookies are domain-scoped, so one
   copied from another console domain will not work (seen twice in the field in 2026-10: filtering by the old hint's
   `bailian-cs` matched no request at all, and cookies taken from the Aliyun side - `cna/cnaui/... + login_aliyunid_csrf` -
-  were rejected just the same).
+  were rejected just the same). → `BailianGateway.Login.NotLogined`, and the message names the missing ticket.
 - **It must contain the login ticket `login_qianwenai_ticket`.** Anti-bot cookies alone (`cna`, `cnaui`, `aui`, `sca`,
-  `atpsida`, `tfstk`, `isg`, `partitioned_cookie_flag`) mean you copied a request that carries no login state.
+  `atpsida`, `tfstk`, `isg`, `partitioned_cookie_flag`) mean you copied a request that carries no login state. Same code.
+- **A `sec_token` must be attachable.** The plugin fetches it automatically from
+  `platform-home.qianwenai.com/tool/user/info.json` with that same cookie; when it cannot get one the source reports
+  **`MissingSecToken`** with the reason (`no-token` / `http-<status>` / `network:<error>`). **This is not a mis-copied
+  cookie**: refresh once, or store the response's `secToken` as `BAILIAN_CONSOLE_SECTOKEN`. Field case 2026-11-03: the
+  ticket was plainly there while the old wording kept asserting "probably a cookie from another host", so re-pasting
+  the cookie could never fix it.
 
-Cookies usually last a few weeks; when one expires the source reports an error and the measured card takes over until you
-re-paste. On rejection the panel error **lists the cookie names received and the host the plugin calls**, so you can see
-at a glance which request went wrong.
+When both the ticket and the `sec_token` are in place and the gateway still refuses, the only cause left is an
+**expired session** (cookies usually last a few weeks): sign in again and re-copy on the spot. On rejection the panel
+error **lists the cookie names received and the host the plugin calls**, so you can see at a glance which step went
+wrong; the measured card takes over meanwhile.
 
 ### Custom sources
 
@@ -478,7 +485,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 437 assertions, offline
+node test/host.mjs                  # 451 assertions, offline
 node test/client.mjs                # 240 assertions, fake React/DOM/fetch
 node test/guards.mjs                # 148 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
@@ -488,7 +495,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 437/240 tests plus 148 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 451/240 tests plus 148 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

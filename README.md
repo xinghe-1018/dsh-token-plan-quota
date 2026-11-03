@@ -274,16 +274,20 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 [订阅页](https://platform-home.qianwenai.com/analytics/token-plan/individual) → 按 F5 → F12 Network（勾**保留日志**）
 → 筛选框输入 `cs-data` → 复制 **`cs-data.qianwenai.com/data/api.json`**（`action=BroadScopeAspnGateway`）那条请求的
 **整行 `Cookie:`** → 存成一行 `BAILIAN_CONSOLE_COOKIE: <内容>` → 点面板「更新于」刷新。
-两条硬要求，缺一条网关都会回 `NotLogined`：
+三条硬要求，缺任何一条这张卡都会报错，而**错误码把责任分得很清楚**：
 
 - **必须是插件实际调用的那台主机**（`cs-data.qianwenai.com`）。Cookie 按域隔离，从别的控制台域名抄来的用不了
   （2026-10 实机踩过两次：先按旧提示筛 `bailian-cs` 一条请求都筛不出来；改成从阿里云那侧抄来
-  `cna/cnaui/… + login_aliyunid_csrf`，网关照样拒绝）。
+  `cna/cnaui/… + login_aliyunid_csrf`，网关照样拒绝）。→ `BailianGateway.Login.NotLogined`，正文点名缺哪张票据。
 - **里面必须有登录票据 `login_qianwenai_ticket`**。只有反爬 Cookie 集（`cna`、`cnaui`、`aui`、`sca`、`atpsida`、
-  `tfstk`、`isg`、`partitioned_cookie_flag` 这类）而没它，就说明抄的是另一条不带登录态的请求。
+  `tfstk`、`isg`、`partitioned_cookie_flag` 这类）而没它，就说明抄的是另一条不带登录态的请求。同上。
+- **`sec_token` 必须附得上**。它由 `platform-home.qianwenai.com/tool/user/info.json` 用同一份 Cookie 自动取；
+  取不到时报 **`MissingSecToken`** 并带上失败原因（`no-token` / `http-<状态>` / `network:<错误名>`）——
+  **这不是 Cookie 抄错**：重试一次，或按提示把响应里的 `secToken` 手配成 `BAILIAN_CONSOLE_SECTOKEN`。
+  2026-11-03 实机就是撞在这条上：票据明明在场，旧文案却一律断言"多半抄的是另一台主机"，照着重抄永远修不好。
 
-Cookie 通常能用几周，过期后该源报错并自动退回实测卡，重贴即恢复。被拒时面板里的错误会**列出收到的 Cookie 名
-与插件打的主机**，照着对一下就知道抄错在哪。
+票据与 `sec_token` 都在、网关仍然拒绝，那只剩**会话过期**这一条（Cookie 一般能用几周）：重新登录订阅页，
+当场再抄一条。被拒时面板里的错误会**列出收到的 Cookie 名与插件打的主机**，照着对一下就知道错在哪一步。
 
 ### 自定义源
 
@@ -414,7 +418,7 @@ Cookie 通常能用几周，过期后该源报错并自动退回实测卡，重�
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 437 项，离线
+node test/host.mjs                 # 451 项，离线
 node test/client.mjs               # 240 项，假 React/DOM/fetch
 node test/guards.mjs               # 148 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
@@ -423,7 +427,7 @@ node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 437/240 项 + guards 148 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 451/240 项 + guards 148 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

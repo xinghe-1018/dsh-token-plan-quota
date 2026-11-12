@@ -345,6 +345,409 @@ export function makeSnapshot(options = {}) {
   }
 }
 
+
+/* ------------------------------------------- 006「用量统计」整页屏（/usage） */
+
+/**
+ * /token-plan-quota/usage 的响应 fixture（INTERFACE 见 specs/006-usage-stats/INTERFACE.md §2）。
+ *
+ * 为什么单独造：整页屏读的不是 summary，而是 GET /token-plan-quota/usage 的聚合结果。
+ * 这里必须**复刻聚合口径**（lib/usage-stats.js 的 aggregateUsageRange），而不是随手糊几个数：
+ * 屏上的总分、每根柱、模型行是同一个 totals 的三层视图，三层对不上就会拍出一张"宿主永远发不出"的图。
+ *
+ * 三条与宿主同源的规则：
+ *  1. 桶 totals 有 7 个键（四类 + calls + steps + tokens），steps === calls；
+ *  2. 桶内 models 是**原始计数 map**（5 个键，没有 steps/tokens），顶层 models[].totals 才是 7 键；
+ *  3. 粒度 days > 62 → week，周桶以**本地周一**为界、不重叠不留缝。
+ *
+ * 语言：响应里只有 source.label 是宿主写死的中文（lib/index.js 的 buildUsageSnapshot），
+ * 而客户端**根本不渲染它**；屏上其余文字全部来自客户端 COPY。所以英文套不需要另造一份，
+ * 但 assertUsageSnapshot({lang:'en'}) 仍会检查所有**会被渲染**的字符串里没有中文。
+ */
+
+const USAGE_TOP_KEYS = [
+  'generatedAt', 'enabled', 'range', 'granularity', 'totals',
+  'buckets', 'models', 'source', 'coverage', 'refreshing', 'emptyReason', 'hint',
+]
+const USAGE_TOTAL_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'steps', 'tokens']
+const USAGE_MODEL_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'calls']
+const USAGE_RANGE_KEYS = ['kind', 'days', 'from', 'to']
+
+/** 宿主写死的三个 source.label（lib/index.js buildUsageSnapshot 的常量）。 */
+const USAGE_SOURCE_LABELS = {
+  index: '本实例实测（来自本地会话记录）',
+  live: '本进程启动以来（实测）',
+  disabled: '用量统计已关闭',
+}
+
+/** 与 lib/usage-stats.js 同值：超过 62 天按周聚合。 */
+const USAGE_WEEK_THRESHOLD_DAYS = 62
+
+const pad2 = value => String(value).padStart(2, '0')
+
+/** 本地日期 → YYYY-MM-DD（与 lib/usage-stats.js 的 dayKey 同口径）。 */
+function usageDayKey(date) {
+  return [date.getFullYear(), pad2(date.getMonth() + 1), pad2(date.getDate())].join('-')
+}
+
+function usageParseDay(key) {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function usageAddDays(key, delta) {
+  const date = usageParseDay(key)
+  date.setDate(date.getDate() + delta)
+  return usageDayKey(date)
+}
+
+/** 本地周一（(getDay()+6)%7，与 weekStartKey 同口径）。 */
+function usageMondayOf(key) {
+  const date = usageParseDay(key)
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7))
+  return usageDayKey(date)
+}
+
+function usageIsDayKey(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+function clampUsageDays(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 7
+  const rounded = Math.round(num)
+  if (rounded < 1) return 1
+  if (rounded > 365) return 365
+  return rounded
+}
+
+/** totalsOf（lib/usage-stats.js 同公式）：tokens = 四类之和，steps = calls。 */
+function usageTotals(counters) {
+  return {
+    input: counters.input,
+    output: counters.output,
+    cacheRead: counters.cacheRead,
+    cacheWrite: counters.cacheWrite,
+    calls: counters.calls,
+    steps: counters.calls,
+    tokens: counters.input + counters.output + counters.cacheRead + counters.cacheWrite,
+  }
+}
+
+function usagePlainCounters(counters) {
+  return {
+    input: counters.input,
+    output: counters.output,
+    cacheRead: counters.cacheRead,
+    cacheWrite: counters.cacheWrite,
+    calls: counters.calls,
+  }
+}
+
+function usageAddInto(target, source) {
+  for (const key of USAGE_MODEL_KEYS) target[key] += source[key]
+  return target
+}
+
+function usageEmptyCounters() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 }
+}
+
+/**
+ * 模型配比：id 与宿主 fixture 的模型目录对得上（deepseek / qwen-token-plan-cn / openai），
+ * 这样「用量统计」里的模型名与其它截图里的当前模型不会互相打脸。
+ */
+const USAGE_MODEL_MIX = [
+  { provider: 'deepseek', model: 'deepseek-v4-flash', weight: 0.58 },
+  { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash', weight: 0.27 },
+  { provider: 'openai', model: 'gpt-5', weight: 0.15 },
+]
+
+/**
+ * 某一天的计数。用「桶序号」而不是真实日期派生：同一组 --shots 反复跑会得到相同的柱形，
+ * 不会因为换个星期几就变成另一张图。全部整数、四类之和就是当天 tokens。
+ */
+function usageDayCounters(index) {
+  const tokens = 980_000 + ((index * 37) % 9) * 118_000 + ((index * 53) % 5) * 23_000
+  const input = Math.round(tokens * 0.57)
+  const output = Math.round(tokens * 0.13)
+  const cacheRead = Math.round(tokens * 0.24)
+  const cacheWrite = tokens - input - output - cacheRead
+  const calls = 96 + ((index * 29) % 7) * 23
+  return { input, output, cacheRead, cacheWrite, calls }
+}
+
+/** 把一天的四类计数按固定配比拆到各模型，取整后余数归最后一个（保证逐字段求和相等）。 */
+function usageSplitByModel(counters) {
+  const out = {}
+  for (const one of USAGE_MODEL_MIX) out[one.provider + '/' + one.model] = usageEmptyCounters()
+  for (const field of USAGE_MODEL_KEYS) {
+    let assigned = 0
+    USAGE_MODEL_MIX.forEach((one, index) => {
+      const id = one.provider + '/' + one.model
+      const value = index === USAGE_MODEL_MIX.length - 1
+        ? counters[field] - assigned
+        : Math.round(counters[field] * one.weight)
+      out[id][field] = value
+      assigned += value
+    })
+  }
+  return out
+}
+
+/**
+ * 造一份 /usage?days=N 的响应。
+ * @param {{now?: number, days?: number}} [options]
+ * @returns {object} 与 lib/index.js buildUsageSnapshot 同形的 payload。
+ */
+export function makeUsageSnapshot(options = {}) {
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  const days = clampUsageDays(options.days)
+  const to = usageDayKey(new Date(now))
+  const from = usageAddDays(to, -(days - 1))
+  const granularity = days > USAGE_WEEK_THRESHOLD_DAYS ? 'week' : 'day'
+
+  // 逐日计数只覆盖区间内（与 aggregateUsageRange 一致：周桶跨到 from 之前的周一，但不累计 from 之前的天）。
+  const perDay = new Map()
+  let index = 0
+  for (let key = from; key <= to; key = usageAddDays(key, 1)) {
+    perDay.set(key, usageDayCounters(index))
+    index += 1
+  }
+
+  const specs = []
+  if (granularity === 'day') {
+    for (const key of perDay.keys()) specs.push({ from: key, to: key })
+  } else {
+    let cursor = from
+    while (cursor <= to) {
+      const startKey = usageMondayOf(cursor)
+      const weekEnd = usageAddDays(startKey, 6)
+      const endKey = weekEnd > to ? to : weekEnd
+      specs.push({ from: startKey, to: endKey })
+      cursor = usageAddDays(endKey, 1)
+    }
+  }
+
+  const buckets = specs.map(spec => {
+    const counters = usageEmptyCounters()
+    const models = {}
+    for (const [key, day] of perDay) {
+      if (key < spec.from || key > spec.to) continue
+      usageAddInto(counters, day)
+      for (const [id, part] of Object.entries(usageSplitByModel(day))) {
+        models[id] = usageAddInto(models[id] ?? usageEmptyCounters(), part)
+      }
+    }
+    return {
+      from: spec.from,
+      to: spec.to,
+      label: spec.from.slice(5),
+      totals: usageTotals(counters),
+      models: Object.fromEntries(Object.entries(models).map(([id, part]) => [id, usagePlainCounters(part)])),
+    }
+  })
+
+  const rangeCounters = usageEmptyCounters()
+  for (const day of perDay.values()) usageAddInto(rangeCounters, day)
+
+  const modelAir = new Map()
+  for (const bucket of buckets) {
+    for (const [id, part] of Object.entries(bucket.models)) {
+      modelAir.set(id, usageAddInto(modelAir.get(id) ?? usageEmptyCounters(), part))
+    }
+  }
+  const models = [...modelAir.entries()]
+    .map(([id, counters]) => {
+      const slash = id.indexOf('/')
+      return {
+        id,
+        provider: slash === -1 ? 'unknown' : id.slice(0, slash),
+        model: slash === -1 ? id : id.slice(slash + 1),
+        totals: usageTotals(counters),
+      }
+    })
+    .sort((a, b) => (b.totals.tokens - a.totals.tokens) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  return {
+    generatedAt: now,
+    enabled: true,
+    range: { kind: days === 1 ? 'today' : days + 'd', days, from, to },
+    granularity,
+    totals: usageTotals(rangeCounters),
+    buckets,
+    models,
+    // 拍图时宿主一定走 session-index（fixture 模式没有持久化层也是同一条 kind 分支）；
+    // 不能写 live/in-process：那样屏上会少掉「本实例实测」的来源语义。
+    source: { kind: 'session-index', veracity: 'measured', label: USAGE_SOURCE_LABELS.index },
+    // indexed === sessions > 0：否则客户端会判定"正在回填"，图上多一条进度条。
+    coverage: { sessions: 34, indexed: 34, failed: 0, unknownModel: 1, skippedOld: 0 },
+    refreshing: false,
+  }
+}
+
+/**
+ * /usage fixture 的自检：三层 totals 恒等、日期连续、周桶对齐周一、白名单、无百分比/Credits、
+ * 无真实痕迹。任何一条不过就不该拍照。
+ * @param {object} usage makeUsageSnapshot 的产物
+ * @param {{lang?: 'zh'|'en', days?: number}} [options]
+ * @returns {string[]} 通过的断言说明（抛错表示不通过）
+ */
+export function assertUsageFixture(usage, options = {}) {
+  const checks = []
+  const need = (label, cond) => {
+    if (!cond) throw new Error('usage fixture 自检失败：' + label)
+    checks.push(label)
+  }
+  const days = clampUsageDays(options.days)
+  const allowed = new Set(USAGE_TOP_KEYS)
+  for (const key of Object.keys(usage)) need('顶层键 ' + key + ' ⊆ /usage 白名单', allowed.has(key))
+
+  need('generatedAt 是毫秒时间戳', isClockMillis(usage.generatedAt))
+  need('enabled 为 true（否则屏上是关闭态）', usage.enabled === true)
+  need('refreshing 为 false（否则屏上多一条回填进度条）', usage.refreshing === false)
+  need('不带 emptyReason（否则屏上是空态而不是数字）', usage.emptyReason === undefined)
+  need('不带 hint', usage.hint === undefined)
+  need('coverage.indexed === coverage.sessions > 0（不回填）',
+    usage.coverage.sessions > 0 && usage.coverage.indexed === usage.coverage.sessions)
+
+  need('range 键集正确',
+    JSON.stringify(Object.keys(usage.range).sort()) === JSON.stringify([...USAGE_RANGE_KEYS].sort()))
+  need('range.days 与请求一致', usage.range.days === days)
+  need('range.kind 与天数一致', usage.range.kind === (days === 1 ? 'today' : days + 'd'))
+  need('range.from 是日期', usageIsDayKey(usage.range.from))
+  need('range.to 是日期', usageIsDayKey(usage.range.to))
+  need('range.from = to - (days-1)', usageAddDays(usage.range.to, -(days - 1)) === usage.range.from)
+  const expectGranularity = days > USAGE_WEEK_THRESHOLD_DAYS ? 'week' : 'day'
+  need('granularity 为 ' + expectGranularity, usage.granularity === expectGranularity)
+
+  const expectTotalKeys = JSON.stringify([...USAGE_TOTAL_KEYS].sort())
+  need('totals 键集 = 四类 + calls/steps/tokens', JSON.stringify(Object.keys(usage.totals).sort()) === expectTotalKeys)
+  need('totals.tokens = 四类之和',
+    usage.totals.tokens === usage.totals.input + usage.totals.output + usage.totals.cacheRead + usage.totals.cacheWrite)
+  need('totals.steps === totals.calls', usage.totals.steps === usage.totals.calls)
+  for (const key of USAGE_TOTAL_KEYS) {
+    need('totals.' + key + ' 是非负整数', Number.isInteger(usage.totals[key]) && usage.totals[key] >= 0)
+  }
+  need('区间里有调用（否则屏上是空态）', usage.totals.calls > 0)
+
+  need('buckets 非空', Array.isArray(usage.buckets) && usage.buckets.length > 0)
+  if (expectGranularity === 'day') need('日桶数 = ' + days, usage.buckets.length === days)
+
+  const bucketTotals = usageEmptyCounters()
+  const modelTotals = new Map()
+  for (let index = 0; index < usage.buckets.length; index += 1) {
+    const bucket = usage.buckets[index]
+    const label = '桶 ' + bucket.from
+    need(label + ' 的键集正确',
+      JSON.stringify(Object.keys(bucket).sort()) === JSON.stringify(['from', 'label', 'models', 'to', 'totals'].sort()))
+    need(label + ' from/to 是日期', usageIsDayKey(bucket.from) && usageIsDayKey(bucket.to))
+    need(label + ' 的 label = MM-DD', bucket.label === bucket.from.slice(5))
+    need(label + ' 的键集 = 7 键', JSON.stringify(Object.keys(bucket.totals).sort()) === expectTotalKeys)
+    need(label + ' tokens = 四类之和',
+      bucket.totals.tokens === bucket.totals.input + bucket.totals.output + bucket.totals.cacheRead + bucket.totals.cacheWrite)
+    need(label + ' steps === calls', bucket.totals.steps === bucket.totals.calls)
+
+    if (expectGranularity === 'day') {
+      need(label + ' 是单日桶', bucket.from === bucket.to)
+      const expectFrom = index === 0 ? usage.range.from : usageAddDays(usage.buckets[index - 1].to, 1)
+      need(label + ' 与前一桶日连续', bucket.from === expectFrom)
+    } else {
+      need(label + ' 起点是周一', usageParseDay(bucket.from).getDay() === 1)
+      need(label + ' 终点不早于起点', bucket.to >= bucket.from)
+      need(label + ' 终点不超过周日', usageAddDays(bucket.from, 6) >= bucket.to)
+      if (index === 0) {
+        need(label + ' 覆盖区间起点', bucket.from <= usage.range.from && bucket.to >= usage.range.from)
+      } else {
+        need(label + ' 与前一桶周连续', bucket.from === usageAddDays(usage.buckets[index - 1].to, 1))
+      }
+    }
+    if (index === usage.buckets.length - 1) need(label + ' 覆盖区间终点', bucket.to === usage.range.to)
+
+    need(label + ' 有模型明细', Object.keys(bucket.models).length > 0)
+    const bucketModelTotals = usageEmptyCounters()
+    for (const [id, part] of Object.entries(bucket.models)) {
+      need(label + ' 的模型 id ' + id + ' 是 provider/model', id.includes('/'))
+      need(label + '/' + id + ' 的键集 = 5 个原始计数',
+        JSON.stringify(Object.keys(part).sort()) === JSON.stringify([...USAGE_MODEL_KEYS].sort()))
+      for (const key of USAGE_MODEL_KEYS) {
+        need(label + '/' + id + '.' + key + ' 是非负整数', Number.isInteger(part[key]) && part[key] >= 0)
+      }
+      usageAddInto(bucketModelTotals, part)
+      if (!modelTotals.has(id)) modelTotals.set(id, usageEmptyCounters())
+      usageAddInto(modelTotals.get(id), part)
+    }
+    for (const key of USAGE_MODEL_KEYS) {
+      need(label + ' 的 models 之和 = 桶 totals.' + key, bucketModelTotals[key] === bucket.totals[key])
+      bucketTotals[key] += bucket.totals[key]
+    }
+  }
+  for (const key of USAGE_MODEL_KEYS) {
+    need('桶 totals 之和 = 区间 totals.' + key, bucketTotals[key] === usage.totals[key])
+  }
+
+  need('models 至少三条', Array.isArray(usage.models) && usage.models.length >= 3)
+  const topTotals = usageEmptyCounters()
+  let previous = null
+  for (const model of usage.models) {
+    need('模型 ' + model.id + ' 的字段集正确',
+      JSON.stringify(Object.keys(model).sort()) === JSON.stringify(['id', 'model', 'provider', 'totals']))
+    need('模型 ' + model.id + ' 的 id = provider/model', model.id === model.provider + '/' + model.model)
+    need('模型 ' + model.id + ' 的 totals 键集 = 7 键',
+      JSON.stringify(Object.keys(model.totals).sort()) === expectTotalKeys)
+    need('模型 ' + model.id + ' tokens = 四类之和',
+      model.totals.tokens === model.totals.input + model.totals.output + model.totals.cacheRead + model.totals.cacheWrite)
+    for (const key of USAGE_MODEL_KEYS) {
+      need('模型 ' + model.id + ' 与桶明细之和一致（' + key + '）',
+        model.totals[key] === (modelTotals.get(model.id) ?? {})[key])
+      topTotals[key] += model.totals[key]
+    }
+    if (previous !== null) {
+      need('模型按 tokens 降序（' + previous.id + ' ≥ ' + model.id + '）',
+        previous.totals.tokens > model.totals.tokens
+        || (previous.totals.tokens === model.totals.tokens && previous.id <= model.id))
+    }
+    previous = model
+  }
+  for (const key of USAGE_MODEL_KEYS) {
+    need('模型 totals 之和 = 区间 totals.' + key, topTotals[key] === usage.totals[key])
+  }
+
+  need('source.kind 是 session-index', usage.source.kind === 'session-index')
+  need('source.veracity 是 measured', usage.source.veracity === 'measured')
+  need('source.label 是宿主三个常量之一', Object.values(USAGE_SOURCE_LABELS).includes(usage.source.label))
+
+  // 屏上不许出现百分比 / Credits（INTERFACE §2 验收：文案里没有 %，脚注明说"不折算 Credits"）。
+  const strings = collectLeaves(usage).filter(value => typeof value === 'string')
+  need('没有百分比字符串', strings.every(value => !value.includes('%')))
+  need('没有 Credits 字样的数据串', strings.every(value => !/credits/i.test(value)))
+  // 日期串按口径豁免：区间的 from/to/label 是从"今天"倒推出来的，任何固定禁用日期
+  // （2026-09-14 是用户实拍图里的真实到期日）在足够长的区间里都会作为普通日历标签出现。
+  // 这个禁用串要防的是"某个固定字段把真实日期抄进图里"，不是滚动区间自己算出来的日期。
+  // 真实痕迹仍逐条扫模型 id / provider / 文案等非日期字符串。
+  const nonDateStrings = strings.filter(value => !/^\d{4}-\d{2}-\d{2}$/.test(value))
+  for (const banned of BANNED_TRACES) {
+    const hit = nonDateStrings.find(value => value.includes(banned))
+    need('不含真实痕迹 ' + JSON.stringify(banned) + (hit === undefined ? '' : '（命中 ' + JSON.stringify(hit) + '）'),
+      hit === undefined)
+  }
+
+  if (options.lang === 'en') {
+    // 英文套：只查**会被屏上渲染**的字符串。source.label 是宿主写死的中文且客户端不渲染它，
+    // 所以不在这里判 —— 为它编一句英文等于拍一张宿主不会发的图。
+    const han = /\p{Script=Han}/u
+    const rendered = [
+      usage.range.from, usage.range.to,
+      ...usage.buckets.map(bucket => bucket.label),
+      ...usage.models.flatMap(model => [model.id, model.provider, model.model]),
+    ]
+    const hit = rendered.find(value => han.test(value))
+    need('英文套里被渲染的字符串无中文' + (hit === undefined ? '' : '（命中 ' + JSON.stringify(hit) + '）'),
+      hit === undefined)
+  }
+  return checks
+}
+
 /**
  * 用户实拍图里出现过的真实值 —— 那三张图是真实账号，任何"照着抄一组数"的改动都必须被拦住。
  * `assertFixture` 逐个叶值比对它。

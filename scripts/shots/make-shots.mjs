@@ -2,13 +2,15 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
  *  - **合成数据**：图里绝不能出现真实余额（README 的立场靠这张图自证，漏一次就白洗过仓库），
  *    所以拦截 `/token-plan-quota/summary` 与 `/token-plan-quota/refresh`，换成 `fixture.mjs` 造的数据。
  *    两个都要拦：面板那个"更新于"按钮会 POST refresh 并把快照覆盖回去（`lib/client.js:1090`）。
+ *    用量统计屏是第三个接口（`/token-plan-quota/usage?days=N`，绝对 token 数），同样换成 fixture：
+ *    那边的数字一旦来自真实实例，这张图就再也不能证明"仓库里没有真实用量"。
  *  - **要活会话**：徽标注入的座位是 `conversation.input.left`（`lib/client.js:1157`），
  *    没有打开的会话就没有 DOM 座位。宿主自带的 `?fixture` 模式（内存假宿主，含种子会话与
  *    默认模型）正好提供这个状态，于是不需要真凭据、不需要种工作区。
@@ -19,12 +21,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -135,7 +137,7 @@ async function clipOf(page, selector, pad) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -181,16 +183,45 @@ async function main() {
 
   const browser = await launchEdge({ lang: LANGUAGE[langKey], edge: args.edge, width: viewport.width, height: viewport.height })
   const cdp = await Cdp.connect(browser.wsUrl)
-  const page = await cdp.openPage(`${args.url.replace(/\/$/, '')}/?fixture`, { width: viewport.width, height: viewport.height, deviceScaleFactor: 2 })
+  /**
+   * `dsh web` 启动时打印的地址带一次性 token（首次访问 303 换 cookie）。把那个地址整条传进来时
+   * URL 里已经有 `?token=…`，再拼 `/?fixture` 会变成 `?token=…/?fixture`：宿主的 fixture 开关
+   * 读不到，页面直接落回真实宿主（图里就会混进真实数据）。所以按有没有查询串分别拼。
+   */
+  const baseUrl = args.url.replace(/\/+$/, '')
+  const fixtureUrl = baseUrl.includes('?') ? `${baseUrl}&fixture` : `${baseUrl}/?fixture`
+  const page = await cdp.openPage(fixtureUrl, { width: viewport.width, height: viewport.height, deviceScaleFactor: 2 })
   /** 客户端包改写一次就缓存住：每次重载都重新拉 350 KB 没必要。 */
   let patchedBundle = null
+  /**
+   * 用量统计是另一个接口，且**按 days 取参**：7 天的 fixture 拿去回答 90 天的请求，
+   * 屏上的区间副标题、桶数和坐标轴就会和数字对不上 —— 那不是截图瑕疵，是假数据。
+   * 所以按 days 分开缓存，各写一份 .shots-work/<lang>/usage-<days>d.json 供事后核对。
+   */
+  const usageCache = new Map()
+  const builtUsage = days => {
+    if (!usageCache.has(days)) {
+      const usage = makeUsageSnapshot({ days, now: Date.now() })
+      assertUsageFixture(usage, { lang: langKey, days })
+      writeFileSync(join(workDir, `usage-${days}d.json`), JSON.stringify(usage, null, 1))
+      usageCache.set(days, JSON.stringify(usage))
+    }
+    return usageCache.get(days)
+  }
   const hits = page.intercept({
     patterns: [
       { urlPattern: '*token-plan-quota/summary*' },
       { urlPattern: '*token-plan-quota/refresh*' },
+      { urlPattern: '*token-plan-quota/usage*' },
       { urlPattern: `*${CONNECTION_BUNDLE}*` },
     ],
     respond: async request => {
+      if (request.url.includes('/token-plan-quota/usage')) {
+        // 参数解析不出来就按宿主默认（7 天）；天数上限由 fixture 自己夹紧，不在这里猜。
+        const asked = Number(new URL(request.url).searchParams.get('days'))
+        const days = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : 7
+        return { body: builtUsage(days), via: 'fixture' }
+      }
       if (!request.url.includes(CONNECTION_BUNDLE)) {
         return { body: JSON.stringify(built(live.variant)), via: 'fixture' }
       }
@@ -233,60 +264,81 @@ async function main() {
     return String(at.className || at.tagName)
   })()`)
   /**
-   * 清掉宿主的「内测声明」开场模态 —— 它每次新 profile 都会弹，不弄掉就会漏进截图背景，
-   * 而且**在 fixture 模式下它关不掉**：假宿主没有 settings 写入通道，
-   * `WelcomeNoticeStore.acknowledge()` 永远判失败（`welcome-store.ts:90-95`），
-   * 于是点「继续」不但不会关，还会亮出「暂时无法保存确认状态，请重试」——
-   * 那行错误正好压在徽标上。所以两步走：先按正常方式点（真服务器上一击就关），
-   * 点不动再把这层宿主遮罩连同压暗背景隐藏掉（它是宿主的开场物，与本插件无关）。
+   * 清掉宿主挡在徽标上的开场层。除了「内测声明」，**没配过凭据的实例**还会弹
+   * 「添加一个 API Key 开始使用」（一个全屏 fixed 的 _root_xxx）—— 两种都得摘掉，否则背景里
+   * 永远压着一块模态，而脚本还可能一路绿。
    *
-   * 两个必须守住的细节：
-   *  1. 定位**按模态标题**，不能拿宽的 `[class*="dialog"]` / `[role="dialog"]` 就点：
-   *     额度面板自己就是 `role="dialog"`（`client.js:1070`），会被误伤。
-   *  2. 结束条件是"没有浮层挡着徽标"，不是"我点到过按钮" —— 后者会静默骗过整条流水线。
+   * 而且它们在 fixture 模式下**点「继续 / 保存并继续」是关不掉的**：假宿主没有 settings
+   * 写入通道，\`WelcomeNoticeStore.acknowledge()\` 永远判失败（\`welcome-store.ts:90-95\`），
+   * 点「继续」只会亮出「暂时无法保存确认状态」那行错误——正好压在徽标上。所以分两步：
+   *  1. 先按正常路径点（「稍后配置 / Configure later / 继续」）—— 真服务器上一击就关；
+   *  2. 点不动就把"盖住徽标、又不包含徽标"的最外层 fixed 容器隐藏（宿主的开场物，与本插件无关）；
+   *  3. 结束条件是"没有浮层挡着徽标"，不是"我点到过按钮"——后者会静默骗过整条流水线。
+   *
+   * 两条不能省的细节：
+   *  - 只在**不包含徽标**的 dialog 里点按钮：额度面板自己就是 \`role="dialog"\`（\`client.js:1070\`），
+   *    宿主也可能把包含徽标的容器标成 dialog，误点会点掉插件自己的面板。
+   *  - 按钮先精确匹配、再退回包含匹配：\`保存并继续\` 里也含「继续」，先点它会拿空 API key 去保存。
    */
   const dismissOnboarding = async () => {
-    const labels = [UI[langKey].dismissModal, '继续', 'Continue']
-    // 模态的标题**不能只按 --lang 取**：那句文案是宿主自己的 `pickLocale()` 决定的，
-    // 和浏览器语言不是一回事（实测英文套里宿主仍弹中文标题，于是"按英文标题找"根本找不到，
-    // 遮罩没摘掉，脚本在第一步就抛）。两种标题都当候选，跟按钮文案同一套处理。
-    const titles = [...new Set([UI[langKey].onboardingTitle, '内测声明', 'Internal Testing Notice'])]
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    const labels = [...new Set([UI[langKey].dismissModal, '稍后配置', 'Configure later', '稍后', 'Later', '继续', 'Continue'])]
+    // 标题不能只按 --lang 取：那句文案由宿主 pickLocale() 决定，和浏览器语言不是一回事
+    // （实测英文套里宿主仍弹中文标题，按英文标题找会找不到）。
+    const titles = [...new Set([UI[langKey].onboardingTitle, '内测声明', 'Internal Testing Notice', '添加一个 API Key 开始使用', 'Add an API key to get started'])]
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       if (await coveredByOverlay() === null) return true
       await page.evaluate(`(() => {
         const norm = s => (s || '').replace(/\\s+/g, '')
-        const dlg = [...document.querySelectorAll('[class*="dialog" i]')].find(n => n.offsetParent !== null
-          && ${JSON.stringify(titles)}.some(t => norm(n.innerText).startsWith(norm(t))))
-        if (!dlg) return false
-        const btn = [...dlg.querySelectorAll('button')].find(n => n.offsetParent !== null
-          && ${JSON.stringify(labels)}.some(l => norm(n.innerText).includes(norm(l))))
-        if (!btn) return false
-        btn.click(); return true
+        const chip = document.querySelector('.tpq-chip')
+        const dialogs = [...document.querySelectorAll('[class*="dialog" i],[role="dialog"]')]
+          .filter(n => n.offsetParent !== null && !(chip && n.contains(chip)))
+        if (dialogs.length === 0) return false
+        const titles = ${JSON.stringify(titles)}.map(norm)
+        const labels = ${JSON.stringify(labels)}.map(norm)
+        // 标题对得上就优先用那张；宿主换了文案时退回任意不包含徽标的 dialog。
+        const score = d => titles.some(t => norm(d.innerText).startsWith(t)) ? 0 : 1
+        const ranked = dialogs.slice().sort((a, b) => score(a) - score(b))
+        for (const dlg of ranked) {
+          const buttons = [...dlg.querySelectorAll('button')].filter(n => n.offsetParent !== null)
+          for (const btn of buttons) {
+            const text = norm(btn.innerText)
+            if (labels.some(l => text === l)) { btn.click(); return true }
+          }
+          for (const btn of buttons) {
+            if (/保存|Save/.test(btn.innerText || '')) continue
+            const text = norm(btn.innerText)
+            if (labels.some(l => text.includes(l))) { btn.click(); return true }
+          }
+        }
+        return false
       })()`)
       await sleep(400)
       if (await coveredByOverlay() === null) return true
       await page.evaluate(`(() => {
-        const norm = s => (s || '').replace(/\\s+/g, '')
-        const titles = ${JSON.stringify(titles)}.map(norm)
-        for (const n of document.querySelectorAll('[class*="dialog" i]')) {
-          if (n.offsetParent === null || !titles.some(t => norm(n.innerText).startsWith(t))) continue
-          // 光藏 dialog 本身不够：它外面还有一层同模块的包裹（_root_xxx）照样压着徽标。
-          // 但只能向上吞"除了这个模态没别的内容"的层 —— 一旦某层还包着别的东西就停，
-          // 否则会把整个应用根节点藏掉：页面变一张白纸，检查却照样"通过"。
-          let root = n
-          for (let up = root.parentElement; up && up !== document.body && norm(up.innerText) === norm(root.innerText); up = up.parentElement) {
-            root = up
-          }
-          root.style.display = 'none'
+        const chip = document.querySelector('.tpq-chip')
+        if (!chip) return false
+        const r = chip.getBoundingClientRect()
+        const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        if (!at) return false
+        // 从盖住徽标的节点往上找**最外层 fixed**：dialog 只是内容盒，真正铺满视口、
+        // 吃掉点击的是固定定位的 _root_xxx；只藏 dialog 藏不住。
+        // 一旦某层包含徽标就停手——继续往上会藏掉整个应用根节点（白屏但检查照样通过）。
+        let root = at
+        for (let up = at.parentElement; up && up !== document.body; up = up.parentElement) {
+          if (up.contains(chip)) return false
+          if (getComputedStyle(up).position === 'fixed') root = up
         }
+        if (root.contains(chip)) return false
+        root.style.display = 'none'
         for (const n of document.querySelectorAll('[class*="backdrop" i],[class*="mask" i]')) {
           if (n.offsetParent !== null) n.style.display = 'none'
         }
+        return true
       })()`)
       await sleep(300)
     }
     const cover = await coveredByOverlay()
-    if (cover !== null) throw new Error(`内测声明模态清不掉，徽标还被「${cover}」挡着`)
+    if (cover !== null) throw new Error(`宿主开场/配置模态清不掉，徽标还被「${cover}」挡着`)
     return true
   }
   /**
@@ -528,6 +580,73 @@ async function main() {
       if (args.shots.includes(step.shot)) await shootFramed(step.file)
     }
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
+  }
+
+  /* ------------------------------------- ⑧⑨ 用量统计整页座位（2D / 3D 各一张） */
+  if (args.shots.some(n => [8, 9].includes(n))) {
+    console.log('⑧⑨ 用量统计整页座位（2D / 3D）')
+    live.variant = 'panel'
+    // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
+    // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
+    await page.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false })
+    await freshPage()
+    await openPanel('panel')
+    /*
+     * 入口走产品路径本身：徽标小窗底部的「用量统计」按钮。不直接调 layout.selectPanel ——
+     * 那样只能证明"座位注册得上"，证明不了"入口点得开"；入口条件写坏时，图照样好看。
+     */
+    const entered = await page.evaluate("(() => { const b = document.querySelector('.tpq-usage-entry'); if (!b) return false; b.click(); return true })()")
+    if (entered !== true) throw new Error('徽标小窗里没有「用量统计」入口（.tpq-usage-entry）：宿主缺 layout 能力，或 usageStats 被关掉了')
+    await page.waitFor("document.querySelector('.tpq-usage') !== null", { timeoutMs: 10_000, label: '用量统计整页' })
+    // 首帧先是骨架、随后换数据。等「柱子 + 总分数字」都到位再拍，否则拍到的是灰条。
+    await page.waitFor("(() => { const root = document.querySelector('.tpq-usage'); if (!root) return false; const bars = root.querySelectorAll('.tpq-usage-rect, .tpq-usage-face-front'); const big = root.querySelector('.tpq-usage-big'); return bars.length > 0 && big !== null && (big.textContent || '').trim().length > 0 })()", { timeoutMs: 20_000, label: '用量数据渲染（柱子 + 总分）' })
+    await sleep(600)
+    const geometry = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (!root) return null; const r = root.getBoundingClientRect(); return { width: r.width, height: r.height, vw: innerWidth, vh: innerHeight } })()")
+    if (geometry === null) throw new Error('量不到用量统计屏的矩形')
+    // 座位必须真的替换会话主区（侧栏保留）。只占一小块 = 它退化成了浮层，
+    // 与 README 说的「独立整页座位」不符 —— 那种图不能进 docs/。
+    if (geometry.width < geometry.vw * 0.6) {
+      throw new Error('用量统计没有占满主区（宽 ' + Math.round(geometry.width) + 'px / 视口 ' + geometry.vw + 'px），不拍')
+    }
+    const bigText = async () => await page.evaluate("(() => { const n = document.querySelector('.tpq-usage-big'); return n === null ? null : (n.textContent || '').trim() })()")
+    const barCount = async () => await page.evaluate("document.querySelectorAll('.tpq-usage rect.tpq-usage-rect, .tpq-usage polygon.tpq-usage-face-front').length")
+    const headText = async () => await page.evaluate("(() => { const t = document.querySelector('.tpq-usage-title'); const r = document.querySelector('.tpq-usage-range'); return { title: t === null ? null : (t.textContent || '').trim(), range: r === null ? null : (r.textContent || '').trim() } })()")
+    /**
+     * 两种画法的按钮文案就是 "2D" / "3D"（两种语言都相同），没有 data-mode 之类的钩子，
+     * 只能按可见文本选 —— 按顺序取 [1] 会在将来加视图时默默点错。
+     */
+    const switchMode = async (mode, selector) => {
+      const ok = await page.evaluate("(() => { const b = [...document.querySelectorAll('.tpq-usage-mode')].find(n => (n.textContent || '').trim() === '" + mode + "'); if (!b) return false; b.click(); return true })()")
+      if (ok !== true) throw new Error('找不到 ' + mode + ' 视图按钮（.tpq-usage-mode）')
+      await page.waitFor('document.querySelector(' + JSON.stringify(selector) + ') !== null', { timeoutMs: 8_000, label: mode + ' 柱子' })
+      await sleep(400)
+    }
+
+    const head = await headText()
+    if (head.title === null || head.range === null) throw new Error('用量统计屏缺标题或区间副标题（拍出来会是无标题的图）')
+    console.log('  标题：' + head.title + '；区间：' + head.range)
+
+    await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+    const text2d = await bigText()
+    const count2d = await barCount()
+    if (text2d === null || count2d === 0) throw new Error('2D 视图没有数据（总分或柱子为空），不拍')
+    if (args.shots.includes(8)) save('usage-2d.png', await page.shot({}))
+
+    await switchMode('3D', '.tpq-usage polygon.tpq-usage-face-front')
+    const text3d = await bigText()
+    const count3d = await barCount()
+    if (text3d === null || count3d === 0) throw new Error('3D 视图没有数据（总分或柱子为空），不拍')
+    // 同一份数据的两个投影：总分与桶数不一致，说明 3D 那次是另一次（可能失败的）加载，不是换了个画法。
+    if (text2d !== text3d || count2d !== count3d) {
+      throw new Error('2D/3D 数据不一致（总分 ' + text2d + ' vs ' + text3d + '，柱数 ' + count2d + ' vs ' + count3d + '），不拍 3D')
+    }
+    if (args.shots.includes(9)) save('usage-3d.png', await page.shot({}))
+    console.log('  用量统计：' + count2d + ' 个桶，总分 ' + text2d)
+
+    // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。
+    const closed = await page.evaluate("(() => { const b = document.querySelector('.tpq-usage-close'); if (!b) return false; b.click(); return true })()")
+    if (closed !== true) throw new Error('找不到用量统计屏的关闭按钮（.tpq-usage-close）')
+    await page.waitFor("document.querySelector('.tpq-usage') === null", { timeoutMs: 8_000, label: '关闭用量统计页' })
   }
 
   console.log('拦截命中次数：' + hits.hits())

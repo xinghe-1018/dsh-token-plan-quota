@@ -3,6 +3,8 @@
 本文件记的是**逆向/核对结论**，不是使用手册（用法看 README）。规则表与预设的字段名都以此为准；
 每次改动都请更新对应行的"验证到什么程度"与日期。
 
+末尾另有一节「会话事件 → 用量」：那一条不是上游接口，而是把宿主自己的会话事件折成本实例实测 token 的契约。
+
 - **A** ＝ 同一把 API Key 就能查额度（零配置友好）
 - **B** ＝ 需要额外凭据形态（Admin/Management key、Cookie、OAuth 本地登录态）
 - **C** ＝ 官方没有额度接口（只能走本实例实测窗口）
@@ -36,6 +38,32 @@
 | **配置 ≠ 额度** | 千问 `quota-config` 给每个档位都躺着 `five_hour=3000`，但账号的 `usage` 只回当前账期那一个比例（2026-09-06 是 `per1Week*`，2026-09-23 起是 `per1Month*`） | **一条计量只在该窗口真回读数时才存在**；孤立配置值只记 `extra.fiveHourConfiguredNoReading` |
 | 别拿宿主 DOM 属性做交互判定 | `InputBar.tsx` 源码里的 `data-composer-card` 在**线上产物里不存在** | 交互语义自己定（明细=常驻小窗，不做点外面关闭），不依赖宿主实现细节 |
 
+## 会话事件 → 用量（本实例实测，不是上游接口）
+
+这一节与上面几家不是一回事：那些是**供应商的额度**，这里是把宿主自己的会话事件折成**按天的 token 用量**。
+它不发任何网络请求，只读宿主 `sessionPersistence` 提供的快照与事件流；数字的口径永远是「经过本实例」的实测，
+不折算 Credits、不估余量、不派生百分比。
+
+| 环节 | 事实 | 本插件的处理 |
+|---|---|---|
+| 快照形状因宿主版本而变 | 0.1.1-rc.2 ~ 0.1.2-rc.1 上 `listSnapshots()` 与 `list()` **同时在位**：前者给 `{header, revision}`，后者只给裸 header；0.1.3-alpha.2 起反过来（`listSnapshots` 移除，`list` 升级为 `{header, revision, sizeBytes}`） | 按**语义正确者优先**探测：先 `listSnapshots()`、再 `list()`，与版本号无关（这条与 `@gehennawu/dsh-service` 的 seam 做法一致） |
+| revision 类型不固定 | 有的宿主给字符串，有的给对象（如 `dev:ino:size:mtimeNs:ctimeNs` 之外的复合键） | 归一成字符串：`typeof revision === "string" ? revision : JSON.stringify(revision)`；只存归一化后的键 |
+| fork 会话有继承前缀 | 前缀事件的 `seq < inheritedEventCount`；该值在 alpha.4 起挪到读片结果里，旧版放在 `read.meta.seedLength` / `header.seedLength` | 三级兜底取 cut（读片 → `meta.seedLength` → `header.seedLength` → 0），**seq < cut 一律跳过**——不跳会把继承来的历史再算一遍，数字直接翻倍 |
+| 读片入口不统一 | 新宿主 `open(id, "read")` → `handle.read(fromSeq)`；旧宿主只有 `readFrom(id, fromSeq)` | 两种都走，且**都要传起点**；读不到就从 0 读，再用 cut 跳前缀 |
+| 计量点只有一处 | `assistant/message` 且 `data.usage` 存在才算一次调用；四个字段 `inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens`，缺省按 0 | 一次调用计 `calls += 1`（`steps` 与之同值，不另设字段）；没有 usage 的步骤不计 |
+| 模型归属靠上一条请求头 | 最近一次 `request/header` 的 `data.header.config.{provider, model}`；有些事件流没有它 | 记 `unknown/unknown` 并累进 `stats.unknownModel` 诊断，**不丢计数** |
+| 增量靠 revision + lastSeq | revision 未变说明没有新事件 | revision 未变的会话不 open、不读；变了从 `lastSeq + 1` 读新片；单份读坏只记失败，下一轮重试，不中断整轮 |
+| 日界是本地日 | `toISOString()` 是 UTC，跨时区会把一天切错 | 桶键用 `getFullYear/getMonth/getDate` 拼 `YYYY-MM-DD`；保留期按本地日修剪 |
+| 长区间的柱状图读不出来 | 365 根日柱既画不下也看不出趋势 | 超过 62 天改用**本地周一为界**的周桶；首末桶可以不足 7 天 |
+
+落盘是 `$DSH_HOME/token-plan-quota.usage-index.json`（`usageIndexPath` 可改），JSON **白名单**只含：
+`version` / `updatedAt` / `stats{unknownModel, skippedOld}` / `sessions{id, revision, lastSeq, cut}` /
+`days{YYYY-MM-DD → 四类 token + calls + models}`。**没有消息文本、没有请求头、没有 Cookie、没有文件路径**；
+坏文件（手改坏、截断）在读取时备份成 `<path>.bad-<毫秒>` 再重建，不让一份脏缓存顶掉整个统计。
+
+口径一句话：`tokens = input + output + cacheRead + cacheWrite`（纯求和），`steps = calls`；
+区间合计 == 各桶之和 == 各模型之和（三条恒等式由测试逐字段锁住）。
+缓存写入这一类当前宿主多数不上报，所以 `cacheWrite` 常年接近 0——是上游没报，不是插件漏计。
 ## 参考实现（都是 MIT，引用契约请注明出处）
 
 - [`steipete/CodexBar`](https://github.com/steipete/CodexBar) —— 每家一个 `docs/<provider>.md`，

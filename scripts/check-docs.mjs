@@ -389,12 +389,16 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/state-deepseek-balance.png',
     'docs/images/state-token-plan-credits.png',
     'docs/images/state-no-history.png',
+    'docs/images/usage-2d.png',
+    'docs/images/usage-3d.png',
     'docs/images/en/badge-follows-model.gif',
     'docs/images/en/panel-official-plus-meters.png',
     'docs/images/en/floating-panel.png',
     'docs/images/en/cookie-fallback-measured.png',
     'docs/images/en/state-deepseek-balance.png',
     'docs/images/en/state-token-plan-credits.png',
+    'docs/images/en/usage-2d.png',
+    'docs/images/en/usage-3d.png',
   ]
   // 结构图与截图套不同源（由 diagrams/ 的规格产出、中英共用一张），所以它只进**存在性**清单，
   // 不进截图契约：截图集合按 `extractImageTargets`（只认行内图片）核对，而结构图的引用
@@ -413,7 +417,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
   if (zh.includes('截图位')) problems.push('README.md 仍留着「截图位」占位块')
   if (en.includes('Screenshots (4 to add before release)')) problems.push('README.en.md 仍留着截图占位块')
   // 两份 README 都得真的引到图，缺一张就是图文不符。**按集合核对，不是"引够 N 张"**：
-  // 旧实现只数条数，同一张图引 7 次即过，而"13 张图存在"由上面那份硬编码清单保证——两者从不交汇。
+  // 旧实现只数条数，同一张图引 7 次即过，而"17 张图存在"由上面那份硬编码清单保证——两者从不交汇。
   // 英文套少 state-no-history 是**有意的**：「本实例还没调用过」那句 emptyReason 是写死的中文
   // （lib/index.js），所以它只出现在中文套。
   const requiredImageRefs = {

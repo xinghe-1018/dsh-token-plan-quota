@@ -10,6 +10,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **用量统计屏（006）**：徽标小窗底部新增「用量统计」，打开一张**独立整页**（替换会话主区、侧栏保留，`Esc` / `✕` 回会话），
+  回答「最近用了多少 token」——区间总分、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行，
+  **只有绝对 tokens，没有百分比、没有 Credits**。数据来自宿主自己的会话事件（`sessionPersistence`）离线折叠成按本地日的索引：
+  首轮扫历史（本机实测 215 会话 / 211 MB、解码加折叠 20 秒量级），之后每 5 分钟增量同步（`revision` 未变不读片）。
+  新增 `lib/usage-stats.js`（纯函数：`dayKey` 本地日 / `foldUsageEvents` / `aggregateUsageRange` / 白名单 schema /
+  `syncUsageIndex`，含 fork 前缀 `cut` 三级兜底与 `revisionKey` 归一——这两条对着 `@gehennawu/dsh-service` 的 usage seam 逐行核过）。
+  天数预设「今日 / 7 / 30 / 90」+ 自定义 1..365（越界夹回并回填），**超过 62 天改按本地周一为界的周桶**（365 根日柱读不出来）。
+  2D / 3D 共用**同一个线性比例函数**，3D 只是把同一根柱画成 SVG 等轴投影三面——固定角度、无透视、柱高严格线性，换画法不会夸大。
+  新增 `GET /token-plan-quota/usage?range=today|7d|30d|90d`（或 `?days=N`，1..365 优先）与工具 `token_plan_quota` 的 `action=usage`。
+  配置新增 3 键：`usageStats`（默认 `true`）、`usageIndexPath`（默认 `$DSH_HOME/token-plan-quota.usage-index.json`）、
+  `usageBackfillDays`（默认 `365`，同时是天数选择上界）。落盘索引是**白名单 JSON**：只有计数与 `provider/model` 标识，
+  **没有消息文本、请求头、Cookie、文件路径**；坏文件备份成 `.bad-<毫秒>` 再重建。
+  统计不到的时候会明说，不把「统计不到」伪装成 0：没有 `sessionPersistence` → 退回「本进程启动以来（实测）」；
+  回填未完成 → 顶部细进度条 + 「正在回填历史（N/M 会话）」（只在确实有未索引会话时出现，`refreshing` 只出「正在同步」轻提示）；
+  关掉统计 → 屏内直接写已关闭并指出配置键。`reset` 只清月账本与窗口锚点，**不清这份日索引**（历史在会话日志里，删了下一轮也会折回来）。
+  新增 600 项宿主断言（+140）、407 项客户端断言（+167）、guards 198 项（+50），两版 README / `docs/upstream-contracts.md` 同步。
+
 - **`MissingSecToken` 带出 info.json 的键名骨架**：分流只解决"赖谁"，不解决"下一步查什么"——
   原因写成 `no-token` 时，光说"没拿到 token"分不清是字段改名、挪了一层，还是这个会话压根没发 token。
   新增 `jsonKeyShape`（与 `cookieNames` 同一条纪律：**名字不是秘密，值才是**；只下探一层、每层限量 12、

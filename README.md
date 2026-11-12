@@ -189,6 +189,28 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   （就是千问那条账本）。三者默认窗口 7 天，`windowDays` 可改；重置时刻由本实例第一次调用起算，
   点「清本周期账本」重新起算。
 
+## 用量统计（本实例实测）
+
+徽标小窗底部的「用量统计」按钮打开一张**独立整页**——替换会话主区，侧栏保留；`Esc` 或标题行的 `✕` 回会话：
+
+![用量统计屏：区间总分、按天柱状图与模型排行](docs/images/usage-2d.png)
+
+![同一屏切到 3D：等轴投影，与 2D 共用同一线性刻度](docs/images/usage-3d.png)
+
+- **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
+  这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有百分比，也没有 Credits。
+- 数据来自**宿主自己的会话事件**（`sessionPersistence`），离线折叠成按本地日的索引：首轮要扫一遍历史会话
+  （本机实测：215 个会话、211 MB，解码加折叠 20 秒量级），之后每 5 分钟增量同步，数字最多晚 5 分钟。
+  它和明细里的「本实例实测用量」不是一套：那一块是**窗口**（默认 7 天，从第一次调用起算），这一屏是**按日/按周的历史**。
+- 天数自选：今日 / 7 / 30 / 90 四个预设 + 自定义 1..365（超出范围自动夹回并回填输入框）。
+  **超过 62 天自动按周聚合**（以本地周一为界，首末桶可不足 7 天）——365 根日柱既画不下，也看不出趋势。
+- 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
+  固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
+- 统计不到的时候会明说：宿主没有 `sessionPersistence` → 退回「本进程启动以来」（重启归零）；历史还没回填完 →
+  顶部细进度条与「正在回填（N/M 会话）」；关掉统计 → 屏内直接写已关闭，不把「统计不到」伪装成 0。
+
+落盘索引在 `$DSH_HOME/token-plan-quota.usage-index.json`，只存计数与 `provider/model` 标识，
+**没有消息文本、请求头或文件路径**；文件坏了会备份成 `.bad-<毫秒>` 再重建，不让一份脏缓存顶掉整张图。
 ## 配置
 
 主配置 `~/.dsh/token-plan-quota.json`——宿主每次查询前重读，**改完不用重启**（也可写在插件行 `config`，
@@ -204,7 +226,7 @@ JSON 优先级更高）：
 }
 ```
 
-下表 19 行：18 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
+下表 22 行：21 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
 通过 `regionConfigKey` 读取的区选择器。**一个键一行，单位都写在键名里**（`Minutes`/`Seconds`/`Ms`）。
 
 | 键 | 默认 | 含义 |
@@ -225,7 +247,10 @@ JSON 优先级更高）：
 | `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 仅阿里云使用：AccessKeySecret 的凭据引用名 |
 | `securityTokenRef` | 无 | 仅阿里云使用：STS 临时凭据的引用名（用 AK/SK 长期凭据时留空） |
 | `configPath` | `$DSH_HOME/token-plan-quota.json` | 外部 JSON 配置位置（`~/` 落 OS 家目录，`$DSH_HOME/` 落 harness 家目录） |
-| `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | 本实例账本落盘位置 |
+| `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | 本实例账本落盘位置（当月累计与窗口锚点） |
+| `usageStats` | `true` | 用量统计（把会话事件折叠成按本地日的 token 历史）的开关。关掉 = 不同步、内存也不累计；**入口保留**，统计屏里直接写已关闭并提示这个键——不删已有索引，也不影响上面那些额度源 |
+| `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | 用量索引落盘位置。与 `usagePath` 的月账本是**两个文件**：一个是按天的历史（统计屏用），一个是当月累计（明细里的本实例实测用） |
+| `usageBackfillDays` | `365` | 索引保留天数，同时是统计屏可选天数的上界（1..365）。调小会裁掉更早的日桶；调大后从下一轮同步开始往回补 |
 | `minIntervalMs` | `1200` | 出站最小间隔（毫秒），全局节流 |
 | `timeoutMs` | `15000` | 单次上游请求超时（毫秒，下限 1000） |
 
@@ -382,9 +407,10 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 | `GET /token-plan-quota/summary` | 快照（官方源吃 TTL；`?fresh=1` 强制回源）；含 `detection` 诊断块 |
 | `POST /token-plan-quota/refresh` | 官方源回源 |
 | `POST /token-plan-quota/reset` | 清零本实例实测统计（含窗口锚点） |
+| `GET /token-plan-quota/usage?range=today|7d|30d|90d` | 按本地日（`days > 62` 时按周）聚合的 token 用量；自定义天数用 `?days=N`（1..365，优先于 `range`） |
 | `GET /token-plan-quota/probe?source=<id>` | 上游响应字段骨架（排查用） |
 
-只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset`）。
+只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`）。
 
 配合 429：`settings.yaml` 里给该 provider 配 `retryPolicy`（把 `QUOTA` 纳入 `retryableCodes`，
 `initialDelayMs == maxDelayMs` + `jitterRatio: 0` 可把退避压成固定间隔）。明细的「自动重试观测」显示真实
@@ -395,7 +421,9 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 - 实测窗口只含**经过本 DSH 实例**的调用：别的设备/工具消耗的额度不在内，官方折算率也不公开，
   所以它只报 token/次数，不报「剩余额度」。
 - 上游控制台做过「额度重置」后，本实例窗口不会自动感知，用 `token_plan_quota`（`reset`）重新起算。
-- 观测计数是本次进程启动以来的；持久事实仍在会话日志里。
+- **`reset` 只清月账本与窗口锚点，不清用量索引**：统计屏读的是会话日志折出来的历史，删它没有意义（日志还在，下一轮会折回来）。
+- 观测计数是本次进程启动以来的；按天历史在用量索引里（统计屏），两者都只覆盖**经过本实例**的调用。
+- 用量索引的首轮回填是后台跑的：刚装好时先看到的是部分历史，顶部会显示进度；最多等一个同步周期（5 分钟）就是全量。
 - 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`；
   老外壳拿不到 react-dom 时面板退回内联 CSS 锚定，拖拽悬浮禁用。
 - Moonshot / OpenRouter 的字段名**尚未用真实 Key 核对**（只有官方文档 + 端点存在性背书）。
@@ -420,16 +448,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 460 项，离线
-node test/client.mjs               # 240 项，假 React/DOM/fetch
-node test/guards.mjs               # 148 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 600 项，离线
+node test/client.mjs               # 407 项，假 React/DOM/fetch
+node test/guards.mjs               # 198 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 18 个键、配置表 19 行、8 个数据源、声明 8 个出站主机、测试 460/240 项 + guards 148 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 21 个键、配置表 22 行、8 个数据源、声明 8 个出站主机、测试 600/407 项 + guards 198 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

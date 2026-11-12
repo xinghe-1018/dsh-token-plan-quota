@@ -224,6 +224,36 @@ Two invariants:
   `token-plan-window` (which simply *is* the Qwen ledger). All three default to a 7-day window, changeable with
   `windowDays`; the window is anchored at this instance's first call, and "reset this cycle" re-anchors it.
 
+## Usage statistics (measured in this instance)
+
+The **Usage statistics** button at the bottom of the chip window opens a **full-page view** - it replaces the
+conversation main area and keeps the sidebar; `Esc` or the `✕` in the title row takes you back:
+
+![Usage statistics screen: range total, daily bars and per-model ranking](docs/images/en/usage-2d.png)
+
+![The same screen in 3D: isometric projection sharing the 2D scale](docs/images/en/usage-3d.png)
+
+- **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
+  call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
+  so there is no percentage and no Credits.
+- The data comes from the **host's own session events** (`sessionPersistence`), folded offline into a
+  per-local-day index: the first run walks the existing sessions (measured here: 215 sessions, 211 MB, ~20 s to
+  decode and fold), after which it syncs incrementally every 5 minutes, so the numbers are at most 5 minutes old.
+  This is not the same thing as the measured **window** in the detail panel (7 days from the first call): that is
+  a window, this is day-by-day history.
+- Range selection: four presets (today / 7 / 30 / 90 days) plus a custom 1..365 input (out-of-range values are
+  clamped and written back). **Above 62 days the buckets become weekly** (local Monday boundaries, first and last
+  buckets may be short) - 365 daily bars neither fit nor read.
+- 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
+  (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
+  look taller than its number.
+- When the data is not available it says so: no `sessionPersistence` → falls back to "since this process started"
+  (resets on restart); backfill still running → a thin progress bar and "backfilling (N/M sessions)"; statistics
+  turned off → the screen states that, instead of pretending "cannot measure" means zero.
+
+The index is persisted at `$DSH_HOME/token-plan-quota.usage-index.json` and holds counters plus `provider/model`
+identifiers only - **no message text, no request headers, no file paths**. A corrupt file is backed up as
+`.bad-<milliseconds>` and rebuilt rather than losing the whole chart.
 ## Configuration
 
 Main config lives in `~/.dsh/token-plan-quota.json` - the host re-reads it before every query, so **changes
@@ -239,7 +269,7 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
-The table below has 19 rows: 18 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+The table below has 22 rows: 21 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
 not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
 part of every name** (`Minutes` / `Seconds` / `Ms`).
 
@@ -261,7 +291,10 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `accessKeySecretRef` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | Aliyun only: credential reference name for the AccessKeySecret |
 | `securityTokenRef` | none | Aliyun only: credential reference name for an STS token (leave empty with long-lived AK/SK) |
 | `configPath` | `$DSH_HOME/token-plan-quota.json` | Where the external JSON config lives (`~/` = OS home, `$DSH_HOME/` = harness home) |
-| `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | Where the local ledger is persisted |
+| `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | Where the local ledger is persisted (current month and window anchors) |
+| `usageStats` | `true` | Enables usage statistics (session events folded into a per-local-day token history). Off = no sync and no in-memory counting; the **entry point stays**, and the screen states that it is disabled and which key turns it on - existing index data is kept, and the quota sources above are unaffected |
+| `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | Where the usage index lives. This is a **different file** from the `usagePath` ledger: one is day-by-day history (this screen), the other is the current month plus window anchors (the measured block in the detail panel) |
+| `usageBackfillDays` | `365` | How many days the index keeps, and the upper bound of the screen's range picker (1..365). Lowering it trims older day buckets; raising it backfills on the next sync |
 | `minIntervalMs` | `1200` | Minimum interval between outbound calls (ms), throttling globally |
 | `timeoutMs` | `15000` | Per-request upstream timeout (ms, floor 1000) |
 
@@ -441,10 +474,11 @@ it does not list a speed per provider; that data stays in the snapshot and via `
 | `GET /token-plan-quota/summary` | Snapshot (official sources honour the TTL; `?fresh=1` forces a refetch); includes the `detection` diagnostics block |
 | `POST /token-plan-quota/refresh` | Refetch official sources |
 | `POST /token-plan-quota/reset` | Clear this instance's measured totals (including window anchors) |
+| `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`) |
 | `GET /token-plan-quota/probe?source=<id>` | Upstream field skeleton (for troubleshooting) |
 
 Same-origin requests only, and **keys are never returned**. On the model side there is the `token_plan_quota`
-tool (`status` / `refresh` / `reset`).
+tool (`status` / `refresh` / `reset` / `usage`, where `usage` accepts `days: 1..365`).
 
 Working with 429s: configure `retryPolicy` for that provider in `settings.yaml` (add `QUOTA` to
 `retryableCodes`, and set `initialDelayMs == maxDelayMs` with `jitterRatio: 0` to flatten the backoff into a
@@ -458,7 +492,9 @@ seconds waited and the effective policy - read from the persisted `llm/retry` ev
   report tokens and requests, never "remaining quota".
 - If someone resets the quota in the vendor's console, this instance's window cannot notice it; use
   `token_plan_quota` (`reset`) to restart the count.
-- Observation counters cover the current process lifetime; the durable record stays in the session logs.
+- **`reset` clears the monthly ledger and window anchors but not the usage index**: the screen reads history folded from session logs, and deleting it would be pointless (the logs are still there, the next sync folds them back).
+- Observation counters cover the current process lifetime; the day-by-day history lives in the usage index (the screen). Both cover **this instance only**.
+- The usage index backfills in the background: right after install you see partial history with a progress line at the top; one sync cycle (5 minutes) is enough for the full picture.
 - Seat fallback: if the shell does not declare `conversation.input.left`, the chip docks to
   `conversation.input.dock`; on shells that expose no react-dom seed the panel falls back to inline CSS
   anchoring and dragging is disabled.
@@ -487,17 +523,17 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 460 assertions, offline
-node test/client.mjs                # 240 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 148 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 600 assertions, offline
+node test/client.mjs                # 407 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 198 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "18 DEFAULTS keys, a 19-row
-config table, 8 sources, 8 declared outbound hosts, 460/240 tests plus 148 guards assertions" - and checks them against
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "21 DEFAULTS keys, a 22-row
+config table, 8 sources, 8 declared outbound hosts, 600/407 tests plus 198 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

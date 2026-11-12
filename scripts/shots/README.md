@@ -1,6 +1,6 @@
 # README 截图是怎么来的
 
-七张图（中文一套、英文一套）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
+九张图（中文一套、英文一套，英文套八张——编号 7 只有中文）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
 
 ## 为什么不是随手截一张
 
@@ -16,6 +16,9 @@
 面板与徽标的渲染输入只有一个来源：同源 GET `/token-plan-quota/summary`。所以 `cdp.mjs` 用 Chrome DevTools
 Protocol 的 `Fetch` 域，把这个响应（外加面板"更新于"按钮 POST 的 `/token-plan-quota/refresh`——它会覆盖快照，
 漏拦就会拍到真数据）换成 `fixture.mjs` 造的对象。
+用量统计整页屏是第三个接口：`GET /token-plan-quota/usage?days=N`（绝对 token 数）。它**按 days 取参**，
+所以 fixture 也按 days 缓存、各写一份快照，并用 `assertUsageFixture()` 校验——7 天的快照去回答 90 天的请求，
+拍出来就是"副标题说 90 天、图上只有 7 根柱"的假图。
 
 好处：不必模拟任何供应商的上游契约（尤其是千问控制台网关那套 Cookie/secToken 语义——最容易写错，
 而且一旦写进文档就会和真实上游长期不一致），并且真实数字**根本进不到浏览器**，跑图用的实例不需要任何凭据。
@@ -68,7 +71,9 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 ```
 
 `--lang` 决定浏览器语言，而插件界面文案跟着 `document.documentElement.lang` 走，所以中英各跑一次就是两套图。
-`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7`，`1` 是要 ffmpeg 的 GIF）。产物：
+新版 `dsh web` 启动时会打印一条带 `?token=…` 的地址（首次访问 303 换 cookie）；**把整条地址原样传给 `--url`**
+即可，脚本会自己接 `fixture` 参数（直接传裸端口会被 401 挡在门外）。
+`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9`，`1` 是要 ffmpeg 的 GIF）。产物：
 
 | # | 文件 | 证明什么 |
 | --- | --- | --- |
@@ -79,13 +84,21 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 5 | `state-deepseek-balance.png` | 按钱计费的官方卡：没有分母 ⇒ 不画条、不报百分比 |
 | 6 | `state-token-plan-credits.png` | 官方给了分母的卡：画条、报百分比、报周期重置日 |
 | 7 | `state-no-history.png` | 既没官方额度、本实例又还没调用过：徽标「无官方额度数据」，面板只说清为什么没有 |
+| 8 | `usage-2d.png` | 用量统计整页座位（2D）：区间总分、四类拆分、调用次数、逐日柱状图 |
+| 9 | `usage-3d.png` | 同一份数据的 3D 等轴柱图。视图只是前端投影，数字必须与 2D 完全一致 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
 **英文套没有第 7 张**：那句解释文案宿主只有中文（`lib/index.js` 的 `buildWindowCard` 里 `emptyReason` 那句），
 编一句英文就等于拍假图。
 
-中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload）与
+⑧⑨ 是**整页座位**：从徽标小窗底部的「用量统计」按钮打开，替换会话主区、侧栏保留。所以这两张是
+整视口截图（1280×860、DPR 1），不像 5–7 那样裁切——侧栏和外层壳一起进图，才看得出它确实"是一整页"。
+脚本先断言座位宽度 ≥ 视口 60%，再断言 2D/3D 的总分文本与桶数完全一致：同一份 fixture 的两个投影对不上，
+说明那是另一次（可能失败的）加载，不是换了个画法。
+
+中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload；用量统计是
+`.shots-work/<lang>/usage-<days>d.json`）与
 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
 `package.json` 的 `files` 显式列了 `docs`，而 allowlist 会压过 `.gitignore`，帧文件会直接被打进 npm 包。
 
@@ -124,6 +137,9 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 另外 ④ 那张图里的"官方卡"必须**不带任何数字**：一旦带了数字，前端会把同供应商的实测兜底卡收掉
 （一家只展示一张额度卡），徽标就变空白了。
 
+⑧⑨ 的额外两条：**两条恒等式必须成立**（区间 totals == 各桶 totals 之和 == 顶层模型 totals 之和），
+否则总分卡与柱状图会各说各话；**不许出现 `%` 与 "Credits"**——用量统计只报绝对 token，不折算、不派生百分比。
+
 ## 两个静默失败的坑（都变成断言了）
 
 - **「内测声明」模态在 fixture 模式下关不掉**：假宿主没有 settings 写入通道，
@@ -139,6 +155,14 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 ```bash
 node -e "import('./scripts/shots/fixture.mjs').then(m=>{const s=m.makeSnapshot({variant:'triptych',lang:'zh'});console.log(m.assertFixture(s,{lang:'zh'}).length+' 条断言通过')})"
 ```
+
+```bash
+node -e "import('./scripts/shots/fixture.mjs').then(m=>{const u=m.makeUsageSnapshot({days:7});console.log(m.assertUsageFixture(u,{lang:'zh',days:7}).length+' 条断言通过')})"
+```
+
+`assertUsageFixture` 会拦：区间/桶/模型三层 totals 的恒等式、日桶连续与周桶从周一起步、
+顶层模型按 tokens 降序且 id = provider + "/" + model、桶 models 只有 5 个原始计数、
+被渲染的字符串里出现 `%` 或 "Credits"、以及同样的真实痕迹与英文套中文泄漏。
 
 `assertFixture` 会拦：真实痕迹（用户名/盘符/真实余额数字）、不在 `publicCard()` 白名单里的键、
 实测卡带百分比、百分比与 `remaining/total` 不自洽、零记录实测卡带了本该缺席的字段、

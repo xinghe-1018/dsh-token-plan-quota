@@ -15,7 +15,8 @@
  * 两类用例都必须在场：**应报**（不报 = 漏检 = 假安全感）与**应放行**（报了 = 假红 = 训练人忽略红灯）。
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
@@ -25,6 +26,7 @@ import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs
 import { repoPathFromUrl } from '../scripts/repo-path.mjs'
 import { shouldSkipDir, skipDirNames } from '../scripts/walk-skip.mjs'
 import { __internals } from '../lib/index.js'
+import { assertUsageIndexShape, emptyUsageIndex, loadUsageIndex, saveUsageIndex } from '../lib/usage-stats.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -487,6 +489,176 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     !/git push origin main && git push origin v/.test(releaseDoc) && !/git push origin main --follow-tags/.test(releaseDoc))
   ok('RELEASE.md 的推送写法与脚本一致（带 --atomic 且用 HEAD:main）', /git push --atomic origin HEAD:main v/.test(releaseDoc))
   ok('RELEASE.md 不再叫人在本机 npm publish（身份在 CI 那台机器上）', !/^npm login && npm publish/m.test(releaseDoc))
+}
+
+/* 006 用量统计：索引 schema 白名单 + 「不派生百分比 / 不折算 Credits」的静态矩阵。
+ * 为什么钉在门禁而不是只在 host 测试：schema 是**落盘契约**，多一个键就可能把会话内容写进索引文件；
+ * 百分比与 Credits 是宪法原则 I 的展示口径，改坏时功能测试往往全绿（页面里只是多印了个数字）。 */
+{
+  const usageSrc = readFileSync(join(ROOT, 'lib', 'usage-stats.js'), 'utf8')
+  const indexSrc = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+
+  // 被扫的段落必须真的存在：否则下面所有断言都在扫一段空字符串（门禁自身的假绿形态）。
+  const usageStart = indexSrc.indexOf('/* ==================================================== 用量索引（006）')
+  const usageEnd = indexSrc.indexOf('/* ==================================================== 滑动 TPM + 重试观测')
+  ok('用量统计段在 lib/index.js 里存在且可定位', usageStart > 0 && usageEnd > usageStart)
+  const usageRegion = indexSrc.slice(usageStart, usageEnd)
+  ok('用量统计段被完整扫到（字符数 > 4000）', usageRegion.length > 4000)
+
+  // 1) schema 白名单：应放行的形态（空索引 / 完整索引）
+  accepts('用量索引 schema：空索引放行', () => assertUsageIndexShape(emptyUsageIndex()))
+  const filled = emptyUsageIndex()
+  filled.updatedAt = FIXED_NOW
+  filled.sessions['sess-1'] = { revision: 'dev:1:2:3:4', lastSeq: 41, cut: 0 }
+  filled.days['2026-11-12'] = {
+    input: 120, output: 30, cacheRead: 10, cacheWrite: 0, calls: 3,
+    models: { 'qwen-token-plan-cn/qwen3.8-flash': { input: 120, output: 30, cacheRead: 10, cacheWrite: 0, calls: 3 } },
+  }
+  filled.stats.unknownModel = 1
+  filled.stats.skippedOld = 2
+  accepts('用量索引 schema：完整索引放行', () => assertUsageIndexShape(filled))
+
+  // 2) 应报：每个可能夹带内容的层都钉一条（顶层 / 会话 / 日桶 / 模型 / 统计）
+  const withTop = structuredClone(filled)
+  withTop.notes = 'SECRET-TEXT'
+  rejects('用量索引 schema：顶层多余键报错', () => assertUsageIndexShape(withTop), /白名单外的键 notes/)
+  const withSession = structuredClone(filled)
+  withSession.sessions['sess-1'].headers = { cookie: 'SECRET-TEXT' }
+  rejects('用量索引 schema：会话里夹带请求头报错', () => assertUsageIndexShape(withSession), /白名单外的键 headers/)
+  const withDay = structuredClone(filled)
+  withDay.days['2026-11-12'].message = 'SECRET-TEXT'
+  rejects('用量索引 schema：日桶里夹带消息文本报错', () => assertUsageIndexShape(withDay), /白名单外的键 message/)
+  const withModel = structuredClone(filled)
+  withModel.days['2026-11-12'].models['qwen-token-plan-cn/qwen3.8-flash'].text = 'SECRET-TEXT'
+  rejects('用量索引 schema：模型计数器里夹带文本报错', () => assertUsageIndexShape(withModel), /白名单外的键 text/)
+  const withStats = structuredClone(filled)
+  withStats.stats.cookies = 'SECRET-TEXT'
+  rejects('用量索引 schema：stats 里夹带 Cookie 报错', () => assertUsageIndexShape(withStats), /白名单外的键 cookies/)
+  const wrongVersion = structuredClone(filled)
+  wrongVersion.version = 2
+  rejects('用量索引 schema：version 不是 1 报错（不猜未来 schema）', () => assertUsageIndexShape(wrongVersion), /version 不是 1/)
+  rejects('用量索引 schema：不是对象报错', () => assertUsageIndexShape('SECRET-TEXT'), /不是对象/)
+  const badCounter = structuredClone(filled)
+  badCounter.days['2026-11-12'].input = Number.NaN
+  rejects('用量索引 schema：计数不是有限非负数报错', () => assertUsageIndexShape(badCounter), /不是有限非负数/)
+  const badRevision = structuredClone(filled)
+  badRevision.sessions['sess-1'].revision = 42
+  rejects('用量索引 schema：revision 不是字符串报错', () => assertUsageIndexShape(badRevision), /revision 不是字符串/)
+  const emptyId = structuredClone(filled)
+  emptyId.sessions[''] = { revision: 'x', lastSeq: 0, cut: 0 }
+  rejects('用量索引 schema：空会话 id 报错', () => assertUsageIndexShape(emptyId), /空 id/)
+
+  // 3) 写盘闸：坏索引不许落地（否则白名单只在读的时候生效，写的时候已经把脏数据带出去了）
+  const sandbox = mkdtempSync(join(tmpdir(), 'quota-index-guard-'))
+  try {
+    const cleanPath = join(sandbox, 'clean.json')
+    accepts('用量索引写盘：干净索引放行', () => saveUsageIndex(cleanPath, filled))
+    ok('用量索引写盘：干净索引确实落盘', existsSync(cleanPath))
+    const dirtyPath = join(sandbox, 'dirty.json')
+    const dirty = structuredClone(filled)
+    dirty.days['2026-11-12'].message = 'SECRET-TEXT'
+    rejects('用量索引写盘：白名单外的索引拒绝写盘', () => saveUsageIndex(dirtyPath, dirty), /白名单外的键 message/)
+    ok('用量索引写盘：被拒时不留下文件（也不留 .tmp）',
+      !existsSync(dirtyPath) && readdirSync(sandbox).every(name => !name.includes('.tmp-')))
+
+    // 4) 读盘闸：schema 污染的文件备份重建，内容不进内存
+    const pollutedPath = join(sandbox, 'polluted.json')
+    const polluted = structuredClone(filled)
+    polluted.notes = 'SECRET-TEXT'
+    writeFileSync(pollutedPath, JSON.stringify(polluted), 'utf8')
+    const rebuilt = loadUsageIndex(pollutedPath)
+    ok('用量索引读盘：schema 污染 → 备份重建为空索引', Object.keys(rebuilt.days).length === 0 && rebuilt.updatedAt === 0)
+    ok('用量索引读盘：备份文件名带 .bad-', readdirSync(sandbox).some(name => name.startsWith('polluted.json.bad-')))
+    ok('用量索引读盘：污染内容没进内存', !JSON.stringify(rebuilt).includes('SECRET-TEXT'))
+
+    const brokenPath = join(sandbox, 'broken.json')
+    writeFileSync(brokenPath, '{ not json', 'utf8')
+    const broken = loadUsageIndex(brokenPath)
+    ok('用量索引读盘：坏 JSON → 备份重建为空索引',
+      Object.keys(broken.days).length === 0 && readdirSync(sandbox).some(name => name.startsWith('broken.json.bad-')))
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+  }
+
+  // 5) 展示口径：不派生百分比、不折算 Credits（宪法原则 I）——只在代码里查，
+  //    usage-stats.js 的取模运算不是百分比，判据是 % 后面必须紧跟数字。
+  const stripComments = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  const codeOnly = stripComments(usageSrc)
+  const percents = [...codeOnly.matchAll(/.{0,24}%.{0,24}/g)].map(match => match[0].trim())
+  ok('用量索引模块：百分号只出现在取模里（不派生百分比；命中：' + (percents.join(' | ') || '无') + '）',
+    percents.length > 0 && percents.every(snippet => /%\s*\d/.test(snippet)))
+  ok('用量索引模块：不出现 Credits / credit 字样（注释除外）', !/credit/i.test(codeOnly))
+  ok('用量统计段：不出现百分比与 Credits', !/[%]/.test(usageRegion) && !/credit/i.test(usageRegion) && !/percent/i.test(usageRegion))
+  ok('用量统计段：不联网（无 fetch / http(s) URL）', !/fetch\(|https?:\/\//.test(usageRegion))
+  ok('用量索引模块：不联网（无 fetch / http(s) URL）', !/fetch\(|https?:\/\//.test(codeOnly))
+  ok('用量索引模块：不读凭据（无 credentials / apiKey / cookie）', !/credential|apiKey|api_key|cookie/i.test(codeOnly))
+
+  // 6) 配置三键与接线形状（与 INTERFACE §2 同源；默认值漂了会静默改变保留天数与文件位置）
+  ok('DEFAULTS：usageStats 默认 true', __internals.DEFAULTS.usageStats === true)
+  ok('DEFAULTS：usageIndexPath 指向 $DSH_HOME 下的索引文件',
+    __internals.DEFAULTS.usageIndexPath === '$DSH_HOME/token-plan-quota.usage-index.json')
+  ok('DEFAULTS：usageBackfillDays 默认 365（= 保留天数 = 天数选择上界）', __internals.DEFAULTS.usageBackfillDays === 365)
+  ok('用量统计段：快照构建在段内，路由分支在路由段（两处都在 index.js 里）',
+    usageRegion.includes('buildUsageSnapshot') && indexSrc.includes("sub === 'usage'") && indexSrc.includes("'usage'"))
+  ok('用量统计段：索引与聚合仍从 usage-stats.js 引入（不在 index.js 里另写一份）',
+    indexSrc.includes("from './usage-stats.js'"))
+
+  // refreshing 语义（INTERFACE §2）：只表示同步在飞；「距上次同步过久」是另一个判据。
+  // 合并回 || 的话，两次同步之间的 4/5 时间面板都在喊「正在同步…」，且请求反向踢同步。
+  ok('用量统计段：refreshing 只来自在飞同步（不再或上「距上次同步 > 60s」）',
+    usageRegion.includes('const refreshing = usageSync !== null') && !usageRegion.includes('usageSync !== null ||'))
+  ok('用量统计段：距上次同步过久只用来踢一轮同步',
+    usageRegion.includes('now - usageLastSyncAt > 60_000'))
+  // 500 兜底：usage 分支单独 try/catch 回固定串；其它 sub 仍保留 message（排查面）。
+  ok('usage 路由：快照异常回固定串 usage-unavailable（不回宿主 error.message）',
+    indexSrc.includes("{ error: 'usage-unavailable' }")
+      && indexSrc.includes('token-plan-quota: 用量快照构建失败'))
+  ok('usage 路由：其它 sub 的 500 兜底仍带 error.message（排查需要）',
+    indexSrc.includes('{ error: error instanceof Error ? error.message : String(error) }'))
+
+  // 7) 宿主 persistence 双形态 seam：探测顺序与兜底是「语义正确者优先」的实证结论，
+  //    反了不会报错，只会让旧宿主上 revision 恒空（每轮全量重读）或继承前缀重复计数。
+  //    这里钉的是**顺序**，因为行为测试只能证明当下这一版形状；顺序漂了要等旧宿主上才响。
+  const listSnapshotsAt = usageSrc.indexOf('listSnapshots')
+  const listAt = usageSrc.indexOf('persistence.list()')
+  ok('usage seam：listSnapshots 优先于 list 探测（旧宿主 list 只给裸 header）',
+    listSnapshotsAt >= 0 && listAt >= 0 && listSnapshotsAt < listAt)
+  ok('usage seam：revision 经 revisionKey 归一成字符串（对象/数字也不会存空串）',
+    usageSrc.includes('function revisionKey') && usageSrc.includes('revisionKey(snapshot?.revision)'))
+  ok('usage seam：继承 cut 三级兜底（inheritedEventCount → meta.seedLength → header.seedLength）',
+    usageSrc.includes('function inheritedEventCountFor') && usageSrc.includes('meta?.seedLength')
+      && usageSrc.includes('header?.seedLength'))
+  ok('usage seam：会话偏移过 validSessionOffset（number / safe integer / >=0，排除 -0）',
+    usageSrc.includes('function validSessionOffset') && usageSrc.includes('Number.isSafeInteger(value)')
+      && usageSrc.includes('Object.is(value, -0)'))
+  ok('usage seam：无 open 时退 readFrom(id, fromSeq) 再退 read(id, fromSeq)（都带起点）',
+    usageSrc.includes('persistence.readFrom(id, fromSeq)') && usageSrc.includes('persistence.read(id, fromSeq)'))
+  ok('usage seam：坏快照计 failed 再 continue（不静默丢）', /failed \+= 1[\s\S]{0,200}?continue/.test(usageSrc))
+  ok('也接线了 no-sessions 降级原因（本实例还没有会话记录）',
+    usageRegion.includes("'no-sessions'") && usageRegion.includes('本实例还没有会话记录'))
+
+  // 8) INTERFACE §4：静态矩阵也要覆盖**客户端**新代码。用量屏只呈现聚合数字，
+  //    出现 % 或 Credits 折算就是宪法原则 I 的越界展示，而功能测试里往往只是多印一个字。
+  const clientSrc = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const clientScreenStart = clientSrc.indexOf('function UsageScreen')
+  ok('客户端用量屏在 lib/client.js 里存在且可定位', clientScreenStart > 0)
+  const clientUsageRegion = clientScreenStart > 0 ? clientSrc.slice(clientScreenStart) : ''
+  ok('客户端用量屏被完整扫到（字符数 > 10000）', clientUsageRegion.length > 10000)
+  const clientCode = stripComments(clientUsageRegion)
+  const clientPercents = [...clientCode.matchAll(/.{0,24}%.{0,24}/g)].map(match => match[0].trim())
+  ok('客户端用量屏：不派生百分比（命中：' + (clientPercents.join(' | ') || '无') + '）', clientPercents.length === 0)
+  const clientCreditLines = clientCode.split(/\r?\n/).map(line => line.trim()).filter(line => /credit/i.test(line))
+  ok('客户端用量屏：Credits 只出现在「不折算 Credits」白名单行（命中：'
+    + (clientCreditLines.join(' | ') || '无') + '）',
+    clientCreditLines.length > 0 && clientCreditLines.every(line => line.includes('usageNoteNoCredits')))
+  // 座位注册与关闭形状。selectPanel(null) 位于 UsageScreen 之前的关闭入口里，所以另切
+  // openUsagePanel → usagePanelActive 一段（把两者都算进「客户端用量面」）。
+  ok('客户端用量屏：main 座位按 key 注册到 PANEL_ID',
+    /register\(\{\s*name:\s*"main",\s*key:\s*PANEL_ID/.test(clientUsageRegion))
+  const entryStart = clientSrc.indexOf('function openUsagePanel')
+  const entryEnd = clientSrc.indexOf('function usagePanelActive')
+  ok('客户端用量屏：关闭走 layout.selectPanel(null)',
+    entryStart > 0 && entryEnd > entryStart && clientSrc.slice(entryStart, entryEnd).includes('selectPanel(null)'))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

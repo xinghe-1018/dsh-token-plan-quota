@@ -216,6 +216,11 @@ let fetchCalls = []
 function makeFetch(mode) {
   return async (url, init) => {
     fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    // 整页屏的数据路由（spec 006）：days 从查询串读，快照形状照 INTERFACE §3。
+    if (String(url).startsWith('/token-plan-quota/usage')) {
+      const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+      return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+    }
     if (mode === 'fail') return { ok: false, status: 500, json: async () => ({ error: 'boom' }) }
     if (mode === 'garbage') return { ok: true, status: 200, json: async () => null }
     if (mode === 'measured-lies') {
@@ -388,7 +393,7 @@ function makeFetch(mode) {
 
 /* ------------------------------------------------------ 装载 bundle */
 
-async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
+async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null, options = {}) {
   fetchCalls = []
   hookSlots = []
   hookIndex = 0
@@ -401,6 +406,11 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
     fetchMode === 'no-left' ? ['conversation.input.dock']
       : fetchMode === 'no-dock' ? ['conversation.input.left']
         : ['conversation.input.left', 'conversation.input.dock'])
+  // 整页「用量统计」屏（spec 006）：只有用例显式要 main 座位时才把这两格算进宿主。
+  if (options.main === true) {
+    declaredSlots.add('main')
+    declaredSlots.add('sidebar.panellist')
+  }
 
   globalThis.window = {
     __ModuleLoader__: {
@@ -413,7 +423,9 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
   // fetchImpl：用例要自己控制回包时序（挂住/迟到）时用；bundle 里的 fetch 是这个形参，
   // 所以必须在装载前定好，装载后再改 globalThis.fetch 是不生效的。
   globalThis.fetch = fetchImpl ?? makeFetch(fetchMode)
-  globalThis.setInterval = () => 1
+  // 记下 setInterval 的登记，用例才能钉住「可见期间每 30 秒刷一次」这条约定。
+  const intervals = []
+  globalThis.setInterval = (fn, ms) => { intervals.push({ fn, ms }); return intervals.length }
   globalThis.clearInterval = () => {}
 
   // bundle 走 window.__ModuleLoader__.load；navigator 只按形参注入（Node 24 的
@@ -425,6 +437,11 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
   const requireStub = (id) => {
     if (id === 'react') return React
     if (id === 'react-dom') return fakeReactDOM
+    if (id === '@deepseek-ai/dsh-client-store') {
+      // 老宿主没有这个种子词：defineStore 拿不到，整页屏不注册（徽标照常）。
+      if (options.clientStore === false) throw new Error('module not found: @deepseek-ai/dsh-client-store')
+      return { defineStore: options.defineStore ?? fakeDefineStore }
+    }
     throw new Error(`unexpected require(${id})`)
   }
   const factoryRunner = new Function('window', 'document', 'navigator', 'fetch', 'setInterval', 'clearInterval', 'require', `${source}; return window.__ModuleLoader__.spec`)
@@ -432,7 +449,7 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null) {
 
   check('bundle 声明了自己的 id', spec.id, 'dsh-token-plan-quota')
   const api = spec.factory(requireStub)
-  return { spec, api, registered, injected, effects, dom, declaredSlots }
+  return { spec, api, registered, injected, effects, dom, declaredSlots, intervals }
 }
 
 /** 极简 SnapshotStore 替身（getSnapshot/subscribe/set 即 notify）。 */
@@ -449,16 +466,93 @@ function makeStore(initial) {
   }
 }
 
+/** 极简 defineStore 替身：init → draft；actions 先绑 draft；create() 返回同一个实例。 */
+function fakeDefineStore(config) {
+  const draft = typeof config.init === 'function' ? config.init() : {}
+  const instance = {
+    state: draft,
+    listeners: new Set(),
+    getSnapshot() { return this.state },
+    subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn) },
+  }
+  const handle = {}
+  for (const [name, action] of Object.entries(config.actions ?? {})) {
+    handle[name] = (...args) => {
+      action(draft, ...args)
+      for (const listener of [...instance.listeners]) listener()
+    }
+  }
+  handle.create = () => instance
+  return handle
+}
+
+/**
+ * 宿主 buildUsageSnapshot() 的假快照（INTERFACE.md §3 的响应形状）。
+ * buckets 从旧到新，最后一个桶最高——2D/3D 的等比断言靠它算期望值。
+ */
+function makeUsageSnapshot(days = 7) {
+  const dayMs = 86_400_000
+  const end = Date.parse('2026-11-13T00:00:00Z')
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
+  const buckets = []
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const start = end - offset * dayMs
+    const startDate = new Date(start)
+    const month = String(startDate.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(startDate.getUTCDate()).padStart(2, '0')
+    const tokens = (days - offset) * 1000
+    buckets.push({
+      from: iso(start),
+      to: iso(start + dayMs),
+      label: month + '-' + day,
+      totals: {
+        input: tokens / 2, output: tokens / 4, cacheRead: tokens / 4, cacheWrite: 0,
+        calls: days - offset, steps: days - offset, tokens,
+      },
+      models: {},
+    })
+  }
+  return {
+    generatedAt: Date.parse('2026-11-13T00:42:00Z'),
+    enabled: true,
+    // 闭区间契约（INTERFACE §2 / 宿主实现）：to = 今天，from = to - (days - 1) 天。
+    // 旧 fixture 的 to = 明天（右开）会把边界 off-by-one 掩盖掉。
+    range: { kind: 'days', days, from: iso(end - (days - 1) * dayMs), to: iso(end) },
+    granularity: days > 62 ? 'week' : 'day',
+    totals: { input: 600000, output: 300000, cacheRead: 100000, cacheWrite: 0, calls: 30, steps: 30, tokens: 1000000 },
+    buckets,
+    models: [
+      { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { input: 400000, output: 200000, cacheRead: 50000, cacheWrite: 0, calls: 20, steps: 20, tokens: 650000 } },
+      { id: 'deepseek/deepseek-chat', provider: 'deepseek', model: 'deepseek-chat', totals: { input: 200000, output: 100000, cacheRead: 50000, cacheWrite: 0, calls: 10, steps: 10, tokens: 350000 } },
+    ],
+    source: { kind: 'session-index', veracity: 'measured', label: '本实例实测' },
+    coverage: { sessions: 12, indexed: 12, failed: 0, unknownModel: 0, skippedOld: 0 },
+    refreshing: false,
+  }
+}
+
 function makeCtx(registered, declaredSlots, styleCount, services) {
+  const seats = services?.seats
   const slots = {
     inject(name, callback) {
       if (!declaredSlots.has(name)) return () => {}
-      const dispose = callback()
-      return typeof dispose === 'function' ? dispose : () => {}
+      const produced = callback()
+      // main 座位注册回调是 generator（INTERFACE §3 照抄宿主的 function* 形状）：
+      // 在这里把它跑到完成，并把 generate 的返回值（disposer）交回去。
+      if (produced !== null && typeof produced === 'object' && typeof produced.next === 'function') {
+        let step = produced.next()
+        while (step.done !== true) step = produced.next(step.value)
+        return typeof step.value === 'function' ? step.value : () => {}
+      }
+      return typeof produced === 'function' ? produced : () => {}
     },
     register(options, component) {
       registered.push({ options, component })
       return () => {}
+    },
+    // 只有用例给了 seats 才假装宿主有 main 整页座位；老用例完全不受影响。
+    spec(name) {
+      return seats !== undefined && seats.includes(name) ? { name } : undefined
     },
   }
   const ctx = {
@@ -534,8 +628,8 @@ async function settle(render, rounds = 4) {
   // cannot get property "slots" without inject），徽标静默消失且不留日志。
   // 上面的替身一直把服务直接递过来，照不出这个洞——这条断言就是那个回归的锁。
   const { api } = await loadBundle('ok')
-  check('client 把 slots / sessions / modelDirectories 声明成 fiber 依赖', api.inject,
-    ['slots', 'sessions', 'modelDirectories'])
+  check('client 把 slots / sessions / modelDirectories / layout 声明成 fiber 依赖', api.inject,
+    ['slots', 'sessions', 'modelDirectories', 'layout'])
 }
 
 {
@@ -1532,7 +1626,7 @@ function findChip(node) {
   const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [62, 62])
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [109, 109])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1714,5 +1808,745 @@ for (const model of ['deepseek-v4.1-flash', 'qwen3.8-flash']) {
   ok('有真数字的余额卡仍然优先于没数的窗口卡（不被 meters 档抢走）',
     flat2.includes('¥12.50') && !flat2.includes('千问窗口'), flat2.slice(0, 260))
 }
-console.log(`\n${passed} passed, ${failed} failed`)
+
+/* ============================================================ 用量统计整页屏（spec 006，INTERFACE §3/§4）
+ * 这一屏是宿主 main 整页座位上的「产品页」，不是徽标小窗：注册形状、五个状态、
+ * 2D/3D 共用比例函数、天数输入的夹取语义都在这里逐条钉住。数据用假快照
+ * （makeUsageSnapshot），不联网、不依赖宿主路由实现。
+ */
+
+/** 深度优先找 className 里含某一格的节点（假 React 的元素树）。 */
+function findNodes(node, className, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  const classes = String(node.props?.className ?? '').split(/\s+/)
+  if (classes.includes(className)) out.push(node)
+  for (const child of node.children ?? []) findNodes(child, className, out)
+  return out
+}
+
+/** 渲染树里的全部文本：文案断言不依赖具体 DOM 结构。 */
+function collectText(node, out = []) {
+  if (node === null || node === undefined) return out
+  if (typeof node === 'string' || typeof node === 'number') { out.push(String(node)); return out }
+  if (typeof node !== 'object') return out
+  for (const child of node.children ?? []) collectText(child, out)
+  return out
+}
+
+/** 本用例里对整页屏数据路由的全部请求。 */
+function usageRequests() {
+  return fetchCalls.filter((entry) => String(entry.url).startsWith('/token-plan-quota/usage'))
+}
+
+/** 用一份改过的假快照回包（五个状态各要一份）。 */
+function usageFetch(mutate) {
+  return async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+    return { ok: true, status: 200, json: async () => mutate(makeUsageSnapshot(days)) }
+  }
+}
+
+/**
+ * 挂一个「有 main 整页座位」的宿主：layout 服务 + defineStore 都在。
+ * 返回的 renderUsage 直接调用注册进去的组件（假 React 每次 render 都重跑 effect）。
+ */
+async function mountUsage(options = {}) {
+  const bundle = await loadBundle(options.fetchMode ?? 'ok', options.lang ?? 'zh-CN', options.fetchImpl ?? null, {
+    main: true,
+    clientStore: options.clientStore,
+  })
+  bundle.dom.document.documentElement.lang = options.lang ?? 'zh-CN'
+  const warns = []
+  const layout = {
+    calls: [],
+    selectPanel(id) { this.calls.push(id) },
+    panelInfo: { getSnapshot: () => ({ activePanelId: options.activePanelId ?? null }) },
+  }
+  const seats = [...bundle.declaredSlots]
+  const ctx = makeCtx(bundle.registered, bundle.declaredSlots, [], { seats, layout })
+  ctx.logger = { warn: (error) => warns.push(String(error?.message ?? error)) }
+  bundle.api.apply(ctx)
+  const main = bundle.registered.find((entry) => entry.options.name === 'main')
+  const panelIcon = bundle.registered.find((entry) => entry.options.name === 'sidebar.panellist')
+  const handle = main?.options.store
+  const props = {
+    useStore: (selector) => selector(handle.create().getSnapshot()),
+    actions: handle ?? {},
+    // 超时由组件读可选的 props.timeoutMs（宿主不传，生产恒为 15 秒）；测试注入短值避免真等。
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  }
+  const renderUsage = () => {
+    beginRender()
+    return main.component(props)
+  }
+  return { ...bundle, warns, layout, main, panelIcon, handle, props, renderUsage }
+}
+
+/* §4 ①：座位注册形状。main 的 key、侧栏按钮的 id、内页 id 必须是同一个 PANEL_ID，
+ * 否则宿主点侧栏按钮打不开这一屏（app.asar 里 schedule / plugin-manager 就是这个形状）。 */
+{
+  const bundle = await mountUsage()
+  check('main 整页座位的 key 是 PANEL_ID', bundle.main?.options.key, 'token-plan-quota.usage')
+  check('侧栏按钮与 main 座位共用一个 id', bundle.panelIcon?.options.id, bundle.main?.options.key)
+  check('侧栏按钮排在默认顺位', bundle.panelIcon?.options.order, 10)
+  check('侧栏按钮标题走 COPY（跟随界面语言）', bundle.panelIcon?.options.label(), 'Token 计划用量')
+  ok('main 注册同时带 store 与 inject（宿主契约要求两项都在）',
+    typeof bundle.main?.options.store?.create === 'function' && typeof bundle.main?.options.inject === 'function')
+  const first = bundle.main.options.store.create()
+  const again = bundle.main.options.store.create()
+  ok('store.create() 恒返回同一个实例（切页不闪骨架）', first === again)
+  check('store 初值是 7 天 / 2D', [first.getSnapshot().days, first.getSnapshot().mode], [7, '2d'])
+  bundle.main.options.store.setDays(30)
+  check('setDays 动作写回实例（下次进页记得住）', first.getSnapshot().days, 30)
+  bundle.main.options.store.setMode('3d')
+  check('setMode 动作写回实例', first.getSnapshot().mode, '3d')
+}
+
+/* §4 ②：宿主没有这门能力时不许抛，只降级成徽标并留一条可诊断的警告。 */
+{
+  const bundle = await mountUsage({ clientStore: false })
+  check('没有 defineStore 时只挂徽标', bundle.registered.map((entry) => entry.options.name), ['conversation.input.left'])
+  ok('无 main 座位时警告写明原因（不静默失败）',
+    bundle.warns.some((text) => text.includes('用量统计屏不注册')), bundle.warns.join(' | '))
+}
+{
+  // 只有 slots、没有 layout：宿主版本过旧，同样退化成徽标。
+  const bundle = await loadBundle('ok', 'zh-CN', null, { main: true })
+  const warns = []
+  const ctx = makeCtx(bundle.registered, bundle.declaredSlots, [], { seats: [...bundle.declaredSlots] })
+  ctx.logger = { warn: (error) => warns.push(String(error?.message ?? error)) }
+  bundle.api.apply(ctx)
+  check('没有 layout 服务时也只挂徽标', bundle.registered.map((entry) => entry.options.name), ['conversation.input.left'])
+  ok('同样给出可诊断的警告', warns.some((text) => text.includes('用量统计屏不注册')), warns.join(' | '))
+}
+{
+  // slots.spec('main') 返回 undefined（宿主没这一格）也走降级分支。
+  const bundle = await loadBundle('ok', 'zh-CN', null, { main: true })
+  const ctx = makeCtx(bundle.registered, bundle.declaredSlots, [], {
+    seats: [...bundle.declaredSlots].filter((name) => name !== 'main'),
+    layout: { selectPanel() {}, panelInfo: { getSnapshot: () => ({ activePanelId: null }) } },
+  })
+  bundle.api.apply(ctx)
+  check('宿主没有 main 座位时 main 不注册', bundle.registered.some((entry) => entry.options.name === 'main'), false)
+  check('侧栏按钮也不注册（不留一个点不开的图标）', bundle.registered.some((entry) => entry.options.name === 'sidebar.panellist'), false)
+}
+
+/* §4 ④-a：首帧骨架 + 数据态的完整内容（总数 / 五项拆分 / 图表 / 模型 / 脚注）。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const skeletonTree = bundle.renderUsage()
+  ok('首帧是骨架而不是空白（加载态有形状）',
+    findNodes(skeletonTree, 'tpq-usage-skel').length === 3
+      && collectText(skeletonTree).join(' ').includes('正在读取会话记录'),
+    collectText(skeletonTree).join(' ').slice(0, 200))
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('标题 + 区间副标题', text.includes('Token 计划用量') && text.includes('近 7 天'), text.slice(0, 200))
+  ok('区间总数走 formatTokens（1,000,000 → 100.0万）', text.includes('100.0万'), text.slice(0, 300))
+  ok('五项拆分都在（input / output / cacheRead / cacheWrite / 调用次数）',
+    ['input', 'output', 'cacheRead', 'cacheWrite', '调用次数'].every((label) => text.includes(label)))
+  ok('数字来源打「本实例实测」徽标（不是官方余额）', text.includes('本实例实测'))
+  ok('数据源脚注按 source.kind 本地化（session-index → 本地 COPY 句，不照抄宿主 label）',
+   text.includes('数据源：本实例实测（来自本地会话记录），不是官方余额。'), text.slice(-260))
+  ok('脚注声明不折算 Credits、不估算余量', text.includes('不折算 Credits，也不估算余量。'))
+  ok('模型行按 tokens 降序（qwen 在 deepseek 前，不按数组顺序）',
+    text.indexOf('qwen/qwen3-max') >= 0 && text.indexOf('qwen/qwen3-max') < text.indexOf('deepseek/deepseek-chat'),
+    String(text.indexOf('qwen/qwen3-max')) + ' vs ' + String(text.indexOf('deepseek/deepseek-chat')))
+  ok('每根柱子都带 tooltip（全量数字，不靠眼看）',
+    findNodes(tree, 'tpq-usage-bar2d').every((bar) => (bar.children ?? []).some((child) => child?.type === 'title')))
+  ok('「更新于 HH:MM」', /更新于 \d{2}:\d{2}/.test(text), text.slice(-80))
+  ok('可见期间每 30 秒刷新一次', bundle.intervals.some((entry) => entry.ms === 30000))
+  check('打开时按当前天数请求 data 路由', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=7')
+}
+
+/* §4 ⑤：2D 与 3D 共用同一个比例函数——同一份 buckets，柱子的数据高度必须逐个相等。
+ * 3D 只允许加固定等轴偏移（dx=-w/2、dy=-depth），不许透视。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  check('__internals 导出 §4 要求的五个纯函数',
+    Object.keys(internals).sort(), ['barRatio', 'clampDays', 'formatTokens', 'parseDaysInput', 'projectBar3D'])
+  check('barRatio 线性：一半就是一半', internals.barRatio(500, 1000), 0.5)
+  check('barRatio 峰值为 0 不除零', internals.barRatio(5, 0), 0)
+  check('barRatio 有值但不足一格时抬到 1/PLOT_H（不然看不见）', internals.barRatio(1, 1000000), 1 / 120)
+  check('clampDays 夹到 1..365、非数给 null',
+    [internals.clampDays(0), internals.clampDays(366), internals.clampDays(30.4), internals.clampDays('abc')],
+    [1, 365, 30, null])
+  check('parseDaysInput 只认整数',
+    [internals.parseDaysInput('abc'), internals.parseDaysInput(''), internals.parseDaysInput('12')],
+    [null, null, 12])
+  const barA = internals.projectBar3D(0.2, { x: 10, base: 136, w: 14, plotH: 120, depth: 7 })
+  const barB = internals.projectBar3D(0.9, { x: 10, base: 136, w: 14, plotH: 120, depth: 7 })
+  check('3D 等轴偏移与柱高无关（没有透视、没有近大远小）',
+    [barA.dx, barA.dy, barB.dx, barB.dy], [-7, -7, -7, -7])
+  check('3D 正面高度仍由同一个 ratio 决定', [barA.height, barB.height], [24, 108])
+
+  resetHooks()
+  const tree2d = await settle(bundle.renderUsage, 5)
+  const snapshot = makeUsageSnapshot(7)
+  const peak = Math.max(...snapshot.buckets.map((bucket) => bucket.totals.tokens))
+  const ratios = snapshot.buckets.map((bucket) => internals.barRatio(bucket.totals.tokens, peak))
+  const rects = findNodes(tree2d, 'tpq-usage-rect')
+  check('2D：一桶一根柱子', rects.length, 7)
+  ok('2D：柱高 = ratio × PLOT_H',
+    rects.every((rect, index) => Math.abs(rect.props.height - ratios[index] * 120) < 1e-9),
+    rects.map((rect) => rect.props.height).join(','))
+  ok('2D：柱高与 tokens 同一线性比例（自洽校验）',
+    rects.every((rect, index) => Math.abs(rect.props.height / 120 - snapshot.buckets[index].totals.tokens / peak) <= 0.5 / 120 + 1e-9))
+  check('2D：只有最高的桶带数值标签（不糊成一片）', findNodes(tree2d, 'tpq-usage-value').length, 1)
+  check('2D 模式不画 3D 面', findNodes(tree2d, 'tpq-usage-face-front').length, 0)
+
+  /* 图表不是固定 22px 一格的小块：量不到容器时用兜底画布宽把 7 根柱铺开，
+     每格 115px、柱宽 58px（格宽一半），整张图 817×164 —— 宽卡片上不再缩成一小条。
+     高度 164 = TOP_H 26（给最高柱的数值标签留呼吸）+ PLOT_H 120 + AXIS_H 18。 */
+  const chart2d = findNodes(tree2d, 'tpq-usage-svg')[0]
+  check('2D：兜底画布宽下把柱子铺开（817×164）', [chart2d.props.width, chart2d.props.height], [817, 164])
+  check('2D：柱宽取格宽一半（有呼吸缝，不是一条线）', rects.map((rect) => rect.props.width), [58, 58, 58, 58, 58, 58, 58])
+  ok('2D：柱子按格宽等距排开（不是挤在左侧）',
+    rects.every((rect, index) => Math.abs(rect.props.x - (6 + index * 115 + 28.5)) < 1e-9),
+    rects.map((rect) => rect.props.x).join(','))
+
+  const threeDButton = findNodes(tree2d, 'tpq-usage-mode').find((node) => collectText(node).join('') === '3D')
+  ok('有 3D 视图切换按钮', threeDButton !== undefined)
+  threeDButton.props.onClick()
+  const tree3d = await settle(bundle.renderUsage, 4)
+  const fronts = findNodes(tree3d, 'tpq-usage-face-front')
+  const caps = findNodes(tree3d, 'tpq-usage-face-cap')
+  const sides = findNodes(tree3d, 'tpq-usage-face-side')
+  check('3D：每桶三个面（顶面 / 正面 / 侧面）', [fronts.length, caps.length, sides.length], [7, 7, 7])
+  check('3D 模式不画 2D 矩形', findNodes(tree3d, 'tpq-usage-rect').length, 0)
+  const frontHeight = (node) => {
+    const ys = String(node.props.points).trim().split(/\s+/).map((pair) => Number(pair.split(',')[1]))
+    return Math.max(...ys) - Math.min(...ys)
+  }
+  ok('3D 正面高度与 2D 矩形高度逐个相等（SC-006：共用同一个比例函数）',
+    fronts.every((front, index) => Math.abs(frontHeight(front) - rects[index].props.height) < 1e-9),
+    fronts.map(frontHeight).join(','))
+  ok('3D 顶面尺寸恒定（等轴：深度 7、横向错开半根柱宽，与柱高无关）',
+    caps.every((cap, index) => {
+      const points = String(cap.props.points).trim().split(/\s+/).map((pair) => pair.split(',').map(Number))
+      const xs = points.map((point) => point[0])
+      const ys = points.map((point) => point[1])
+      const frontPoints = String(fronts[index].props.points).trim().split(/\s+/).map((pair) => pair.split(',').map(Number))
+      const frontXs = frontPoints.map((point) => point[0])
+      const capSpan = Math.max(...xs) - Math.min(...xs)
+      const frontSpan = Math.max(...frontXs) - Math.min(...frontXs)
+      return Math.abs(capSpan - frontSpan - frontSpan / 2) < 1e-9
+        && Math.abs((Math.max(...ys) - Math.min(...ys)) - 7) < 1e-9
+    }))
+}
+
+/* §4 ⑥：天数输入。非数字不发请求并恢复旧值；超界先夹到 1..365 再按夹后的值请求，
+ * 输入框回显夹后的值（SC-007）。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  await settle(bundle.renderUsage, 5)
+  const inputOf = (tree) => findNodes(tree, 'tpq-usage-days-input')[0]
+  let tree = bundle.renderUsage()
+  const input = inputOf(tree)
+  check('天数输入框的 min/max/step 与常量一致', [input.props.min, input.props.max, input.props.step], [1, 365, 1])
+
+  input.props.onChange({ target: { value: 'abc' } })
+  tree = bundle.renderUsage()
+  const beforeBlur = usageRequests().length
+  inputOf(tree).props.onBlur()
+  check('非数字：不发请求', usageRequests().length, beforeBlur)
+  tree = bundle.renderUsage()
+  check('非数字：输入框恢复上一次有效值', inputOf(tree).props.value, '7')
+
+  inputOf(tree).props.onChange({ target: { value: '366' } })
+  tree = bundle.renderUsage()
+  const before366 = usageRequests().length
+  inputOf(tree).props.onBlur()
+  check('366：不按 366 发请求', usageRequests().length, before366)
+  tree = bundle.renderUsage()
+  check('366：夹取后的值写回输入框', inputOf(tree).props.value, '365')
+  const clamped = await settle(bundle.renderUsage, 2)
+  check('366：下一次请求的是 365 天', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=365')
+  ok('366：副标题回显实际天数（不是用户输入的原值）',
+    collectText(clamped).join(' ').includes('近 365 天'), collectText(clamped).join(' ').slice(0, 120))
+
+  const preset30 = findNodes(tree, 'tpq-usage-day').find((node) => collectText(node).join('') === '30')
+  ok('有 30 天预设按钮', preset30 !== undefined)
+  preset30.props.onClick()
+  tree = bundle.renderUsage()
+  check('预设 30 天：立刻按 30 天请求', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=30')
+  ok('预设按钮的按下态跟着走',
+    findNodes(tree, 'tpq-usage-day').find((node) => collectText(node).join('') === '30').props['data-active'] === '1')
+
+  const preset90 = findNodes(tree, 'tpq-usage-day').find((node) => collectText(node).join('') === '90')
+  ok('有 90 天预设按钮', preset90 !== undefined)
+  preset90.props.onClick()
+  tree = await settle(bundle.renderUsage, 3)
+  const wide = findNodes(tree, 'tpq-usage-svg')[0]
+  ok('90 天：画布宽随桶数增长（超出容器交给 .tpq-usage-scroll 横滚）',
+    wide.props.width > 2000, String(wide.props.width))
+  const narrowBars = findNodes(tree, 'tpq-usage-rect')
+  check('90 天：一桶一根柱', narrowBars.length, 90)
+  ok('90 天：格宽压到 STEP_MIN 后柱宽仍不小于 BAR_MIN（不压成一条线）',
+    narrowBars.every((rect) => rect.props.width >= 8), narrowBars.map((rect) => rect.props.width).slice(0, 5).join(','))
+}
+
+/* §4 ⑦：关闭。按钮与 Esc 都走 ctx.layout.selectPanel(null)，回到会话主视图。
+ * Esc 必须先过 activePanelId 守卫：宿主切页后会保活组件实例，不许误关看不见的屏。 */
+{
+  const bundle = await mountUsage({ activePanelId: 'token-plan-quota.usage' })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  findNodes(tree, 'tpq-usage-close')[0].props.onClick()
+  check('关闭按钮 = 回会话主视图（selectPanel(null)）', bundle.layout.calls, [null])
+  const keydowns = bundle.dom.listeners.get('keydown') ?? []
+  ok('组件挂了 Esc 监听', keydowns.length > 0)
+  const onKey = keydowns.at(-1)
+  onKey({ key: 'Enter' })
+  check('其它键不关页', bundle.layout.calls.length, 1)
+  onKey({ key: 'Escape' })
+  check('Esc 也关整页屏', bundle.layout.calls, [null, null])
+}
+{
+  // 本屏不在前台（activePanelId 是别的屏）：Esc 不许动 selectPanel。
+  const bundle = await mountUsage({ activePanelId: 'some-other-panel' })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  const onKey = (bundle.dom.listeners.get('keydown') ?? []).at(-1)
+  onKey({ key: 'Escape' })
+  check('本屏不在前台时 Esc 不关页（不误伤别的屏）', bundle.layout.calls, [])
+}
+
+/* 375px 视口：量不到容器时用视口宽度估保守画布宽（减两侧留白 60），7 天整幅落在容器里（不横滚）。 */
+{
+  const bundle = await mountUsage()
+  globalThis.window.innerWidth = 375
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const svg = findNodes(tree, 'tpq-usage-svg')[0]
+  check('375px：7 天整幅落在容器内（视口 -60 估宽 → 12+7×43=313）', svg.props.width, 313)
+  ok('375px：柱宽仍是格宽一半（22），且不小于 BAR_MIN',
+    findNodes(tree, 'tpq-usage-rect').every((rect) => rect.props.width === 22))
+  ok('真实宿主里用 ResizeObserver 精修到容器实际宽度（源码级）',
+    /new ResizeObserver\(/.test(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')))
+}
+
+/* §4 ⑧：数字纪律——画面里没有百分比，除脚注白名单外不出现 Credits。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('画面里没有百分比符号（原则 I：没有官方分母就不派生百分比）', !text.includes('%'), text.slice(0, 300))
+  const withoutWhitelist = text.split('不折算 Credits，也不估算余量。').join('')
+  ok('除那一条脚注白名单外不出现 Credits', !withoutWhitelist.includes('Credits'))
+  ok('白名单脚注本身确实渲染出来了', text.includes('不折算 Credits，也不估算余量。'))
+}
+
+/* 英文界面不许混进中文（COPY 是两张完整字典，不是中文兜底）。
+ * lead 第 9 条：宿主 source.label 是写死中文（API 真值），客户端必须按 kind 本地化，
+ * 否则英文页会出现 "Source: 本实例实测（来自本地会话记录）, not an official balance."。 */
+{
+  const bundle = await mountUsage({
+    lang: 'en-US',
+    fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'session-index', veracity: 'measured', label: '本实例实测（来自本地会话记录）' } })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('英文界面没有中文字符', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 300))
+  ok('英文标题与区间副标题', text.includes('Token plan usage') && text.includes('Last 7 days'), text.slice(0, 200))
+  ok('英文数据源脚注按 kind 本地化（不照抄宿主中文 label）',
+    text.includes('Source: measured in this instance (from local session records), not an official balance.'), text.slice(-260))
+  ok('英文页不出现宿主中文 label 的任何片段', !text.includes('本实例实测（来自本地会话记录）'), text.slice(-260))
+}
+
+/* 五个状态：回填中 / 空（无记录）/ 空（无持久化）/ 关闭 / 错误。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, refreshing: true, coverage: { ...snap.coverage, sessions: 12, indexed: 3 } })) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('回填中：顶部细进度条 + 正在回填历史（N/M 会话）',
+    findNodes(tree, 'tpq-usage-progress').length === 1 && text.includes('正在回填历史（3/12 会话）'), text.slice(0, 220))
+  check('进度条按 indexed/sessions 缩放（0.25）',
+    findNodes(tree, 'tpq-usage-progress-bar')[0].props.style.transform, 'scaleX(0.25)')
+  ok('回填进行中不叠加「正在同步」轻提示（进度条已说明状态）', !text.includes('正在同步'), text.slice(0, 240))
+}
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, buckets: [], models: [], emptyReason: 'no-usage' })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('空态（这个区间没用量）：说清原因并给下一步', text.includes('这个区间没有记录到用量') && text.includes('换个天数'), text.slice(0, 220))
+}
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, emptyReason: 'no-session-persistence' })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('空态（没有会话持久化）：解释为什么读不到历史', text.includes('宿主没有开启会话持久化'), text.slice(0, 240))
+}
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, enabled: false, emptyReason: 'usage-stats-disabled' })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('关闭态：说明已关闭并指向配置项', text.includes('用量统计已关闭') && text.includes('usageStats'), text.slice(0, 240))
+  ok('关闭态不渲染数据源脚注（没有来源可声明，不许写死实测口径）',
+    !text.includes('数据源') && !text.includes('来自本地会话记录') && !text.includes('本实例实测'), text.slice(0, 300))
+}
+{
+  // 错误态：一行可重试的说明，重试真的再发一次请求。
+  const failing = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    return { ok: false, status: 500, json: async () => ({}) }
+  }
+  const bundle = await mountUsage({ fetchImpl: failing })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('错误态：说清「用量数据没取到」并给重试', text.includes('用量数据没取到') && text.includes('重试'), text.slice(0, 220))
+  const before = usageRequests().length
+  findNodes(tree, 'tpq-usage-retry')[0].props.onClick()
+  ok('点重试会再请求（不是死按钮）', usageRequests().length > before)
+}
+{
+  // 周粒度（>62 天时宿主给 week 桶）：标题与说明换成「每周」。
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, granularity: 'week' })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('周粒度：标题写「每周用量」并注明周一起算', text.includes('每周用量') && text.includes('每 7 天汇总（周一起算）'), text.slice(0, 220))
+}
+
+/* 切天数竞态（lead 复审第 1 条）：慢的旧请求后回来，不许覆盖新天数的快照。
+ * 旧实现只判 aliveRef，切天数后旧请求仍看到 true → 副标题（新 days）与坐标轴（旧快照）同屏混搭。 */
+{
+  const pending = []
+  const raceFetch = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+    if (String(url).startsWith('/token-plan-quota/usage') && days === 7) {
+      const snapshot = makeUsageSnapshot(7)
+      // 慢请求：挂起，等用例手动放行（模拟旧响应后到）。
+      return await new Promise((resolve) => {
+        pending.push(() => resolve({ ok: true, status: 200, json: async () => snapshot }))
+      })
+    }
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+  }
+  const bundle = await mountUsage({ fetchImpl: raceFetch })
+  resetHooks()
+  bundle.renderUsage()
+  ok('竞态用例：7 天请求确实还挂起（旧响应尚未回包）', pending.length > 0)
+  findNodes(bundle.renderUsage(), 'tpq-usage-day').find(node => collectText(node).join('') === '30').props.onClick()
+  const tree30 = await settle(bundle.renderUsage, 5)
+  ok('切到 30 天后先落到 30 天数据（副标题 + 30 根柱）',
+    collectText(tree30).join(' ').includes('近 30 天') && findNodes(tree30, 'tpq-usage-rect').length === 30,
+    collectText(tree30).join(' ').slice(0, 200))
+  for (const release of pending) release()
+  // 让旧请求的 then 落地，然后只渲染一帧：这一帧里新请求还没回包，
+  // 旧实现会在这里展示 7 天的数据（30 天副标题 + 7 根柱），新实现仍是 30 天。
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const staleFrame = bundle.renderUsage()
+  ok('旧响应后到不落地：仍是 30 天区间与 30 根柱（不是 7 天）',
+    collectText(staleFrame).join(' ').includes('近 30 天') && findNodes(staleFrame, 'tpq-usage-rect').length === 30,
+    collectText(staleFrame).join(' ').slice(0, 200) + ' | bars=' + String(findNodes(staleFrame, 'tpq-usage-rect').length))
+  await settle(bundle.renderUsage, 2)
+}
+
+/* 数据源脚注口径（lead 第 2 / 9 条）：按 source.kind 用本地 COPY 渲染，disabled 态不渲染。
+ * 数字口径纪律：写死「来自本地会话记录」在没有持久化的宿主上就是假话。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'in-process', veracity: 'measured', label: '宿主写死的 in-process 文案' } })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('in-process：脚注按 kind 用本地文案（不照抄宿主 label）',
+    text.includes('数据源：本进程启动以来（实测），不是官方余额。'), text.slice(-260))
+  ok('in-process：宿主 label 不进渲染结果', !text.includes('宿主写死的 in-process 文案'), text.slice(-260))
+  ok('in-process：不再出现写死的「来自本地会话记录」', !text.includes('来自本地会话记录'))
+}
+{
+  // 宿主没给 label：kind 已能定来源句，仍然不冒充会话记录。
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'in-process' } })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('in-process 无 label：按 kind 用「本进程启动以来（实测）」',
+    text.includes('数据源：本进程启动以来（实测），不是官方余额。'), text.slice(-260))
+}
+{
+  // 未知 kind 才回落到宿主 label（宿主兜底文案是 API 真值）。
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'future-source', veracity: 'measured', label: 'Host fallback label' } })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('未知 kind：回落到宿主 label（不丢兜底文案）',
+    text.includes('数据源：Host fallback label，不是官方余额。'), text.slice(-260))
+}
+{
+  // 未知 kind 且无 label：退回整句保守说法。
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'future-source' } })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('未知 kind 且无 label：退回整句 usageNoteSourceFallback',
+    text.includes('数据源：本实例实测（来自本地会话记录），不是官方余额。'), text.slice(-260))
+}
+{
+  // kind=disabled 自己也不渲染来源句（关闭态的说明由 disabled 卡片承担）。
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, source: { kind: 'disabled', veracity: 'unknown', label: '不应出现' } })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('kind=disabled：来源句即使 enabled 也不渲染', !text.includes('数据源') && !text.includes('不应出现'), text.slice(-260))
+}
+
+/* refreshing ≠ 回填（lead 复审第 3 条）：INTERFACE §2 的 refreshing 空闲时也会为真，
+ * 直接画满格进度条会误报「正在回填」。会话已全部索引时只给一句轻提示。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, refreshing: true })) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('refreshing 但会话已全部索引：不画回填进度条，只给「正在同步」轻提示',
+    findNodes(tree, 'tpq-usage-progress').length === 0 && text.includes('正在同步'), text.slice(0, 240))
+}
+
+/* 全零区间（lead 复审第 5 条）：没有最高值就不许给第一根空柱标 0 并高亮。 */
+{
+  const zero = (snap) => ({
+    ...snap,
+    totals: { ...snap.totals, tokens: 0 },
+    buckets: snap.buckets.map((bucket) => ({ ...bucket, totals: { ...bucket.totals, tokens: 0 } })),
+  })
+  const bundle = await mountUsage({ fetchImpl: usageFetch(zero) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const rects = findNodes(tree, 'tpq-usage-rect')
+  check('全零区间：柱子高度全为 0（不画假高度）', rects.length === 7 && rects.every((rect) => rect.props.height === 0), true)
+  check('全零区间：不给任何柱子标数值（峰值 0 时不冒充最高柱）', findNodes(tree, 'tpq-usage-value').length, 0)
+}
+
+/* 30 秒轮询与 Esc 的 activePanelId 守卫（lead 复审第 7/8 条）：
+ * 宿主切页后会保活组件实例，看不见的屏不许发请求、更不许被 Esc 关掉。 */
+{
+  const bundle = await mountUsage({ activePanelId: 'token-plan-quota.usage' })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  const tick = bundle.intervals.filter((entry) => entry.ms === 30000).at(-1)
+  ok('前台时确实登记了 30 秒轮询', tick !== undefined)
+  const beforeActive = usageRequests().length
+  tick.fn()
+  check('本屏在前台：30 秒轮询照常发请求', usageRequests().length, beforeActive + 1)
+}
+{
+  const bundle = await mountUsage({ activePanelId: 'some-other-panel' })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  const tick = bundle.intervals.filter((entry) => entry.ms === 30000).at(-1)
+  const beforeAway = usageRequests().length
+  tick.fn()
+  check('本屏不在前台：轮询不发请求', usageRequests().length, beforeAway)
+}
+
+/* §3：徽标小窗底部的「用量统计」入口。usageStats 关掉时不许出现一个点开空屏的按钮。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const renderBadge = () => {
+    beginRender()
+    return bundle.registered[0].component()
+  }
+  let tree = await settle(renderBadge, 4)
+  findNodes(tree, 'tpq-chip')[0].props.onClick()
+  tree = await settle(renderBadge, 3)
+  const entry = findNodes(tree, 'tpq-usage-entry')[0]
+  ok('小窗底部有「用量统计」入口', entry !== undefined && collectText(entry).join('') === '用量统计',
+    JSON.stringify(collectText(tree)).slice(0, 240))
+  entry.props.onClick()
+  check('点入口跳 main 整页座位（selectPanel(PANEL_ID)）', bundle.layout.calls.at(-1), 'token-plan-quota.usage')
+  tree = await settle(renderBadge, 2)
+  check('跳转时小窗收起（不留两层浮层）', findNodes(tree, 'tpq-panel').length, 0)
+}
+{
+  const bundle = await mountUsage({
+    fetchImpl: async (url, init) => {
+      fetchCalls.push({ url, method: init?.method ?? 'GET' })
+      return { ok: true, status: 200, json: async () => ({ ...SNAPSHOT, config: { ...SNAPSHOT.config, usageStats: false } }) }
+    },
+  })
+  resetHooks()
+  const renderBadge = () => {
+    beginRender()
+    return bundle.registered[0].component()
+  }
+  let tree = await settle(renderBadge, 4)
+  findNodes(tree, 'tpq-chip')[0].props.onClick()
+  tree = await settle(renderBadge, 3)
+  check('usageStats=false 时不出现入口按钮', findNodes(tree, 'tpq-usage-entry').length, 0)
+}
+
+/* 视觉自检的结构面：窄视口自己滚动、375px 排版、零依赖配色。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('窄视口：图表容器自己横向滚动（不撑破整页）', /\.tpq-usage-scroll\{[^}]*overflow-x:auto/.test(code))
+  ok('375px：操作区整行铺开、拆分两列',
+    /@media \(max-width:520px\)\{[\s\S]{0,400}\.tpq-usage-actions\{width:100%;margin-left:0\}/.test(code)
+      && /\.tpq-usage-splits\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/.test(code)
+      && /\.tpq-usage-splits \.tpq-usage-split:last-child\{grid-column:1\/-1\}/.test(code))
+  ok('格宽是有限范围（窄视口保读性 / 宽卡片铺满 / 兜底画布宽）',
+    /const STEP_MIN = 26/.test(code) && /const STEP_MAX = 120/.test(code)
+      && /const BAR_MIN = 8/.test(code) && /const BAR_MAX = 64/.test(code)
+      && /const FALLBACK_CHART_W = 820/.test(code))
+  ok('3D 三面共用一个主色变量 + 两个明度台阶（零依赖）',
+    /--tpq-usage-bar:var\(--dsw-alias-brand-primary/.test(code)
+      && /color-mix\(in srgb,var\(--tpq-usage-bar\) 78%,white\)/.test(code)
+      && /color-mix\(in srgb,var\(--tpq-usage-bar\) 78%,black\)/.test(code))
+}
+
+/* C1~C11 复审补测（lead m00674）。都走假快照 / 假 fetch，不联网。 */
+
+/* C1：切天后新响应还没回来时，标题与数据必须同源（旧实现标题用本地 days、日期用旧快照）。 */
+{
+  let mode30 = 'pending'
+  const pending = []
+  const staleFetch = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+    if (days === 30) {
+      if (mode30 === 'fail') return { ok: false, status: 503, json: async () => ({ error: 'usage-unavailable' }) }
+      return await new Promise((resolve) => { pending.push(resolve) })
+    }
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+  }
+  const bundle = await mountUsage({ fetchImpl: staleFetch })
+  resetHooks()
+  const tree7 = await settle(bundle.renderUsage, 4)
+  ok('C1 起始：标题与数据都是 7 天', collectText(tree7).join(' ').includes('近 7 天'), collectText(tree7).join(' ').slice(0, 160))
+  findNodes(tree7, 'tpq-usage-day').find((node) => collectText(node).join('') === '30').props.onClick()
+  const waiting = await settle(bundle.renderUsage, 3)
+  const waitText = collectText(waiting).join(' ')
+  ok('C1 切天未回包：标题仍按快照说 7 天（不出现「近 30 天」）',
+    waitText.includes('近 7 天') && !waitText.includes('近 30 天'), waitText.slice(0, 200))
+  const staleCards = findNodes(waiting, 'tpq-usage-card')
+  ok('C1 切天未回包：数据区标 stale（半透明降级，不冒充新数据）',
+    staleCards.length === 3 && staleCards.every((card) => card.props['data-stale'] === '1'),
+    staleCards.map((card) => card.props['data-stale']).join(','))
+  mode30 = 'fail'
+  for (const resolve of pending) resolve({ ok: false, status: 503, json: async () => ({ error: 'usage-unavailable' }) })
+  const failed = await settle(bundle.renderUsage, 3)
+  const failText = collectText(failed).join(' ')
+  ok('C1 切天失败：错误态独占，不残留旧 7 天总分卡',
+    failText.includes('用量数据没取到') && findNodes(failed, 'tpq-usage-card').length === 0, failText.slice(0, 240))
+}
+
+/* C2：首屏成功后切天失败——错误行必须把旧图表 / 旧总分卡 / 脚注一起收起。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: async (url, init) => {
+      fetchCalls.push({ url, method: init?.method ?? 'GET' })
+      const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+      if (days === 30) return { ok: false, status: 500, json: async () => ({ error: 'internal-db-detail' }) }
+      return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+    },
+  })
+  resetHooks()
+  const okTree = await settle(bundle.renderUsage, 4)
+  ok('C2 前置：先有完整数据', findNodes(okTree, 'tpq-usage-card').length === 3)
+  findNodes(okTree, 'tpq-usage-day').find((node) => collectText(node).join('') === '30').props.onClick()
+  const tree = await settle(bundle.renderUsage, 4)
+  const text = collectText(tree).join(' ')
+  ok('C2 失败后：错误行独占，旧图表与旧总分卡不再显示',
+    text.includes('用量数据没取到') && findNodes(tree, 'tpq-usage-card').length === 0, text.slice(0, 240))
+  ok('C2 失败后：脚注与「更新于」一起收起', !text.includes('数据源') && !text.includes('更新于'), text.slice(-200))
+  ok('C10 宿主错误详情不上屏（只显示本地化通用句）', !text.includes('internal-db-detail'), text.slice(0, 240))
+  ok('C4 错误态有可点的重试按钮', findNodes(tree, 'tpq-usage-retry').length === 1)
+}
+
+/* C4：请求永不返回时不能一直停在骨架——本地超时后走错误态 + 重试。 */
+{
+  const hangFetch = (url, init) => new Promise((resolve, reject) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    if (init?.signal) init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+  })
+  const bundle = await mountUsage({ fetchImpl: hangFetch, timeoutMs: 40 })
+  resetHooks()
+  bundle.renderUsage()
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  const tree = await settle(bundle.renderUsage, 2)
+  const text = collectText(tree).join(' ')
+  ok('C4 超时：出现错误态而不是永久骨架',
+    text.includes('用量数据没取到') && findNodes(tree, 'tpq-usage-retry').length === 1, text.slice(0, 240))
+  ok('C4 超时：不把 AbortError / 宿主原文当文案', !/abort|aborted|AbortError/i.test(text), text.slice(0, 240))
+}
+
+/* C5：同值 Enter 后紧跟 blur，不许把同一天数再提交一次（旧实现会多发一条请求）。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  const input = findNodes(tree, 'tpq-usage-days-input')[0]
+  const before = usageRequests().length
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {} })
+  const afterEnter = usageRequests().length
+  input.props.onBlur()
+  ok('C5 同值 Enter + 随后 blur 不重复发请求',
+    afterEnter === before && usageRequests().length === afterEnter,
+    'before=' + String(before) + ' afterEnter=' + String(afterEnter) + ' afterBlur=' + String(usageRequests().length))
+}
+
+/* C7：回填还没结束时不许宣称「这个区间没有记录到用量」。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({
+      ...snap,
+      emptyReason: 'no-usage',
+      coverage: { ...snap.coverage, sessions: 12, indexed: 5 },
+    })),
+  })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('C7 回填中：不出现「这个区间没有记录到用量」', !text.includes('这个区间没有记录到用量'), text.slice(0, 240))
+  ok('C7 回填中：进度条仍解释当前状态', findNodes(tree, 'tpq-usage-progress').length === 1, text.slice(0, 200))
+}
+
+/* C8：no-sessions 的引导方向与 no-usage 完全不同，en 也必须本地化。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageFetch((snap) => ({ ...snap, buckets: [], models: [], emptyReason: 'no-sessions' })) })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('C8 no-sessions：指向「去建会话」而不是「调模型再来」',
+    text.includes('这个实例还没有会话记录') && text.includes('先开始一次对话') && !text.includes('这个区间没有记录到用量'),
+    text.slice(0, 260))
+}
+{
+  const bundle = await mountUsage({
+    lang: 'en-US',
+    fetchImpl: usageFetch((snap) => ({ ...snap, buckets: [], models: [], emptyReason: 'no-sessions' })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('C8 no-sessions（en）：本地化且不混中文',
+    !/[\u3400-\u9fff]/u.test(text) && text.includes('no sessions yet'), text.slice(0, 260))
+}
+
+/* C11：请求选项 + fiber 依赖声明（删掉 layout 或改掉 cache/credentials 都要红）。 */
+{
+  let captured = null
+  const bundle = await mountUsage({
+    fetchImpl: async (url, init) => {
+      if (String(url).startsWith('/token-plan-quota/usage')) captured = init
+      fetchCalls.push({ url, method: init?.method ?? 'GET' })
+      const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+      return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+    },
+  })
+  resetHooks()
+  await settle(bundle.renderUsage, 3)
+  ok('C11 请求用 same-origin 凭据 + no-store + GET + 无 body',
+    captured !== null && captured.credentials === 'same-origin' && captured.cache === 'no-store'
+      && captured.body === undefined && (captured.method ?? 'GET') === 'GET',
+    JSON.stringify({ credentials: captured?.credentials, cache: captured?.cache, body: captured?.body, method: captured?.method }))
+  check('C11 client 把 slots / sessions / modelDirectories / layout 声明成 fiber 依赖', bundle.api.inject,
+    ['slots', 'sessions', 'modelDirectories', 'layout'])
+}
+console.log('\n' + passed + ' passed, ' + failed + ' failed')
 process.exit(failed === 0 ? 0 : 1)

@@ -8,7 +8,7 @@
  */
 import { createHmac } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
@@ -35,6 +35,9 @@ const {
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
   toToolJson, buildQuotaTool,
+  emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange,
+  loadUsageIndex, saveUsageIndex, trimUsageIndex, syncUsageIndex,
+  buildUsageSnapshot, runUsageSync,
 } = __internals
 
 let passed = 0
@@ -1564,6 +1567,595 @@ ok('publish 步骤把"version 已在 registry"当成功继续（幂等）',
 ok('verify it landed 走 curl + registry HTTP，不用 npm view',
   /registry\.npmjs\.org\/dsh-token-plan-quota/.test(publishYml)
     && !/npm view "dsh-token-plan-quota@\$ver"/.test(publishYml))
+/* ============================================ 14. 006 用量统计：索引折叠 / 聚合 / 路由 / 降级
+ *
+ * 全部离线：假 persistence 直接给事件数组，不碰真实 ~/.dsh 会话；DSH_HOME 已指向 tmp。
+ * 固定 now = 本地 2026-11-12 12:00（周四），周桶边界才可复现。
+ */
+const USAGE_NOW = new Date(2026, 10, 12, 12, 0, 0).getTime()
+const USAGE_DAY = '2026-11-12'
+const USAGE_DAY_MS = 86_400_000
+
+function headerEvent(seq, at, provider = 'qwen-token-plan-cn', model = 'qwen3.8-flash') {
+  return { seq, type: 'request/header', time: at, data: { header: { config: { provider, model } } } }
+}
+function usageEvent(seq, at, usage) {
+  const event = { seq, type: 'assistant/message', time: at, data: {} }
+  if (usage !== undefined) event.data.usage = usage
+  return event
+}
+function zeroTotals() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, steps: 0, tokens: 0 }
+}
+function assertTotalsIdentity(label, aggregate) {
+  const byBucket = zeroTotals()
+  for (const bucket of aggregate.buckets) for (const key of Object.keys(byBucket)) byBucket[key] += bucket.totals[key]
+  check(label + '：区间 totals == 桶之和', aggregate.totals, byBucket)
+  const byModel = zeroTotals()
+  for (const item of aggregate.models) for (const key of Object.keys(byModel)) byModel[key] += item.totals[key]
+  check(label + '：区间 totals == 模型之和', aggregate.totals, byModel)
+}
+function nextLocalDayKey(key) {
+  const parts = key.split('-').map(Number)
+  const date = new Date(parts[0], parts[1] - 1, parts[2])
+  date.setDate(date.getDate() + 1)
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0')
+}
+/** 假 persistence：list 给快照，open 给句柄（read 按 seq>=offset 过滤，和宿主实现一致）。 */
+function makeFakePersistence(definition = {}) {
+  const sessions = Object.keys(definition).map(id => {
+    const source = definition[id]
+    return { id, revision: source.revision ?? 'rev-1', inheritedEventCount: source.inheritedEventCount ?? 0, events: source.events ?? [] }
+  })
+  const opens = []
+  const reads = []
+  // 调用计数：refreshing 语义要能验证「请求踢了一轮同步」，而这只能由 list 被再次调用证明。
+  const counters = { list: 0 }
+  return {
+    sessions,
+    opens,
+    reads,
+    counters,
+    async list() {
+      counters.list += 1
+      return sessions.map(session => ({ id: session.id, revision: session.revision, sizeBytes: 0, header: { id: session.id } }))
+    },
+    async open(id) {
+      const session = sessions.find(item => item.id === id)
+      if (session === undefined) throw new Error('unknown session: ' + id)
+      opens.push({ id })
+      return {
+        inheritedEventCount: session.inheritedEventCount,
+        async read(offset = 0) {
+          reads.push({ id, offset })
+          return { eventState: 'ok', events: session.events.filter(event => event.seq >= offset) }
+        },
+        async close() {},
+      }
+    },
+  }
+}
+function makeRouteCtx(persistence) {
+  const registered = []
+  const ctx = {
+    logger: { warn() {} },
+    get(name) {
+      if (name === 'webServer') return { register: route => (registered.push(route), () => {}) }
+      if (name === 'tools') return { register: () => () => {} }
+      if (name === 'sessionPersistence') return persistence
+      return undefined
+    },
+    effect(fn) { fn(); return () => {} },
+    on() { return () => {} },
+  }
+  return { ctx, registered }
+}
+async function callUsageRoute(route, url, method = 'GET') {
+  const res = { status: 0, headers: null, raw: '' }
+  await route.handler({ method, url, headers: { host: '127.0.0.1:63108' } }, {
+    writeHead(status, headers) { res.status = status; res.headers = headers },
+    end(body) { res.raw = String(body) },
+  })
+  res.json = res.raw === '' ? undefined : JSON.parse(res.raw)
+  return res
+}
+function recursiveKeys(value, out = []) {
+  if (value === null || typeof value !== 'object') return out
+  for (const [key, item] of Object.entries(value)) { out.push(key); recursiveKeys(item, out) }
+  return out
+}
+
+// ① fold：三恒等式 / 缺 usage 不计数 / 隐私字段不进索引
+{
+  const index = emptyUsageIndex()
+  const events = [
+    headerEvent(1, USAGE_NOW),
+    usageEvent(2, USAGE_NOW + 1000, { inputTokens: 100, outputTokens: 20, cacheReadTokens: 5, cacheWriteTokens: 0 }),
+    usageEvent(3, USAGE_NOW + 2000, { inputTokens: 50, outputTokens: 10 }),
+    usageEvent(4, USAGE_NOW + 3000),                       // 没有 usage：不是一次调用
+    { seq: 5, type: 'user/message', time: USAGE_NOW + 4000, data: { message: { text: 'SECRET-TEXT' } } },
+    usageEvent(6, USAGE_NOW + 5000, { inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 1 }),
+  ]
+  const folded = foldUsageEvents(index, events, 1, 0, { retentionDays: 365, now: USAGE_NOW })
+  check('fold 增量：四类 token 与调用数', folded.added, { input: 151, output: 31, cacheRead: 6, cacheWrite: 1, calls: 3 })
+  check('fold：缺 usage 的 assistant/message 不计数', index.days[USAGE_DAY].calls, 3)
+  check('fold：有 request/header 时未知模型计数为 0', folded.unknownModel, 0)
+  ok('fold：索引里没有消息文本', !JSON.stringify(index).includes('SECRET-TEXT'))
+  ok('fold：索引里没有百分号（不派生比例）', !JSON.stringify(index).includes('%'))
+  const aggregate = aggregateUsageRange(index, { days: 1, now: USAGE_NOW })
+  check('fold：区间 totals 与当日桶一致', aggregate.totals, { input: 151, output: 31, cacheRead: 6, cacheWrite: 1, calls: 3, steps: 3, tokens: 189 })
+  assertTotalsIdentity('fold day', aggregate)
+  check('fold：模型归属来自 request/header', aggregate.models.map(item => [item.id, item.totals.calls]), [['qwen-token-plan-cn/qwen3.8-flash', 3]])
+
+  // 未知模型：没有 request/header 也记账，只是记到 unknown/unknown（不静默丢）
+  const unknownIndex = emptyUsageIndex()
+  const unknownFolded = foldUsageEvents(unknownIndex, [usageEvent(1, USAGE_NOW, { inputTokens: 3, outputTokens: 0 })], 1, 0, { retentionDays: 365, now: USAGE_NOW })
+  check('fold：无 request/header 记 unknown 不丢', [unknownFolded.unknownModel, unknownIndex.days[USAGE_DAY].models['unknown/unknown'].calls], [1, 1])
+  check('fold：索引顶层 stats 累计 unknown', unknownIndex.stats.unknownModel, 1)
+
+  // 保留期外的调用：计 skippedOld，不进桶
+  const oldFolded = foldUsageEvents(emptyUsageIndex(), [usageEvent(1, USAGE_NOW - 400 * USAGE_DAY_MS, { inputTokens: 1, outputTokens: 0 })], 1, 0, { retentionDays: 365, now: USAGE_NOW })
+  check('fold：保留期外的调用计 skippedOld 且不入桶', [oldFolded.added.calls, oldFolded.skippedOld], [0, 1])
+
+  // 落盘往返 + 修剪
+  index.days['2024-01-01'] = { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, models: {} }
+  trimUsageIndex(index, 30, USAGE_NOW)
+  ok('trim：早于保留期的日桶被丢弃', index.days['2024-01-01'] === undefined)
+  const roundtripPath = join(TEST_HOME, 'usage-index-roundtrip.json')
+  saveUsageIndex(roundtripPath, index)
+  const reloaded = loadUsageIndex(roundtripPath)
+  check('索引落盘 / 重读往返', reloaded.days, index.days)
+  const rawIndexFile = readFileSync(roundtripPath, 'utf8')
+  ok('索引文件不含消息文本', !rawIndexFile.includes('SECRET-TEXT'))
+  ok('索引文件不含百分号', !rawIndexFile.includes('%'))
+}
+
+// ② 继承前缀：seq < cut 的事件跳过（继承会话不重复计数）
+{
+  const inheritedIndex = emptyUsageIndex()
+  // seq 从 0 起：cut=3 表示 0/1/2 都是父会话前缀
+  const inherited = [
+    usageEvent(0, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+    usageEvent(1, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+    usageEvent(2, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+  ]
+  const skipped = foldUsageEvents(inheritedIndex, inherited, 0, 3, { retentionDays: 365, now: USAGE_NOW })
+  check('继承前缀：seq<cut 全部跳过', skipped.added.calls, 0)
+  check('继承前缀：没有产生日桶', Object.keys(inheritedIndex.days).length, 0)
+  const kept = foldUsageEvents(inheritedIndex, [usageEvent(2, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }), usageEvent(3, USAGE_NOW, { inputTokens: 7, outputTokens: 1 })], 2, 3, { retentionDays: 365, now: USAGE_NOW })
+  check('继承前缀：只有 seq>=cut 的新事件计入', kept.added.calls, 1)
+}
+
+// ③④ 增量同步：幂等（revision 未变不 open）+ revision 变了只读新片
+{
+  resetInstanceState()
+  const persistence = makeFakePersistence({
+    'sess-a': {
+      revision: 'rev-1',
+      events: [
+        headerEvent(1, USAGE_NOW),
+        usageEvent(2, USAGE_NOW + 1000, { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+        usageEvent(3, USAGE_NOW + 2000, { inputTokens: 20, outputTokens: 3 }),
+      ],
+    },
+  })
+  const index = emptyUsageIndex()
+  const config = effectiveConfig({}, ctxStub)
+  const first = await syncUsageIndex({ persistence, index, config, now: USAGE_NOW })
+  check('sync 首轮：会话数 / 索引数 / 失败数', [first.sessions, first.indexed, first.failed, first.ok], [1, 1, 0, true])
+  check('sync 首轮：两次调用入账', index.days[USAGE_DAY].calls, 2)
+  check('sync 首轮：读起点是 cut（0）', persistence.reads[0].offset, 0)
+  const second = await syncUsageIndex({ persistence, index, config, now: USAGE_NOW })
+  check('sync 幂等：revision 未变不重复计数', index.days[USAGE_DAY].calls, 2)
+  check('sync 幂等：revision 未变不 open', persistence.opens.length, 1)
+  check('sync 幂等：索引数仍算 1', [second.indexed, second.failed], [1, 0])
+
+  persistence.sessions[0].revision = 'rev-2'
+  persistence.sessions[0].events.push(usageEvent(4, USAGE_NOW + 3000, { inputTokens: 5, outputTokens: 1 }))
+  await syncUsageIndex({ persistence, index, config, now: USAGE_NOW })
+  check('revision 变了才重新 open', persistence.opens.length, 2)
+  check('只读新片：offset = lastSeq + 1', persistence.reads[persistence.reads.length - 1].offset, 4)
+  check('只读新片：总数 2 + 1（不是 2 + 2）', index.days[USAGE_DAY].calls, 3)
+
+  // 继承会话：cut 之前是父会话前缀，不计数
+  const inheritedPersistence = makeFakePersistence({
+    'sess-b': {
+      revision: 'rev-9',
+      inheritedEventCount: 2,
+      events: [
+        usageEvent(0, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+        usageEvent(1, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+        usageEvent(2, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+      ],
+    },
+  })
+  const inheritedIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: inheritedPersistence, index: inheritedIndex, config, now: USAGE_NOW })
+  check('继承会话：读起点就是 cut', inheritedPersistence.reads[0].offset, 2)
+  check('继承会话：前缀不计数', inheritedIndex.days[USAGE_DAY].calls, 1)
+}
+
+// ⑤ 日聚合：桶数 / 补 0 / 三条恒等式
+{
+  const index = emptyUsageIndex()
+  index.days['2026-11-06'] = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1, models: { 'a/m1': { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1 } } }
+  index.days['2026-11-08'] = {
+    input: 20, output: 2, cacheRead: 5, cacheWrite: 0, calls: 2,
+    models: { 'a/m1': { input: 20, output: 2, cacheRead: 5, cacheWrite: 0, calls: 2 } },
+  }
+  index.days[USAGE_DAY] = {
+    input: 10, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1,
+    models: { 'b/m2': { input: 5, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1 }, 'c/m3': { input: 5, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 } },
+  }
+  const aggregate = aggregateUsageRange(index, { days: 7, now: USAGE_NOW })
+  check('日聚合：7 个日桶', aggregate.buckets.length, 7)
+  check('日聚合：granularity=day', aggregate.granularity, 'day')
+  check('日聚合：区间含首尾', [aggregate.range.from, aggregate.range.to], ['2026-11-06', '2026-11-12'])
+  check('日聚合：缺数据的天补 0', aggregate.buckets.find(bucket => bucket.from === '2026-11-07').totals, zeroTotals())
+  check('日聚合：buckets 升序', aggregate.buckets.map(bucket => bucket.from), ['2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12'])
+  check('日聚合：区间 totals', aggregate.totals, { input: 40, output: 3, cacheRead: 5, cacheWrite: 0, calls: 4, steps: 4, tokens: 48 })
+  assertTotalsIdentity('日聚合', aggregate)
+  check('模型排序：tokens 降序、同值按 id 升序', aggregate.models.map(item => item.id), ['a/m1', 'b/m2', 'c/m3'])
+  check('模型条目带 provider / model', [aggregate.models[0].provider, aggregate.models[0].model], ['a', 'm1'])
+  check('日桶 label 是 MM-DD', aggregate.buckets[0].label, '11-06')
+}
+
+// ⑥ 周桶边界（固定 now=2026-11-12 周四）
+{
+  const index = emptyUsageIndex()
+  const at63 = aggregateUsageRange(index, { days: 63, now: USAGE_NOW })
+  check('周桶：days=63 → 10 个桶', at63.buckets.length, 10)
+  check('周桶：days=63 → granularity=week', at63.granularity, 'week')
+  check('周桶：首桶从周一 2026-09-07 起', [at63.buckets[0].from, at63.buckets[0].to], ['2026-09-07', '2026-09-13'])
+  check('周桶：末桶 2026-11-09 ~ 区间末日', [at63.buckets[9].from, at63.buckets[9].to], ['2026-11-09', '2026-11-12'])
+  check('周桶：区间起点 = to - 62 天', at63.range.from, '2026-09-11')
+  ok('周桶：桶间不重叠不留缝', at63.buckets.every((bucket, i) => i === 0 || nextLocalDayKey(at63.buckets[i - 1].to) === bucket.from))
+  ok('周桶：每个起始日都是周一', at63.buckets.every(bucket => new Date(bucket.from + 'T00:00:00').getDay() === 1))
+
+  const at365 = aggregateUsageRange(index, { days: 365, now: USAGE_NOW })
+  check('周桶：days=365 → 53 个桶', at365.buckets.length, 53)
+  check('周桶：days=365 首桶从周一 2025-11-10 起', at365.buckets[0].from, '2025-11-10')
+  check('周桶：days=365 末桶到 2026-11-12', at365.buckets[at365.buckets.length - 1].to, USAGE_DAY)
+
+  const at62 = aggregateUsageRange(index, { days: 62, now: USAGE_NOW })
+  check('边界：days=62 仍是日桶', [at62.granularity, at62.buckets.length], ['day', 62])
+  check('边界：days=1 → today', [aggregateUsageRange(index, { days: 1, now: USAGE_NOW }).range.kind, aggregateUsageRange(index, { days: 1, now: USAGE_NOW }).range.days], ['today', 1])
+}
+
+// ⑦ 路由形状：字段白名单 / 非 GET 405 / 无 % 无消息文本 / query 夹紧
+{
+  resetInstanceState()
+  const persistence = makeFakePersistence({
+    'sess-route': {
+      revision: 'r1',
+      events: [
+        headerEvent(1, USAGE_NOW - 1000),
+        usageEvent(2, USAGE_NOW - 500, { inputTokens: 40, outputTokens: 8, cacheReadTokens: 2, cacheWriteTokens: 0 }),
+        usageEvent(3, USAGE_NOW, { inputTokens: 60, outputTokens: 12, cacheReadTokens: 3, cacheWriteTokens: 1 }),
+      ],
+    },
+  })
+  const row = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-index-route.json') }
+  const { ctx, registered } = makeRouteCtx(persistence)
+  resetInstanceState()
+  apply(ctx, row)
+  const route = registered.find(item => item.path === '/token-plan-quota')
+  ok('usage 路由随 prefix 路由一起注册', route !== undefined)
+  await runUsageSync(ctx, effectiveConfig(row, ctx))
+  const got = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
+  check('usage 路由：200', got.status, 200)
+  check('usage 路由：字段白名单', Object.keys(got.json).sort(),
+    ['buckets', 'coverage', 'enabled', 'generatedAt', 'granularity', 'models', 'range', 'refreshing', 'source', 'totals'])
+  check('usage 路由：totals', got.json.totals, { input: 100, output: 20, cacheRead: 5, cacheWrite: 1, calls: 2, steps: 2, tokens: 126 })
+  check('usage 路由：source 标注本实例实测', [got.json.source.kind, got.json.source.veracity], ['session-index', 'measured'])
+  check('usage 路由：coverage.sessions', got.json.coverage.sessions, 1)
+  check('usage 路由：7 个日桶', got.json.buckets.length, 7)
+  check('usage 路由：refreshing 是布尔', typeof got.json.refreshing, 'boolean')
+  ok('usage 路由：响应没有百分号', !got.raw.includes('%'))
+  ok('usage 路由：响应没有消息文本 / 表头字段', !recursiveKeys(got.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+  ok('usage 路由：响应没有落盘路径', !got.raw.includes('usage-index-route'))
+  check('usage 路由：缓存头 no-store', got.headers['cache-control'], 'no-store')
+
+  const post = await callUsageRoute(route, '/token-plan-quota/usage', 'POST')
+  check('usage 路由：POST → 405', post.status, 405)
+  const badDays = await callUsageRoute(route, '/token-plan-quota/usage?days=abc')
+  check('days 非法 → 默认 7', badDays.json.range.days, 7)
+  const zeroDays = await callUsageRoute(route, '/token-plan-quota/usage?days=0')
+  check('days=0 → 夹到 1（today）', [zeroDays.json.range.days, zeroDays.json.range.kind], [1, 'today'])
+  const preset = await callUsageRoute(route, '/token-plan-quota/usage?range=30d')
+  check('range 预设 30d', preset.json.range.days, 30)
+  const clamped = await callUsageRoute(route, '/token-plan-quota/usage?days=10000')
+  check('days 超上界 → 夹到 usageBackfillDays(365)', clamped.json.range.days, 365)
+  const notFound = await callUsageRoute(route, '/token-plan-quota/nope')
+  check('404 路由清单含 usage', notFound.status === 404 && notFound.json.routes.includes('usage'), true)
+
+  const summary = await callUsageRoute(route, '/token-plan-quota/summary')
+  check('summary：config.usageStats 是布尔', typeof summary.json.config.usageStats, 'boolean')
+  ok('summary：不暴露 usageIndexPath / usageBackfillDays', !recursiveKeys(summary.json).some(key => key === 'usageIndexPath' || key === 'usageBackfillDays'))
+
+  // refreshing 语义（INTERFACE §2）：只表示「同步确实在飞」。宿主每 5 分钟同步一次，
+  // 若把「距上次同步 > 60s」也算成 refreshing，两次同步之间的 4/5 时间面板都显示
+  // 「正在同步…」，而且每个请求都会反向踢一轮同步（真桌面实例上实测到的说谎）。
+  const syncConfig = effectiveConfig(row, ctx)
+  const realDateNow = Date.now
+  try {
+    Date.now = () => realDateNow() + 10 * 60_000
+    const before = persistence.counters.list
+    const stale = buildUsageSnapshot(syncConfig, ctx, { days: 7 })
+    check('refreshing：距上次同步 10 分钟且无在飞同步 → false', stale.refreshing, false)
+    await new Promise(resolve => setImmediate(resolve))
+    ok('距上次同步过久：请求仍然踢了一轮同步（persistence.list 被再次调用）', persistence.counters.list > before)
+  } finally {
+    Date.now = realDateNow
+  }
+  const syncInFlight = runUsageSync(ctx, syncConfig)
+  check('refreshing：同步在飞 → true', buildUsageSnapshot(syncConfig, ctx, { days: 7 }).refreshing, true)
+  await syncInFlight
+  check('refreshing：同步结束 → false', buildUsageSnapshot(syncConfig, ctx, { days: 7 }).refreshing, false)
+
+  // 500 兜底不吐宿主异常原文：客户端会把 payload.error 原样显示在面板里（复审 H2）。
+  const warns = []
+  const realGet = ctx.get
+  try {
+    ctx.get = function (name, fallback) {
+      if (name === 'sessionPersistence') throw new TypeError('ENOENT: open C:/Users/OMEN/.dsh/sessions/dead.jsonl')
+      return realGet.call(this, name, fallback)
+    }
+    ctx.logger.warn = value => warns.push(String(value?.message ?? value))
+    const broken = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
+    check('usage 路由：快照抛错 → 500', broken.status, 500)
+    check('usage 路由：异常响应只有固定串', broken.json, { error: 'usage-unavailable' })
+    ok('usage 路由：异常原文与路径不回给浏览器', !broken.raw.includes('ENOENT') && !broken.raw.includes('.dsh'))
+    ok('usage 路由：异常只进 logger.warn 留诊断', warns.length === 1 && warns[0].includes('ENOENT'))
+  } finally {
+    ctx.get = realGet
+  }
+}
+
+// ⑧ 降级：无 persistence / 关闭统计 / 坏 JSON 与 schema 污染
+{
+  resetInstanceState()
+  const degradeConfig = effectiveConfig({ usageIndexPath: join(TEST_HOME, 'usage-index-degrade.json') }, ctxStub)
+  const degraded = buildUsageSnapshot(degradeConfig, ctxStub, { days: 7 })
+  check('无 persistence：降级 source', [degraded.source.kind, degraded.source.label], ['in-process', '本进程启动以来（实测）'])
+  check('无 persistence：emptyReason', degraded.emptyReason, 'no-session-persistence')
+  ok('无 persistence：hint 指名 sessionPersistence', typeof degraded.hint === 'string' && degraded.hint.includes('sessionPersistence'))
+  ok('无 persistence：不谎报 0（hint 说明重启归零）', degraded.hint.includes('重启'))
+
+  const disabled = buildUsageSnapshot(effectiveConfig({ usageStats: false }, ctxStub), ctxStub, { days: 7 })
+  check('关闭统计：enabled=false', disabled.enabled, false)
+  check('关闭统计：emptyReason', disabled.emptyReason, 'usage-stats-disabled')
+  check('关闭统计：totals 全 0', disabled.totals, zeroTotals())
+  check('关闭统计：桶仍按区间补齐', disabled.buckets.length, 7)
+  ok('关闭统计：hint 指向 usageStats', disabled.hint.includes('usageStats'))
+  check('关闭统计：source 说明已关闭', disabled.source.label, '用量统计已关闭')
+
+  // 坏 JSON → 备份 + 重建
+  resetInstanceState()
+  const brokenPath = join(TEST_HOME, 'usage-index-broken.json')
+  writeFileSync(brokenPath, '{ this is not json', 'utf8')
+  const brokenCtx = makeRouteCtx(makeFakePersistence({}))
+  const brokenRow = { sources: [], usageIndexPath: brokenPath }
+  resetInstanceState()
+  apply(brokenCtx.ctx, brokenRow)
+  await runUsageSync(brokenCtx.ctx, effectiveConfig(brokenRow, brokenCtx.ctx))
+  ok('坏 JSON：留 .bad-* 备份', readdirSync(TEST_HOME).some(name => name.startsWith('usage-index-broken.json.bad-')))
+  check('坏 JSON：重建为空索引', Object.keys(__internals.usageIndex.days).length, 0)
+
+  // schema 污染（白名单外的键）同样按坏索引处理，且内容不进内存
+  resetInstanceState()
+  const pollutedPath = join(TEST_HOME, 'usage-index-polluted.json')
+  const polluted = emptyUsageIndex()
+  polluted.days[USAGE_DAY] = { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, models: {}, message: 'SECRET-TEXT' }
+  polluted.notes = 'SECRET-TEXT'
+  writeFileSync(pollutedPath, JSON.stringify(polluted), 'utf8')
+  const pollutedCtx = makeRouteCtx(makeFakePersistence({}))
+  const pollutedRow = { sources: [], usageIndexPath: pollutedPath }
+  resetInstanceState()
+  apply(pollutedCtx.ctx, pollutedRow)
+  await runUsageSync(pollutedCtx.ctx, effectiveConfig(pollutedRow, pollutedCtx.ctx))
+  ok('schema 污染：备份后重建', readdirSync(TEST_HOME).some(name => name.startsWith('usage-index-polluted.json.bad-')))
+  check('schema 污染：SECRET-TEXT 没进内存', JSON.stringify(__internals.usageIndex).includes('SECRET-TEXT'), false)
+}
+
+// ⑨⑩ live fallback（无 persistence 时 recordUsage 后的实时日桶）+ 工具 usage
+{
+  resetInstanceState()
+  const liveConfig = effectiveConfig({ usageIndexPath: join(TEST_HOME, 'usage-index-live.json') }, ctxStub)
+  recordUsage(liveConfig, 'qwen-token-plan-cn', 'qwen3.8-flash', { inputTokens: 30, outputTokens: 7, cacheReadTokens: 3, cacheWriteTokens: 0 }, Date.now())
+  const snapshot = buildUsageSnapshot(liveConfig, ctxStub, { days: 7 })
+  check('live fallback：totals>0', [snapshot.totals.input, snapshot.totals.output, snapshot.totals.calls], [30, 7, 1])
+  check('live fallback：source=in-process', snapshot.source.kind, 'in-process')
+  ok('live fallback：不再报 emptyReason', snapshot.emptyReason === undefined)
+  ok('live fallback：没有百分号', !JSON.stringify(snapshot).includes('%'))
+
+  const tool = buildQuotaTool(() => liveConfig, ctxStub)
+  check('工具 action 枚举含 usage', tool.parameters.properties.action.enum, ['status', 'refresh', 'reset', 'usage'])
+  check('工具 days 参数 1..365', [tool.parameters.properties.days.type, tool.parameters.properties.days.minimum, tool.parameters.properties.days.maximum], ['integer', 1, 365])
+  const out = await tool.execute({ action: 'usage', days: 7 })
+  check('工具 usage：ok=true', out.ok, true)
+  check('工具 usage：range.days', out.usage.range.days, 7)
+  check('工具 usage：totals', [out.usage.totals.input, out.usage.totals.calls], [30, 1])
+  check('工具 usage：source 是降级口径', out.usage.source.kind, 'in-process')
+  ok('工具 usage：文本是实测口径', out.text.includes('input 30') && out.text.includes('次调用'))
+  ok('工具 usage：输出无消息文本', !JSON.stringify(out).includes('SECRET-TEXT'))
+  const defaulted = await tool.execute({ action: 'usage' })
+  check('工具 usage：缺省 7 天', defaulted.usage.range.days, 7)
+
+  // 有 persistence 时只认索引，实时桶不能重复计
+  resetInstanceState()
+  recordUsage(liveConfig, 'qwen-token-plan-cn', 'qwen3.8-flash', { inputTokens: 999, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, Date.now())
+  const persistedRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-index-live2.json') }
+  const persistence = makeFakePersistence({
+    'sess-live': { revision: 'r1', events: [headerEvent(1, Date.now()), usageEvent(2, Date.now(), { inputTokens: 10, outputTokens: 1 })] },
+  })
+  const persistedCtx = makeRouteCtx(persistence)
+  resetInstanceState()
+  apply(persistedCtx.ctx, persistedRow)
+  const persistedConfig = effectiveConfig(persistedRow, persistedCtx.ctx)
+  await runUsageSync(persistedCtx.ctx, persistedConfig)
+  const indexed = buildUsageSnapshot(persistedConfig, persistedCtx.ctx, { days: 7 })
+  check('有 persistence 时只认索引（实时桶不重复计）', [indexed.totals.input, indexed.totals.calls], [10, 1])
+  check('有 persistence 时 source=session-index', indexed.source.kind, 'session-index')
+
+  // 实时桶按 usageBackfillDays 修剪；配置夹紧
+  resetInstanceState()
+  const shortConfig = effectiveConfig({ usageBackfillDays: 1 }, ctxStub)
+  recordUsage(shortConfig, 'p', 'm', { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, Date.now() - 30 * USAGE_DAY_MS)
+  recordUsage(shortConfig, 'p', 'm', { inputTokens: 2, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, Date.now())
+  check('实时桶按 usageBackfillDays 修剪', __internals.liveUsageDays.size, 1)
+  check('usageBackfillDays 夹紧：9999 → 365', effectiveConfig({ usageBackfillDays: 9999 }, ctxStub).usageBackfillDays, 365)
+  check('usageBackfillDays 夹紧：0 → 1', effectiveConfig({ usageBackfillDays: 0 }, ctxStub).usageBackfillDays, 1)
+  check('usageBackfillDays 夹紧：非数字 → 365', effectiveConfig({ usageBackfillDays: 'abc' }, ctxStub).usageBackfillDays, 365)
+  check('usageStats 默认开', effectiveConfig({}, ctxStub).usageStats, true)
+  check('usageStats 可关', effectiveConfig({ usageStats: false }, ctxStub).usageStats, false)
+}
+
+// ⑪ 宿主兼容性 seam：双形态 list / revision 归一 / 继承 cut 三级兜底 / 坏快照计失败 / readFrom 兜底 / no-sessions
+// 依据是宿主真实消费方（dsh-service 的 usage seam）：旧宿主（0.1.x）上这些形状与语义都不同，
+// 不按「语义正确者优先」探测就会静默出错——数字翻倍或每轮全量重读，而不会报错。
+{
+  // a) 0.1.1-rc.2 ~ 0.1.2-rc.1：listSnapshots() 给 {header, revision}，list() 只给裸 header，两方法同时在位。
+  //    先探测 list() 会拿到裸 header → revision 恒空。必须优先 listSnapshots。
+  resetInstanceState()
+  const dualEvents = [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 10, outputTokens: 1 })]
+  let listCalls = 0
+  let listSnapshotsCalls = 0
+  const dual = {
+    async list() {
+      listCalls += 1
+      return [{ id: 'dual-sess' }]
+    },
+    async listSnapshots() {
+      listSnapshotsCalls += 1
+      return [{ header: { id: 'dual-sess' }, revision: 'rev-dual' }]
+    },
+    async open() {
+      return { inheritedEventCount: 0, async read() { return { events: dualEvents } }, async close() {} }
+    },
+  }
+  const dualIndex = emptyUsageIndex()
+  const dualResult = await syncUsageIndex({ persistence: dual, index: dualIndex, config: effectiveConfig({}, ctxStub), now: USAGE_NOW })
+  check('双形态 persistence：优先 listSnapshots（list 一次都不该调）', [listSnapshotsCalls, listCalls], [1, 0])
+  check('双形态 persistence：入账', dualIndex.days[USAGE_DAY].calls, 1)
+  check('双形态 persistence：revision 存下来', dualIndex.sessions['dual-sess'].revision, 'rev-dual')
+  check('双形态 persistence：ok / sessions', [dualResult.ok, dualResult.sessions], [true, 1])
+
+  // b) revision 可能是对象/数字：归一成字符串再进索引，否则跳过判断永不生效（每轮全量重读）。
+  const revEvents = [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 5, outputTokens: 1 })]
+  const objectOpens = []
+  const objectRevision = {
+    async list() { return [{ header: { id: 'obj-sess' }, revision: { rev: 3 } }] },
+    async open(id) { objectOpens.push(id); return { async read() { return { events: revEvents } }, async close() {} } },
+  }
+  const objIndex = emptyUsageIndex()
+  const objConfig = effectiveConfig({}, ctxStub)
+  await syncUsageIndex({ persistence: objectRevision, index: objIndex, config: objConfig, now: USAGE_NOW })
+  check('revision 归一：对象 revision 存成字符串', objIndex.sessions['obj-sess'].revision, JSON.stringify({ rev: 3 }))
+  await syncUsageIndex({ persistence: objectRevision, index: objIndex, config: objConfig, now: USAGE_NOW })
+  check('revision 归一：第二轮按字符串比较即跳过（只 open 一次）', objectOpens.length, 1)
+  check('revision 归一：重复同步不重复计数', objIndex.days[USAGE_DAY].calls, 1)
+
+  const numberOpens = []
+  const numberRevision = {
+    async list() { return [{ header: { id: 'num-sess' }, revision: 7 }] },
+    async open(id) { numberOpens.push(id); return { async read() { return { events: revEvents } }, async close() {} } },
+  }
+  const numIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: numberRevision, index: numIndex, config: objConfig, now: USAGE_NOW })
+  check('revision 归一：数字 revision 存成字符串', numIndex.sessions['num-sess'].revision, '7')
+  await syncUsageIndex({ persistence: numberRevision, index: numIndex, config: objConfig, now: USAGE_NOW })
+  check('revision 归一：数字 revision 同样能跳过', numberOpens.length, 1)
+
+  // c) 继承前缀 cut 三级兜底：句柄 → 读片 meta.seedLength → 快照 header.seedLength → 0。
+  //    拿不到 cut 的后果是父会话前缀被重复折入（数字翻倍），不是少统计。
+  const prefixEvents = [
+    usageEvent(0, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+    usageEvent(1, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+    usageEvent(2, USAGE_NOW, { inputTokens: 7, outputTokens: 1 }),
+  ]
+  const metaPersistence = {
+    async list() { return [{ header: { id: 'meta-sess' }, revision: 'r' }] },
+    async open() {
+      return { async read() { return { meta: { seedLength: 2 }, events: prefixEvents } }, async close() {} }
+    },
+  }
+  const metaIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: metaPersistence, index: metaIndex, config: objConfig, now: USAGE_NOW })
+  check('继承 cut 兜底：读片 meta.seedLength 生效（前缀不计数）', metaIndex.days[USAGE_DAY].calls, 1)
+  check('继承 cut 兜底：索引记下 cut=2', metaIndex.sessions['meta-sess'].cut, 2)
+
+  const headerOnlyPersistence = {
+    async list() { return [{ header: { id: 'hdr-sess', seedLength: 2 }, revision: 'r' }] },
+    async open() {
+      return { async read() { return prefixEvents }, async close() {} }
+    },
+  }
+  const headerIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: headerOnlyPersistence, index: headerIndex, config: objConfig, now: USAGE_NOW })
+  check('继承 cut 兜底：快照 header.seedLength 生效（裸数组读片也能读）', headerIndex.days[USAGE_DAY].calls, 1)
+  check('继承 cut 兜底：索引记下 cut=2', headerIndex.sessions['hdr-sess'].cut, 2)
+
+  const invalidSeedPersistence = {
+    async list() { return [{ header: { id: 'bad-seed' }, revision: 'r' }] },
+    async open() { return { async read() { return { events: prefixEvents, meta: { seedLength: '2' } } }, async close() {} } },
+  }
+  const invalidSeedIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: invalidSeedPersistence, index: invalidSeedIndex, config: objConfig, now: USAGE_NOW })
+  check('继承 cut 兜底：非法 seedLength 归 0（不猜）', [invalidSeedIndex.sessions['bad-seed'].cut, invalidSeedIndex.days[USAGE_DAY].calls], [0, 3])
+
+  // d) 快照缺 header / 缺 id：计一次失败并继续，不静默丢（coverage.failed 要看得见）。
+  const mixed = {
+    async list() { return [{ header: { id: 'good-sess' }, revision: 'r' }, {}, { header: {} }] },
+    async open() { return { async read() { return { events: [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 3, outputTokens: 0 })] } }, async close() {} } },
+  }
+  const mixedIndex = emptyUsageIndex()
+  const mixedResult = await syncUsageIndex({ persistence: mixed, index: mixedIndex, config: objConfig, now: USAGE_NOW })
+  check('坏快照：sessions 计全部 3 条', mixedResult.sessions, 3)
+  check('坏快照：计失败而不是静默丢', [mixedResult.indexed, mixedResult.failed], [1, 2])
+  check('坏快照：健康会话照常入账', mixedIndex.days[USAGE_DAY].calls, 1)
+
+  // e) 旧宿主没有 open：readFrom(id, fromSeq) 必须带起点（不传起点会从头全读）。
+  const readFromCalls = []
+  const readFromPersistence = {
+    async list() { return [{ header: { id: 'rf-sess' }, revision: 'r' }] },
+    async readFrom(id, fromSeq) {
+      readFromCalls.push({ id, fromSeq })
+      return { events: [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 4, outputTokens: 1 })] }
+    },
+  }
+  const rfIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: readFromPersistence, index: rfIndex, config: objConfig, now: USAGE_NOW })
+  check('readFrom 兜底：起点参数是 0', readFromCalls[0], { id: 'rf-sess', fromSeq: 0 })
+  check('readFrom 兜底：入账', rfIndex.days[USAGE_DAY].calls, 1)
+
+  const readCalls = []
+  const readOnlyPersistence = {
+    async list() { return [{ header: { id: 'ro-sess' }, revision: 'r' }] },
+    async read(id, fromSeq) {
+      readCalls.push({ id, fromSeq })
+      return { events: [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 6, outputTokens: 2 })] }
+    },
+  }
+  const roIndex = emptyUsageIndex()
+  await syncUsageIndex({ persistence: readOnlyPersistence, index: roIndex, config: objConfig, now: USAGE_NOW })
+  check('read 兜底：也带起点参数', readCalls[0], { id: 'ro-sess', fromSeq: 0 })
+  check('read 兜底：入账', roIndex.days[USAGE_DAY].calls, 1)
+
+  // f) 本实例一个会话都没有：no-sessions（不是 no-usage-in-range —— 后者会让人以为"用过但没记录"）。
+  resetInstanceState()
+  const emptyCtx = makeRouteCtx({ async list() { return [] }, async open() { throw new Error('unreachable') } })
+  const emptyRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-index-empty.json') }
+  resetInstanceState()
+  apply(emptyCtx.ctx, emptyRow)
+  const emptyConfig = effectiveConfig(emptyRow, emptyCtx.ctx)
+  await runUsageSync(emptyCtx.ctx, emptyConfig)
+  const noSessions = buildUsageSnapshot(emptyConfig, emptyCtx.ctx, { days: 7 })
+  check('no-sessions：emptyReason', noSessions.emptyReason, 'no-sessions')
+  ok('no-sessions：hint 说明还没有会话记录', typeof noSessions.hint === 'string' && noSessions.hint.includes('会话记录'))
+  check('no-sessions：source 仍是 session-index（不是降级）', noSessions.source.kind, 'session-index')
+}
+
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })

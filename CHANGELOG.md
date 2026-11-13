@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI：Node 20 上 009 的 zstd 用例不再假红**：0.5.0 的 tag 落地后 ci 矩阵的 node 20 三平台全红——
+  Node < 22.15 没有 `zlib.zstdCompressSync` / `zstdDecompressSync`，而 §1.4 的日志 fixture 无条件压缩、
+  三条解码断言与 §2.2 的两段路由用例又要求真解出调用。改法全在 `test/host.mjs`：无 zstd 时
+  `frameOf` 退化成写同名字节的明文（§1.4 只数目录、文件名与字节数，不解析内容），解码与路由用例
+  挂到 `HAS_ZSTD` 能力分支、另一支留一条显式跳过断言，跳过时点也从"再看一次"变成"零断言"。
+  产品代码零改动（Node 20 上兜底扫描本来就按 `scanSkipped: no-zstd` 整块降级），所以不占新版本号；
+  npm 上的 0.5.0 不受影响（`files` 不含 `test/`）。
+
 ## [0.5.0] - 2026-11-13
 
 ### Added

@@ -2347,7 +2347,9 @@ function recursiveKeys(value, out = []) {
   const routeRoot = join(TEST_HOME, 'usage-fallback-route')
   for (const root of [fixtureRoot, syncRoot, versionRoot, seededRoot, budgetRoot, routeRoot]) rmSync(root, { recursive: true, force: true })
 
-  const frameOf = text => zlib.zstdCompressSync(Buffer.from(text, 'utf8'))
+  // Node < 22.15 没有 zstdCompressSync。§1.4 只数目录、文件名与字节数，不解析内容，所以无 zstd 时
+  // 退化成同名文件的明文即可；真正的解码/折叠断言都在 HAS_ZSTD 分支里，跑不到这条路径。
+  const frameOf = text => (HAS_ZSTD ? zlib.zstdCompressSync(Buffer.from(text, 'utf8')) : Buffer.from(text, 'utf8'))
   const linesOf = events => events.map(event => JSON.stringify(event)).join('\n') + '\n'
   function writeLog(root, project, id, events, fileName = 'session.v4.jsonl.zstd') {
     const dir = join(root, project, id)
@@ -2392,12 +2394,17 @@ function recursiveKeys(value, out = []) {
   } else {
     ok('009 decode：本机 Node 无 zstd（多帧用例跳过，只验证降级）', true)
   }
-  check('009 decode：空 buffer → no-frames', decodeSessionLog(Buffer.alloc(0)), { ok: false, reason: 'no-frames' })
-  check('009 decode：没有 zstd magic → no-frames', decodeSessionLog(Buffer.from('plain text, no frame', 'utf8')), { ok: false, reason: 'no-frames' })
-  // Node 24 把「只有 magic」当空帧解出来（text 为空、frames=1）；这里钉住实际行为，
-  // 免得以后换 Node 悄悄变了没人发现。真实日志至少有一条 header，不受影响。
-  check('009 decode：只有 magic 没有帧体 → 空文本单帧（Node 24 行为）',
-    decodeSessionLog(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])), { ok: true, text: '', frames: 1 })
+  // 这三条都要求 zstd 可用：decodeSessionLog 先认能力再认帧头，Node 20 上任何 buffer 都只能是 no-zstd。
+  if (HAS_ZSTD) {
+    check('009 decode：空 buffer → no-frames', decodeSessionLog(Buffer.alloc(0)), { ok: false, reason: 'no-frames' })
+    check('009 decode：没有 zstd magic → no-frames', decodeSessionLog(Buffer.from('plain text, no frame', 'utf8')), { ok: false, reason: 'no-frames' })
+    // Node 24 把「只有 magic」当空帧解出来（text 为空、frames=1）；这里钉住实际行为，
+    // 免得以后换 Node 悄悄变了没人发现。真实日志至少有一条 header，不受影响。
+    check('009 decode：只有 magic 没有帧体 → 空文本单帧（Node 24 行为）',
+      decodeSessionLog(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])), { ok: true, text: '', frames: 1 })
+  } else {
+    ok('009 decode：本机 Node 无 zstd（no-frames 用例跳过）', true)
+  }
   check('009 decode：非 Buffer → decode-failed', decodeSessionLog('not a buffer'), { ok: false, reason: 'decode-failed' })
 
   // ---- §1.2 parseSessionEvents
@@ -2589,7 +2596,9 @@ function recursiveKeys(value, out = []) {
       const noZstd = await syncUsageIndex({ index: noZstdIndex, config: syncConfig, sessionsDir: budgetRoot, now: USAGE_NOW })
       check('009 sync：zstd 不可用 → scanSkipped=no-zstd，不抛',
         [noZstd.ok, noZstd.scanned, noZstd.rescued, noZstd.scanSkipped, noZstd.scanFailed], [true, 2, 0, 'no-zstd', 0])
-      check('009 decode：zstd 不可用时返回 no-zstd', decodeSessionLog(Buffer.from([1, 2, 3])), { ok: false, reason: 'no-zstd' })
+      // 带 magic 的 buffer 才能走到能力判定：先认帧头、再认 zstd 可用性。
+      check('009 decode：zstd 不可用时返回 no-zstd',
+        decodeSessionLog(Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3])), { ok: false, reason: 'no-zstd' })
     } finally {
       zlib.zstdDecompressSync = originalDecompress
     }
@@ -2639,49 +2648,53 @@ function recursiveKeys(value, out = []) {
   resetInstanceState()
 
   // ---- §2.2 路由 / 工具：兜底后的 coverage 与隐私边界
-  writeLog(routeRoot, 'p', 'session-route', [
-    headerEvent(1, USAGE_NOW),
-    usageEvent(2, USAGE_NOW, { inputTokens: 120, outputTokens: 30 }),
-    usageEvent(3, USAGE_NOW + 1000, { inputTokens: 30, outputTokens: 5 }),
-  ])
-  const routeRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-fallback-route-index.json'), usageScanPath: routeRoot }
-  resetInstanceState()
-  __internals.hardResetUsage()
-  const routeCtx = makeRouteCtx(makeFakePersistence({}))
-  resetInstanceState()
-  apply(routeCtx.ctx, routeRow)
-  const routeConfig = effectiveConfig(routeRow, routeCtx.ctx)
-  const routeSync = await runUsageSync(routeCtx.ctx, routeConfig)
-  check('009 runUsageSync：无 persistence 列表时靠兜底出数',
-    [routeSync.ok, routeSync.sessions, routeSync.indexed, routeSync.rescued, routeSync.scanned], [true, 1, 1, 1, 1])
-  const route = routeCtx.registered.find(item => item.path === '/token-plan-quota')
-  ok('009 路由：已注册 /token-plan-quota', route !== undefined)
-  const realDateNowRoute = Date.now
-  try {
-    Date.now = () => USAGE_NOW
-    const response = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
-    check('009 路由：GET usage 200 且 totals 来自兜底日志',
-      [response.status, response.json.totals.calls, response.json.totals.input, response.json.totals.output], [200, 2, 150, 35])
-    check('009 路由：coverage 暴露 rescued / scanned',
-      [response.json.coverage.sessions, response.json.coverage.indexed, response.json.coverage.rescued, response.json.coverage.scanned], [1, 1, 1, 1])
-    ok('009 路由：响应没有百分号', !response.raw.includes('%'))
-    ok('009 路由：响应没有兜底目录路径或索引路径',
-      !response.raw.includes(routeRoot) && !response.raw.includes(routeRow.usageIndexPath))
-    ok('009 路由：响应没有消息文本 / 表头字段',
-      !recursiveKeys(response.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
-    const postResponse = await callUsageRoute(route, '/token-plan-quota/usage?days=7', 'POST')
-    check('009 路由：非 GET 仍是 405', postResponse.status, 405)
+  if (HAS_ZSTD) {
+    writeLog(routeRoot, 'p', 'session-route', [
+      headerEvent(1, USAGE_NOW),
+      usageEvent(2, USAGE_NOW, { inputTokens: 120, outputTokens: 30 }),
+      usageEvent(3, USAGE_NOW + 1000, { inputTokens: 30, outputTokens: 5 }),
+    ])
+    const routeRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-fallback-route-index.json'), usageScanPath: routeRoot }
+    resetInstanceState()
+    __internals.hardResetUsage()
+    const routeCtx = makeRouteCtx(makeFakePersistence({}))
+    resetInstanceState()
+    apply(routeCtx.ctx, routeRow)
+    const routeConfig = effectiveConfig(routeRow, routeCtx.ctx)
+    const routeSync = await runUsageSync(routeCtx.ctx, routeConfig)
+    check('009 runUsageSync：无 persistence 列表时靠兜底出数',
+      [routeSync.ok, routeSync.sessions, routeSync.indexed, routeSync.rescued, routeSync.scanned], [true, 1, 1, 1, 1])
+    const route = routeCtx.registered.find(item => item.path === '/token-plan-quota')
+    ok('009 路由：已注册 /token-plan-quota', route !== undefined)
+    const realDateNowRoute = Date.now
+    try {
+      Date.now = () => USAGE_NOW
+      const response = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
+      check('009 路由：GET usage 200 且 totals 来自兜底日志',
+        [response.status, response.json.totals.calls, response.json.totals.input, response.json.totals.output], [200, 2, 150, 35])
+      check('009 路由：coverage 暴露 rescued / scanned',
+        [response.json.coverage.sessions, response.json.coverage.indexed, response.json.coverage.rescued, response.json.coverage.scanned], [1, 1, 1, 1])
+      ok('009 路由：响应没有百分号', !response.raw.includes('%'))
+      ok('009 路由：响应没有兜底目录路径或索引路径',
+        !response.raw.includes(routeRoot) && !response.raw.includes(routeRow.usageIndexPath))
+      ok('009 路由：响应没有消息文本 / 表头字段',
+        !recursiveKeys(response.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+      const postResponse = await callUsageRoute(route, '/token-plan-quota/usage?days=7', 'POST')
+      check('009 路由：非 GET 仍是 405', postResponse.status, 405)
 
-    const tool = buildQuotaTool(() => effectiveConfig(routeRow, routeCtx.ctx), routeCtx.ctx)
-    const toolUsage = await tool.execute({ action: 'usage', days: 7 })
-    check('009 工具：action=usage 能看到兜底 coverage',
-      [toolUsage.ok, toolUsage.usage.totals.calls, toolUsage.usage.coverage.rescued, toolUsage.usage.coverage.scanned], [true, 2, 1, 1])
-    ok('009 工具：文本不回显日志路径', !toolUsage.text.includes(routeRoot))
-  } finally {
-    Date.now = realDateNowRoute
+      const tool = buildQuotaTool(() => effectiveConfig(routeRow, routeCtx.ctx), routeCtx.ctx)
+      const toolUsage = await tool.execute({ action: 'usage', days: 7 })
+      check('009 工具：action=usage 能看到兜底 coverage',
+        [toolUsage.ok, toolUsage.usage.totals.calls, toolUsage.usage.coverage.rescued, toolUsage.usage.coverage.scanned], [true, 2, 1, 1])
+      ok('009 工具：文本不回显日志路径', !toolUsage.text.includes(routeRoot))
+    } finally {
+      Date.now = realDateNowRoute
+    }
+    resetInstanceState()
+
+  } else {
+    ok('009 路由：本机 Node 无 zstd（兜底出数用例跳过）', true)
   }
-  resetInstanceState()
-
   // usageScanFallback=false：即使目录里有日志，也不许把兜底会话算进来。
   const offRouteRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-fallback-off-index.json'), usageScanPath: routeRoot, usageScanFallback: false }
   resetInstanceState()
@@ -2699,14 +2712,18 @@ function recursiveKeys(value, out = []) {
   resetInstanceState()
 
   // runUsageSync 本身：无 persistence 但兜底可用时不能早退（006 的旧分支会直接 skipped）。
-  const noPersistenceCtx = { logger: { warn() {} }, get: () => undefined }
-  const noPersistenceConfig = effectiveConfig({ sources: [], usageIndexPath: join(TEST_HOME, 'usage-nop-index.json'), usageScanPath: routeRoot }, noPersistenceCtx)
-  resetInstanceState()
-  __internals.hardResetUsage()
-  const noPersistenceSync = await runUsageSync(noPersistenceCtx, noPersistenceConfig)
-  check('009 runUsageSync：无 persistence 时走目录兜底而不是 skipped',
-    [noPersistenceSync.ok, noPersistenceSync.sessions, noPersistenceSync.rescued], [true, 1, 1])
-  resetInstanceState()
+  if (HAS_ZSTD) {
+    const noPersistenceCtx = { logger: { warn() {} }, get: () => undefined }
+    const noPersistenceConfig = effectiveConfig({ sources: [], usageIndexPath: join(TEST_HOME, 'usage-nop-index.json'), usageScanPath: routeRoot }, noPersistenceCtx)
+    resetInstanceState()
+    __internals.hardResetUsage()
+    const noPersistenceSync = await runUsageSync(noPersistenceCtx, noPersistenceConfig)
+    check('009 runUsageSync：无 persistence 时走目录兜底而不是 skipped',
+      [noPersistenceSync.ok, noPersistenceSync.sessions, noPersistenceSync.rescued], [true, 1, 1])
+    resetInstanceState()
+  } else {
+    ok('009 runUsageSync：本机 Node 无 zstd（无持久化兜底用例跳过）', true)
+  }
 }
 
 /* ============================================ 008 官方账号侧用量明细（Token Plan Usage Details）

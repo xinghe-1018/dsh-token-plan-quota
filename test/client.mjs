@@ -1665,8 +1665,8 @@ function findChip(node) {
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
   // 007 增了 9 个自定义区间键（109 → 118）；008 增了 10 个官方对照键（INTERFACE §3.3 的 8 个
-  // + 「官方」格标签 + clampedFrom 说明），118 → 128。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [128, 128])
+  // + 「官方」格标签 + clampedFrom 说明），118 → 128；009 增 usageScanRescued（008 的 128 → 129）。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [129, 129])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1861,6 +1861,14 @@ function findNodes(node, className, out = []) {
   const classes = String(node.props?.className ?? '').split(/\s+/)
   if (classes.includes(className)) out.push(node)
   for (const child of node.children ?? []) findNodes(child, className, out)
+  return out
+}
+
+/** 深度优先找 props 里带某个 data-* 的节点（009 脚注这类无 class 的钩子用）。 */
+function nodesWithProp(node, prop, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (node.props?.[prop] !== undefined) out.push(node)
+  for (const child of node.children ?? []) nodesWithProp(child, prop, out)
   return out
 }
 
@@ -3260,6 +3268,107 @@ function officialFetchOf(bodyOrFactory) {
   ok('T006 en 错误态文案是英文', text.includes('Could not load official account usage') && text.includes('Retry official query'), text.slice(0, 300))
   ok('T006 en 不展示中文 hint（宿主提示只给中文界面）', !text.includes('去控制台开启用量统计'), text.slice(0, 300))
   ok('T006 en 整屏没有中文字符', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 300))
+}
+
+
+/* ============================================================ T009：兜底扫描脚注（FR-008） */
+
+/** 本机快照带上 coverage 的兜底扫描四键（官方分支仍走 usageFetch 的正常形状）。 */
+function rescuedFetch(n) {
+  return usageFetch((snapshot) => ({
+    ...snapshot,
+    coverage: { ...snapshot.coverage, scanned: 219, rescued: n, scanFailed: 0, scanDeferred: 0 },
+  }))
+}
+
+/* T009 ①：静态门禁 —— 钩子、双语键、文案原句（与 T004 同口径：禁 % / Credits）。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T009 源码渲染 data-usage-rescued 钩子（原始数量进属性）', code.includes('"data-usage-rescued": String(rescued)'))
+  ok('T009 只有 rescued > 0 才追加这一行', code.includes('if (rescued > 0) {'))
+  check('T009 COPY 的 usageScanRescued 在 zh / en 各一处', (code.match(/usageScanRescued:/g) ?? []).length, 2)
+
+  const zhBlock = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(code)
+  const enBlock = /\n      en: \{([\s\S]*?)\n      \},/.exec(code)
+  const zhLine = /usageScanRescued: "([^"]*)"/.exec(zhBlock?.[1] ?? '')?.[1]
+  const enLine = /usageScanRescued: "([^"]*)"/.exec(enBlock?.[1] ?? '')?.[1]
+  check('T009 zh 文案是 INTERFACE §3 的原句',
+    zhLine, '另有 {n} 个会话不在宿主的会话列表里，已按日志目录补扫。')
+  check('T009 en 文案是 INTERFACE §3 的原句',
+    enLine, '{n} more session(s) were not in the host list and were recovered from the log directory.')
+  ok('T009 双语文案都不带百分比', !String(zhLine).includes('%') && !String(enLine).includes('%'))
+  ok('T009 双语文案都不提 Credits', !/credit/i.test(String(zhLine)) && !/credit/i.test(String(enLine)))
+}
+
+/* T009 ②：rescued > 0 —— 脚注多一行，数字与钩子对得上，既有「仅统计本机」不被挤掉。 */
+{
+  const bundle = await mountUsage({ fetchImpl: rescuedFetch(2) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const notes = findNodes(tree, 'tpq-usage-notes')
+  check('T009 脚注块仍然只有一块', notes.length, 1)
+  const rescuedNodes = nodesWithProp(tree, 'data-usage-rescued')
+  check('T009 rescued>0 时脚注恰好多一行', rescuedNodes.length, 1)
+  check('T009 钩子带原始会话数（不是格式化后的串）', rescuedNodes[0]?.props?.['data-usage-rescued'], '2')
+  check('T009 中文文案按 INTERFACE §3 渲染', collectText(rescuedNodes[0]).join(''),
+    '另有 2 个会话不在宿主的会话列表里，已按日志目录补扫。')
+  ok('T009 新行落在同一块脚注里（官方对照条下方、来源声明旁边）',
+    notes[0] !== undefined && nodesWithProp(notes[0], 'data-usage-rescued').length === 1)
+  check('T009 有 rescued 时脚注行数 = 既有 5 行 + 1',
+    notes[0] === undefined ? -1 : notes[0].children.length, 6)
+  const text = collectText(tree).join(' ')
+  ok('T009 既有「仅统计本机」脚注仍渲染（新行不替换来源声明）',
+    text.includes('仅统计本机 DSH 发出的调用；其他设备的用量不在此列。'), text.slice(-260))
+  ok('T009 官方对照条照旧在脚注上方渲染', findNodes(tree, 'tpq-usage-official').length === 1)
+}
+
+/* T009 ③：rescued = 0 —— 不渲染，脚注与 008 的 fixture 逐行一致（4 张截图布局不变）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: rescuedFetch(0) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const notes = findNodes(tree, 'tpq-usage-notes')
+  check('T009 rescued=0 时一行都不渲染', nodesWithProp(tree, 'data-usage-rescued').length, 0)
+  check('T009 rescued=0 时脚注仍是既有 5 行（DOM 与 008 相同）',
+    notes[0] === undefined ? -1 : notes[0].children.length, 5)
+  const text = collectText(tree).join(' ')
+  ok('T009 rescued=0 时既有脚注照旧（含「仅统计本机」与「不折算 Credits」）',
+    text.includes('仅统计本机 DSH 发出的调用') && text.includes('不折算 Credits，也不估算余量。'), text.slice(-260))
+}
+
+/* T009 ④：老宿主 / 缺键 —— coverage 没有 rescued 时同 rescued=0，不抛也不渲染。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  check('T009 coverage 缺 rescued 键时同样不渲染（老宿主兼容）',
+    nodesWithProp(tree, 'data-usage-rescued').length, 0)
+  ok('T009 缺键时其余脚注照常', collectText(tree).join(' ').includes('仅统计本机 DSH 发出的调用'))
+}
+
+/* T009 ⑤：数量格式化 —— 四位数走千分位分组，不能被压成 1.2K。 */
+{
+  const bundle = await mountUsage({ fetchImpl: rescuedFetch(1234) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const node = nodesWithProp(tree, 'data-usage-rescued')[0]
+  check('T009 四位数走千分位（1234 → 1,234，不压成 1.2K）', collectText(node).join(''),
+    '另有 1,234 个会话不在宿主的会话列表里，已按日志目录补扫。')
+  check('T009 属性仍是原始数字', node?.props?.['data-usage-rescued'], '1234')
+}
+
+/* T009 ⑥：英文界面 —— en 文案、无中文、无 % / Credits。 */
+{
+  const bundle = await mountUsage({ lang: 'en-US', fetchImpl: rescuedFetch(2) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const node = nodesWithProp(tree, 'data-usage-rescued')[0]
+  check('T009 en 文案按 INTERFACE §3 渲染', collectText(node).join(''),
+    '2 more session(s) were not in the host list and were recovered from the log directory.')
+  ok('T009 en 该行不含中文字符', !/[\u3400-\u9fff]/u.test(collectText(node).join('')), collectText(node).join(''))
+  const own = collectText(node).join('')
+  ok('T009 en 该行不带百分比、不提 Credits', !own.includes('%') && !/credit/i.test(own), own)
+  ok('T009 en 既有「仅统计本机」来源声明仍是英文', collectText(tree).join(' ').includes('Only calls made by this DSH instance are counted'))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

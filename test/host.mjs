@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
+import zlib from 'node:zlib'
 import { __internals, apply, observeStream, parsePolicyKey } from '../lib/index.js'
 
 // 离线不变量（宪法 VI）：本套件不得联网。DSH_HOME 指向 tmpdir 只挡住了 .credentials.yaml 与 .env，
@@ -37,6 +38,8 @@ const {
   toToolJson, buildQuotaTool,
   emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange, resolveCustomRange,
   loadUsageIndex, saveUsageIndex, trimUsageIndex, syncUsageIndex,
+  decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature,
+  ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
   buildUsageSnapshot, runUsageSync,
   buildOfficialUsageSnapshot, resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
   sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
@@ -2324,6 +2327,386 @@ function recursiveKeys(value, out = []) {
   } finally {
     Date.now = realDateNow
   }
+}
+
+/* ============================================ 009 兜底会话扫描 + 重启即可见
+ *
+ * 两件事各自对应一条真实故障：
+ * - 本机 217 个会话目录里有 2 个不在 persistence.list() 里（314 calls / 56.7M tokens 从没进过索引）；
+ * - 重启后首轮同步要等 20 秒，这之前打开用量屏全是 0。
+ * 全部用 tmp 目录里现造的日志 fixture，不读真实 ~/.dsh/sessions。
+ */
+{
+  const HAS_ZSTD = typeof zlib.zstdCompressSync === 'function' && typeof zlib.zstdDecompressSync === 'function'
+  const originalDecompress = zlib.zstdDecompressSync
+  const fixtureRoot = join(TEST_HOME, 'usage-fallback-fixture')
+  const syncRoot = join(TEST_HOME, 'usage-fallback-sync')
+  const versionRoot = join(TEST_HOME, 'usage-fallback-version')
+  const seededRoot = join(TEST_HOME, 'usage-fallback-seeded')
+  const budgetRoot = join(TEST_HOME, 'usage-fallback-budget')
+  const routeRoot = join(TEST_HOME, 'usage-fallback-route')
+  for (const root of [fixtureRoot, syncRoot, versionRoot, seededRoot, budgetRoot, routeRoot]) rmSync(root, { recursive: true, force: true })
+
+  const frameOf = text => zlib.zstdCompressSync(Buffer.from(text, 'utf8'))
+  const linesOf = events => events.map(event => JSON.stringify(event)).join('\n') + '\n'
+  function writeLog(root, project, id, events, fileName = 'session.v4.jsonl.zstd') {
+    const dir = join(root, project, id)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, fileName), frameOf(linesOf(events)))
+  }
+  const aggregateOf = (index, days = 7) => aggregateUsageRange(index, { days, now: USAGE_NOW })
+
+  // ---- DEFAULTS / 导出形状
+  check('009 DEFAULTS：兜底扫描默认开', DEFAULTS.usageScanFallback, true)
+  check('009 DEFAULTS：扫描目录默认 $DSH_HOME/sessions', DEFAULTS.usageScanPath, '$DSH_HOME/sessions')
+  check('009 兜底预算：64 MiB', FALLBACK_SCAN_BUDGET, 64 * 1024 * 1024)
+  ok('009 __internals 追加七项导出',
+    [decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature, ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET]
+      .every(value => value !== undefined))
+  ok('009 decode/parse/cut/logs/signature 都是函数',
+    [decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature, ensureUsageIndexLoaded]
+      .every(value => typeof value === 'function'))
+
+  // ---- §1.1 decodeSessionLog
+  if (HAS_ZSTD) {
+    const textA = '{"n":1}\n'
+    const textB = '{"n":2}\n'
+    const textC = '{"n":3}\n'
+    const single = decodeSessionLog(frameOf(textA))
+    check('009 decode：单帧文本与帧数', [single.ok, single.frames, single.text], [true, 1, textA])
+
+    const multi = decodeSessionLog(Buffer.concat([textA, textB, textC].map(frameOf)))
+    check('009 decode：多帧按序拼接（多帧 zstd 不能只解第一帧）',
+      [multi.ok, multi.frames, multi.text], [true, 3, textA + textB + textC])
+
+    // 坏帧要选真的会抛的：Node 24 的 zstdDecompressSync 对 magic + 任意短尾巴（含全 ff / 全 00）
+    // 都可能安静地解成空 Buffer，只有帧头声明的窗口大到荒谬时才会抛（"Frame requires too much memory"）。
+    const badFrame = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0x00, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    const badTail = decodeSessionLog(Buffer.concat([frameOf(textA), badFrame]))
+    check('009 decode：坏尾帧只保留前面能解的部分', [badTail.ok, badTail.frames, badTail.text], [true, 1, textA])
+
+    const badMiddle = decodeSessionLog(Buffer.concat([frameOf(textA), badFrame, frameOf(textB)]))
+    check('009 decode：中间坏帧跳过后继续解后面的帧',
+      [badMiddle.ok, badMiddle.frames, badMiddle.text], [true, 2, textA + textB])
+  } else {
+    ok('009 decode：本机 Node 无 zstd（多帧用例跳过，只验证降级）', true)
+  }
+  check('009 decode：空 buffer → no-frames', decodeSessionLog(Buffer.alloc(0)), { ok: false, reason: 'no-frames' })
+  check('009 decode：没有 zstd magic → no-frames', decodeSessionLog(Buffer.from('plain text, no frame', 'utf8')), { ok: false, reason: 'no-frames' })
+  // Node 24 把「只有 magic」当空帧解出来（text 为空、frames=1）；这里钉住实际行为，
+  // 免得以后换 Node 悄悄变了没人发现。真实日志至少有一条 header，不受影响。
+  check('009 decode：只有 magic 没有帧体 → 空文本单帧（Node 24 行为）',
+    decodeSessionLog(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])), { ok: true, text: '', frames: 1 })
+  check('009 decode：非 Buffer → decode-failed', decodeSessionLog('not a buffer'), { ok: false, reason: 'decode-failed' })
+
+  // ---- §1.2 parseSessionEvents
+  const parsed = parseSessionEvents('\n{"seq":1}\n   \nnot-json\n[1,2]\n{"seq":2}\n')
+  check('009 parse：坏行计数、空行跳过、非对象不算事件',
+    [parsed.events.length, parsed.badLines, parsed.events.map(event => event.seq)], [2, 2, [1, 2]])
+  check('009 parse：空文本 → 0 事件 0 坏行', parseSessionEvents(''), { events: [], badLines: 0 })
+
+  // ---- §1.3 fallbackCutOf
+  check('009 cut：非 seeded 恒 0',
+    fallbackCutOf([{ type: 'session', isSeeded: false }, { type: 'session/end-seed', seq: 5, data: { inherited: true } }]), 0)
+  check('009 cut：seeded 但没有 inherited 标记 → 0',
+    fallbackCutOf([{ type: 'session', isSeeded: true }, { type: 'session/end-seed', seq: 5, data: {} }]), 0)
+  check('009 cut：取最后一条 inherited 标记的 seq + 1',
+    fallbackCutOf([
+      { type: 'session', isSeeded: true },
+      { type: 'other' },
+      { type: 'session/end-seed', seq: 3, data: { inherited: true } },
+      { type: 'session/end-seed', seq: 7, data: { inherited: true } },
+      { type: 'session/end-seed', seq: 9, data: { inherited: false } },
+    ]), 8)
+  check('009 cut：标记缺 seq 时用下标 + 1',
+    fallbackCutOf([{ type: 'session', isSeeded: true }, { type: 'session/end-seed', data: { inherited: true } }]), 2)
+  check('009 cut：空数组 / 字符串 → 0', [fallbackCutOf([]), fallbackCutOf('x')], [0, 0])
+
+  // ---- §1.4 fallbackLogsOf
+  writeLog(fixtureRoot, 'project-a', 'session-alpha', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 1, outputTokens: 0 })], 'session.v3.jsonl.zstd')
+  writeLog(fixtureRoot, 'project-a', 'session-alpha', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 2, outputTokens: 0 })], 'session.v4.jsonl.zstd')
+  writeLog(fixtureRoot, 'project-a', 'plain-uuid', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 3, outputTokens: 0 })], 'session.jsonl.zstd')
+  mkdirSync(join(fixtureRoot, 'project-a', 'empty-session'), { recursive: true })
+  writeLog(fixtureRoot, 'project-b', 'session-beta', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 4, outputTokens: 0 })], 'session.v2.jsonl.zstd')
+  writeFileSync(join(fixtureRoot, 'README.txt'), 'not a log')
+  writeFileSync(join(fixtureRoot, 'project-b', 'session-beta', 'notes.txt'), 'not a log either')
+
+  const found = fallbackLogsOf(fixtureRoot)
+  check('009 logs：dirs 含无日志的会话目录', found.dirs, 4)
+  check('009 logs：每个会话目录只留一份（版本最高的那份）', found.logs.length, 3)
+  const foundById = Object.fromEntries(found.logs.map(log => [log.id, log]))
+  check('009 logs：目录名就是会话 id，不剥 session- 前缀', Object.keys(foundById).sort(), ['plain-uuid', 'session-alpha', 'session-beta'])
+  ok('009 logs：v4 与 v3 同目录时选 v4', foundById['session-alpha'].path.endsWith('session.v4.jsonl.zstd'))
+  ok('009 logs：无版本文件名同样认', foundById['plain-uuid'].path.endsWith('session.jsonl.zstd'))
+  ok('009 logs：日志记录带 bytes / mtimeMs', foundById['plain-uuid'].bytes > 0 && foundById['plain-uuid'].mtimeMs > 0)
+  check('009 logs：根不存在 → 空结果，不抛',
+    fallbackLogsOf(join(fixtureRoot, 'no-such-root')), { logs: [], dirs: 0 })
+  check('009 logs：空路径 → 空结果，不抛', fallbackLogsOf(''), { logs: [], dirs: 0 })
+
+  // ---- §1.5 fallbackSignature
+  check('009 signature：file:<bytes>:<取整 mtime>', fallbackSignature({ bytes: 12.9, mtimeMs: 1000.6 }), 'file:12:1001')
+  check('009 signature：坏值归零（仍是字符串）', fallbackSignature({}), 'file:0:0')
+  ok('009 signature：写进 revision 后 schema 仍是字符串', typeof fallbackSignature({ bytes: 1, mtimeMs: 1 }) === 'string')
+
+  // ---- §1.6 syncUsageIndex 兜底
+  if (HAS_ZSTD) {
+    const listedEvents = [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW + 1000, { inputTokens: 5, outputTokens: 1 })]
+    const hiddenEvents = [
+      headerEvent(1, USAGE_NOW),
+      usageEvent(2, USAGE_NOW + 1000, { inputTokens: 100, outputTokens: 10 }),
+      usageEvent(3, USAGE_NOW + 2000, { inputTokens: 50, outputTokens: 5 }),
+    ]
+    writeLog(syncRoot, 'p', 'listed', listedEvents)
+    writeLog(syncRoot, 'p', 'session-hidden', hiddenEvents)
+    const syncConfig = effectiveConfig({ usageBackfillDays: 365, sources: [] }, ctxStub)
+    const persistence = makeFakePersistence({ listed: { revision: 'rev-listed', events: listedEvents } })
+
+    const firstIndex = emptyUsageIndex()
+    const first = await syncUsageIndex({ persistence, index: firstIndex, config: syncConfig, sessionsDir: syncRoot, now: USAGE_NOW })
+    check('009 sync：兜底补齐 list 隐藏的会话（scanned/rescued/会话数）',
+      [first.ok, first.scanned, first.rescued, first.sessions, first.scanFailed, first.scanDeferred], [true, 2, 1, 2, 0, 0])
+    check('009 sync：兜底会话的索引条目（cut / lastSeq / 字符串 revision）',
+      [firstIndex.sessions['session-hidden'].cut, firstIndex.sessions['session-hidden'].lastSeq,
+        typeof firstIndex.sessions['session-hidden'].revision], [0, 3, 'string'])
+    const firstTotals = aggregateOf(firstIndex).totals
+    check('009 sync：兜底会话计入总桶（不重复计 listed）',
+      [firstTotals.calls, firstTotals.input, firstTotals.output], [3, 155, 16])
+
+    const second = await syncUsageIndex({ persistence, index: firstIndex, config: syncConfig, sessionsDir: syncRoot, now: USAGE_NOW })
+    check('009 sync：签名未变时二次同步不重读、数字不变（幂等）',
+      [second.rescued, second.scanned, second.scanDeferred, aggregateOf(firstIndex).totals.calls], [0, 2, 0, 3])
+    check('009 sync：签名未变的兜底会话仍算 indexed', second.indexed, 2)
+
+    hiddenEvents.push(usageEvent(4, USAGE_NOW + 3000, { inputTokens: 7, outputTokens: 1 }))
+    writeLog(syncRoot, 'p', 'session-hidden', hiddenEvents)
+    const third = await syncUsageIndex({ persistence, index: firstIndex, config: syncConfig, sessionsDir: syncRoot, now: USAGE_NOW })
+    check('009 sync：日志追加只折新增的尾巴',
+      [third.rescued, firstIndex.sessions['session-hidden'].cut, firstIndex.sessions['session-hidden'].lastSeq,
+        aggregateOf(firstIndex).totals.calls, aggregateOf(firstIndex).totals.input], [1, 4, 4, 4, 162])
+
+    const revisionBeforeShorten = firstIndex.sessions['session-hidden'].revision
+    writeLog(syncRoot, 'p', 'session-hidden', [headerEvent(1, USAGE_NOW)])
+    const fourth = await syncUsageIndex({ persistence, index: firstIndex, config: syncConfig, sessionsDir: syncRoot, now: USAGE_NOW })
+    check('009 sync：文件变短不折、记 scanFailed',
+      [fourth.ok, fourth.rescued, fourth.scanFailed, aggregateOf(firstIndex).totals.calls], [true, 0, 1, 4])
+    check('009 sync：文件变短时索引 revision 不被改写', firstIndex.sessions['session-hidden'].revision, revisionBeforeShorten)
+
+    // 同目录 v4 + v3：只折最高版本，否则同一会话双计。
+    writeLog(versionRoot, 'p', 'session-versioned', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 2, outputTokens: 0 })], 'session.v4.jsonl.zstd')
+    writeLog(versionRoot, 'p', 'session-versioned', [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW, { inputTokens: 9, outputTokens: 0 })], 'session.v3.jsonl.zstd')
+    const versionIndex = emptyUsageIndex()
+    const versionSync = await syncUsageIndex({ index: versionIndex, config: syncConfig, sessionsDir: versionRoot, now: USAGE_NOW })
+    check('009 sync：v4 + v3 只折一次', [versionSync.scanned, versionSync.rescued, versionSync.sessions, versionIndex.days[USAGE_DAY].calls], [1, 1, 1, 1])
+    check('009 sync：折的是 v4 的数字', versionIndex.days[USAGE_DAY].input, 2)
+
+    // fork 继承前缀：end-seed 之前的调用属于父会话，不能再计一次。
+    const seededEvents = [
+      { seq: 0, type: 'session', time: USAGE_NOW, data: { isSeeded: true }, isSeeded: true },
+      usageEvent(1, USAGE_NOW, { inputTokens: 1000, outputTokens: 1000 }),
+      usageEvent(2, USAGE_NOW, { inputTokens: 1000, outputTokens: 1000 }),
+      { seq: 3, type: 'session/end-seed', time: USAGE_NOW, data: { inherited: true } },
+      headerEvent(4, USAGE_NOW),
+      usageEvent(5, USAGE_NOW, { inputTokens: 9, outputTokens: 1 }),
+    ]
+    writeLog(seededRoot, 'p', 'session-seeded', seededEvents)
+    const seededIndex = emptyUsageIndex()
+    const seededSync = await syncUsageIndex({ index: seededIndex, config: syncConfig, sessionsDir: seededRoot, now: USAGE_NOW })
+    check('009 sync：fork 会话 cut 从继承标记之后开始',
+      [seededSync.rescued, seededIndex.sessions['session-seeded'].cut, seededIndex.sessions['session-seeded'].lastSeq], [1, 4, 5])
+    check('009 sync：继承前缀的 2 次调用不计入',
+      [seededIndex.days[USAGE_DAY].calls, seededIndex.days[USAGE_DAY].input, seededIndex.stats.unknownModel], [1, 9, 0])
+
+    // 预算：本轮读了多少字节封顶，超出的记 scanDeferred 交给下一轮。
+    writeLog(budgetRoot, 'p', 'session-b1', hiddenEvents)
+    writeLog(budgetRoot, 'p', 'session-b2', hiddenEvents)
+    const zeroBudgetIndex = emptyUsageIndex()
+    const zeroBudget = await syncUsageIndex({ index: zeroBudgetIndex, config: syncConfig, sessionsDir: budgetRoot, scanBudgetBytes: 0, now: USAGE_NOW })
+    check('009 sync：预算 0 → 全部 deferred、不读不折',
+      [zeroBudget.scanned, zeroBudget.rescued, zeroBudget.scanDeferred, zeroBudget.indexed, aggregateOf(zeroBudgetIndex).totals.calls], [2, 0, 2, 0, 0])
+    const budgetLogs = fallbackLogsOf(budgetRoot).logs
+    const partialIndex = emptyUsageIndex()
+    const partial = await syncUsageIndex({ index: partialIndex, config: syncConfig, sessionsDir: budgetRoot, scanBudgetBytes: budgetLogs[0].bytes, now: USAGE_NOW })
+    check('009 sync：只够一份的预算 → 折 1 份、剩 1 份 deferred',
+      [partial.rescued, partial.scanDeferred, partial.sessions], [1, 1, 2])
+    const fullIndex = emptyUsageIndex()
+    const full = await syncUsageIndex({ index: fullIndex, config: syncConfig, sessionsDir: budgetRoot, now: USAGE_NOW })
+    check('009 sync：后续轮次把 deferred 的补完', [full.rescued, full.scanDeferred, aggregateOf(fullIndex).totals.calls], [2, 0, 6])
+
+    // 列表里的会话读失败：算 failed，但**不**交给兜底（否则同一会话会被两套读法各折一次）。
+    const readFailPersistence = {
+      async list() { return [{ id: 'listed', revision: 'rev-read-fail', header: { id: 'listed' } }] },
+      async open() { throw new Error('open boom') },
+    }
+    const readFailIndex = emptyUsageIndex()
+    const readFail = await syncUsageIndex({ persistence: readFailPersistence, index: readFailIndex, config: syncConfig, sessionsDir: syncRoot, now: USAGE_NOW })
+    check('009 sync：list 里的会话读失败 → failed，不交给兜底重读',
+      [readFail.failed, readFail.rescued, readFail.sessions, 'listed' in readFailIndex.sessions,
+        // session-hidden 此时已被上面「文件变短」用例改成只剩 header，所以兜底折进来 0 次调用；
+        // 若 listed 被兜底重读，这里会出现 1，正好证明「列表里的会话不交给兜底」。
+        aggregateOf(readFailIndex).totals.calls], [1, 1, 2, false, 0])
+
+    const oneBudgetIndex = emptyUsageIndex()
+    const oneBudget = await syncUsageIndex({ index: oneBudgetIndex, config: syncConfig, sessionsDir: budgetRoot, scanBudgetBytes: 1, now: USAGE_NOW })
+    check('009 sync：预算 1 字节 → 两份都 deferred',
+      [oneBudget.rescued, oneBudget.scanDeferred, oneBudget.scanFailed], [0, 2, 0])
+
+    // persistence 列表失败：日志还在磁盘上，不能整轮放弃。
+    const failingPersistence = {
+      async list() { throw new Error('list boom') },
+      async open() { throw new Error('open boom') },
+    }
+    const failedIndex = emptyUsageIndex()
+    const failedList = await syncUsageIndex({ persistence: failingPersistence, index: failedIndex, config: syncConfig, sessionsDir: budgetRoot, now: USAGE_NOW })
+    check('009 sync：list 抛错仍全目录兜底（不再早退）',
+      [failedList.ok, 'skipped' in failedList, failedList.sessions, failedList.rescued], [true, false, 2, 2])
+
+    // 完全没有 persistence 也能靠目录出数。
+    const noPersistenceIndex = emptyUsageIndex()
+    const noPersistence = await syncUsageIndex({ index: noPersistenceIndex, config: syncConfig, sessionsDir: budgetRoot, now: USAGE_NOW })
+    check('009 sync：无 persistence 时目录兜底仍然 ok',
+      [noPersistence.ok, noPersistence.sessions, noPersistence.rescued], [true, 2, 2])
+
+    const offIndex = emptyUsageIndex()
+    const off = await syncUsageIndex({ index: offIndex, config: syncConfig, sessionsDir: budgetRoot, scanFallback: false, now: USAGE_NOW })
+    check('009 sync：scanFallback=false 且无 persistence 时保持原早退语义',
+      [off.ok, off.skipped, off.scanned, off.rescued], [false, 'no-session-persistence', 0, 0])
+
+    const offListedIndex = emptyUsageIndex()
+    const offListed = await syncUsageIndex({ persistence, index: offListedIndex, config: syncConfig, sessionsDir: syncRoot, scanFallback: false, now: USAGE_NOW })
+    check('009 sync：scanFallback=false 时只走 persistence',
+      [offListed.ok, offListed.scanned, offListed.rescued, offListed.sessions], [true, 0, 0, 1])
+
+    const noDirIndex = emptyUsageIndex()
+    const noDir = await syncUsageIndex({ persistence: makeFakePersistence({}), index: noDirIndex, config: syncConfig, sessionsDir: join(TEST_HOME, 'no-such-sessions'), now: USAGE_NOW })
+    check('009 sync：目录不存在 → scanSkipped=no-dir、不报错',
+      [noDir.ok, noDir.scanned, noDir.rescued, noDir.scanSkipped], [true, 0, 0, 'no-dir'])
+
+    // Node 没有 zstd 时整段兜底降级，不抛也不误记 scanFailed。
+    zlib.zstdDecompressSync = undefined
+    try {
+      const noZstdIndex = emptyUsageIndex()
+      const noZstd = await syncUsageIndex({ index: noZstdIndex, config: syncConfig, sessionsDir: budgetRoot, now: USAGE_NOW })
+      check('009 sync：zstd 不可用 → scanSkipped=no-zstd，不抛',
+        [noZstd.ok, noZstd.scanned, noZstd.rescued, noZstd.scanSkipped, noZstd.scanFailed], [true, 2, 0, 'no-zstd', 0])
+      check('009 decode：zstd 不可用时返回 no-zstd', decodeSessionLog(Buffer.from([1, 2, 3])), { ok: false, reason: 'no-zstd' })
+    } finally {
+      zlib.zstdDecompressSync = originalDecompress
+    }
+  } else {
+    ok('009 sync：本机 Node 无 zstd（目录扫描用例跳过）', true)
+  }
+
+  // ---- §2.1 懒加载：预置索引 + 内存为空 + 空 persistence，首请求就必须出数
+  const lazyHome = join(TEST_HOME, 'usage-lazy-home')
+  mkdirSync(lazyHome, { recursive: true })
+  const lazyIndexPath = join(lazyHome, 'prebuilt-index.json')
+  const lazyAt = 30_000
+  const lazyDay = dayKey(lazyAt)
+  const prebuilt = emptyUsageIndex()
+  prebuilt.days[lazyDay] = {
+    input: 11, output: 2, cacheRead: 0, cacheWrite: 0, calls: 1,
+    models: { 'qwen-token-plan-cn/qwen3.8-flash': { input: 11, output: 2, cacheRead: 0, cacheWrite: 0, calls: 1 } },
+  }
+  prebuilt.sessions['session-prebuilt'] = { revision: 'file:1:1', lastSeq: 2, cut: 0 }
+  saveUsageIndex(lazyIndexPath, prebuilt)
+  resetInstanceState()
+  __internals.hardResetUsage()
+  const lazyCtx = makeRouteCtx(makeFakePersistence({})).ctx
+  const lazyConfig = effectiveConfig({ usageIndexPath: lazyIndexPath, usageScanPath: join(lazyHome, 'no-scan'), sources: [] }, lazyCtx)
+  const realDateNowLazy = Date.now
+  try {
+    // now=30s：离上次同步 30s，小于 60s，不会反向踢异步同步；索引里的日键就在 1970-01-01。
+    Date.now = () => lazyAt
+    const lazySnap = buildUsageSnapshot(lazyConfig, lazyCtx, { days: 1 })
+    check('009 懒加载：首请求直接读到盘上的历史（totals）',
+      [lazySnap.totals.calls, lazySnap.totals.input, lazySnap.totals.output, lazySnap.totals.tokens], [1, 11, 2, 13])
+    check('009 懒加载：数据源仍是 session-index（不是 in-process）', lazySnap.source.kind, 'session-index')
+    check('009 懒加载：coverage 从已加载索引回填会话数',
+      [lazySnap.coverage.sessions, lazySnap.coverage.indexed], [1, 1])
+    check('009 coverage：新四键缺省 0、旧五键在前',
+      Object.keys(lazySnap.coverage), ['sessions', 'indexed', 'failed', 'unknownModel', 'skippedOld', 'scanned', 'rescued', 'scanFailed', 'scanDeferred'])
+    check('009 coverage：首请求的兜底计数为 0',
+      [lazySnap.coverage.scanned, lazySnap.coverage.rescued, lazySnap.coverage.scanFailed, lazySnap.coverage.scanDeferred], [0, 0, 0, 0])
+    ok('009 coverage：不出现 scanSkipped 键', !('scanSkipped' in lazySnap.coverage))
+    ok('009 懒加载：快照里没有索引文件路径', !JSON.stringify(lazySnap).includes(lazyIndexPath))
+    const loaded = __internals.usageIndex
+    ensureUsageIndexLoaded(lazyConfig)
+    ok('009 ensureUsageIndexLoaded：已加载时幂等（不重读、同对象）', __internals.usageIndex === loaded)
+  } finally {
+    Date.now = realDateNowLazy
+  }
+  resetInstanceState()
+
+  // ---- §2.2 路由 / 工具：兜底后的 coverage 与隐私边界
+  writeLog(routeRoot, 'p', 'session-route', [
+    headerEvent(1, USAGE_NOW),
+    usageEvent(2, USAGE_NOW, { inputTokens: 120, outputTokens: 30 }),
+    usageEvent(3, USAGE_NOW + 1000, { inputTokens: 30, outputTokens: 5 }),
+  ])
+  const routeRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-fallback-route-index.json'), usageScanPath: routeRoot }
+  resetInstanceState()
+  __internals.hardResetUsage()
+  const routeCtx = makeRouteCtx(makeFakePersistence({}))
+  resetInstanceState()
+  apply(routeCtx.ctx, routeRow)
+  const routeConfig = effectiveConfig(routeRow, routeCtx.ctx)
+  const routeSync = await runUsageSync(routeCtx.ctx, routeConfig)
+  check('009 runUsageSync：无 persistence 列表时靠兜底出数',
+    [routeSync.ok, routeSync.sessions, routeSync.indexed, routeSync.rescued, routeSync.scanned], [true, 1, 1, 1, 1])
+  const route = routeCtx.registered.find(item => item.path === '/token-plan-quota')
+  ok('009 路由：已注册 /token-plan-quota', route !== undefined)
+  const realDateNowRoute = Date.now
+  try {
+    Date.now = () => USAGE_NOW
+    const response = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
+    check('009 路由：GET usage 200 且 totals 来自兜底日志',
+      [response.status, response.json.totals.calls, response.json.totals.input, response.json.totals.output], [200, 2, 150, 35])
+    check('009 路由：coverage 暴露 rescued / scanned',
+      [response.json.coverage.sessions, response.json.coverage.indexed, response.json.coverage.rescued, response.json.coverage.scanned], [1, 1, 1, 1])
+    ok('009 路由：响应没有百分号', !response.raw.includes('%'))
+    ok('009 路由：响应没有兜底目录路径或索引路径',
+      !response.raw.includes(routeRoot) && !response.raw.includes(routeRow.usageIndexPath))
+    ok('009 路由：响应没有消息文本 / 表头字段',
+      !recursiveKeys(response.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+    const postResponse = await callUsageRoute(route, '/token-plan-quota/usage?days=7', 'POST')
+    check('009 路由：非 GET 仍是 405', postResponse.status, 405)
+
+    const tool = buildQuotaTool(() => effectiveConfig(routeRow, routeCtx.ctx), routeCtx.ctx)
+    const toolUsage = await tool.execute({ action: 'usage', days: 7 })
+    check('009 工具：action=usage 能看到兜底 coverage',
+      [toolUsage.ok, toolUsage.usage.totals.calls, toolUsage.usage.coverage.rescued, toolUsage.usage.coverage.scanned], [true, 2, 1, 1])
+    ok('009 工具：文本不回显日志路径', !toolUsage.text.includes(routeRoot))
+  } finally {
+    Date.now = realDateNowRoute
+  }
+  resetInstanceState()
+
+  // usageScanFallback=false：即使目录里有日志，也不许把兜底会话算进来。
+  const offRouteRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-fallback-off-index.json'), usageScanPath: routeRoot, usageScanFallback: false }
+  resetInstanceState()
+  __internals.hardResetUsage()
+  const offRouteCtx = makeRouteCtx(makeFakePersistence({}))
+  resetInstanceState()
+  apply(offRouteCtx.ctx, offRouteRow)
+  const offRouteConfig = effectiveConfig(offRouteRow, offRouteCtx.ctx)
+  const offRouteSync = await runUsageSync(offRouteCtx.ctx, offRouteConfig)
+  check('009 降级开关：usageScanFallback=false 时 rescued 恒 0',
+    [offRouteSync.ok, offRouteSync.rescued, offRouteSync.scanned], [true, 0, 0])
+  const offRouteSnap = buildUsageSnapshot(offRouteConfig, offRouteCtx.ctx, { days: 7 })
+  check('009 降级开关：快照 coverage 也不报兜底数',
+    [offRouteSnap.coverage.rescued, offRouteSnap.coverage.scanned, offRouteSnap.totals.calls], [0, 0, 0])
+  resetInstanceState()
+
+  // runUsageSync 本身：无 persistence 但兜底可用时不能早退（006 的旧分支会直接 skipped）。
+  const noPersistenceCtx = { logger: { warn() {} }, get: () => undefined }
+  const noPersistenceConfig = effectiveConfig({ sources: [], usageIndexPath: join(TEST_HOME, 'usage-nop-index.json'), usageScanPath: routeRoot }, noPersistenceCtx)
+  resetInstanceState()
+  __internals.hardResetUsage()
+  const noPersistenceSync = await runUsageSync(noPersistenceCtx, noPersistenceConfig)
+  check('009 runUsageSync：无 persistence 时走目录兜底而不是 skipped',
+    [noPersistenceSync.ok, noPersistenceSync.sessions, noPersistenceSync.rescued], [true, 1, 1])
+  resetInstanceState()
 }
 
 /* ============================================ 008 官方账号侧用量明细（Token Plan Usage Details）

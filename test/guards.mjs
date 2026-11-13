@@ -840,6 +840,52 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('008 出站主机没有被这份功能扩表（仍 8 条 https）',
       __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
   }
+
+  /* 9) 009 兜底目录扫描 + 重启即可见：兜底段只能"读日志、不联网、不落盘"，
+   * 四个 coverage 键与两个配置键是**落盘契约**的一部分（键名漂了客户端就读不到，屏上少一行脚注却不会红）。 */
+  {
+    const strip9 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    const fallbackStart = usageSrc.indexOf('兜底目录扫描（009）')
+    const fallbackEnd = usageSrc.indexOf('export async function syncUsageIndex')
+    ok('009 兜底段在 lib/usage-stats.js 里存在且可定位', fallbackStart > 0 && fallbackEnd > fallbackStart)
+    const fallbackCode = fallbackStart > 0 ? strip9(usageSrc.slice(fallbackStart, fallbackEnd)) : ''
+    ok('009 兜底段被完整扫到（字符数 > 3000）', fallbackCode.length > 3000)
+    ok('009 兜底段：不联网（没有 fetch / http 字面量）',
+      fallbackCode !== '' && !fallbackCode.includes('fetch(') && !fallbackCode.includes('http'))
+    ok('009 兜底段：不读凭据',
+      fallbackCode !== '' && !/credential|apikey|cookie|process\.env/i.test(fallbackCode))
+    ok('009 兜底段：不写盘（写索引只发生在 saveUsageIndex）',
+      fallbackCode !== '' && !fallbackCode.includes('writeFileSync') && !fallbackCode.includes('renameSync')
+      && !fallbackCode.includes('unlinkSync') && !fallbackCode.includes('mkdirSync'))
+    ok('009 解码：按 zstd magic 切帧而不是整份解压',
+      fallbackCode.includes('0x28, 0xb5, 0x2f, 0xfd') && fallbackCode.includes('zstdDecompressSync'))
+    ok('009 日志签名只含大小与修改时间（路径不落索引）',
+      fallbackCode.includes("'file:' + size") && !fallbackCode.includes('log.path'))
+    ok('009 预算常量 = 64 MB', __internals.FALLBACK_SCAN_BUDGET === 64 * 1024 * 1024)
+    ok('009 纯函数与懒加载都从 __internals 暴露',
+      ['decodeSessionLog', 'parseSessionEvents', 'fallbackCutOf', 'fallbackLogsOf', 'fallbackSignature', 'ensureUsageIndexLoaded']
+        .every(name => typeof __internals[name] === 'function'))
+    ok('009 DEFAULTS：usageScanFallback 默认开、usageScanPath 指向会话根目录',
+      __internals.DEFAULTS.usageScanFallback === true && __internals.DEFAULTS.usageScanPath === '$DSH_HOME/sessions')
+    const snapStart = indexSrc.indexOf('function buildUsageSnapshot')
+    const snapEnd = indexSrc.indexOf('function buildUsageSnapshot') + 4000
+    const snapRegion = snapStart > 0 ? indexSrc.slice(snapStart, snapEnd) : ''
+    ok('009 buildUsageSnapshot 先同步读盘（重启后首请求就有数）',
+      snapRegion.includes('ensureUsageIndexLoaded(config)'))
+    ok('009 coverage 追加 scanned / rescued / scanFailed / scanDeferred（缺省 0）',
+      ['scanned', 'rescued', 'scanFailed', 'scanDeferred']
+        .every(key => snapRegion.includes(key + ': Number.isFinite(result?.' + key + ')')))
+    ok('009 出站主机没有被这份功能扩表（仍 8 条 https）',
+      __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+    const clientSrc9 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+    ok('009 客户端：补扫行带 data-usage-rescued，且只在 rescued > 0 时渲染',
+      clientSrc9.includes('data-usage-rescued') && clientSrc9.includes('if (rescued > 0)'))
+    const rescuedLines = clientSrc9.split('\n').filter(line => line.includes('已按日志目录补扫')
+      || line.includes('were recovered from the log directory'))
+    ok('009 客户端：补扫脚注中英都在，且不含百分比与 Credits',
+      rescuedLines.length === 2 && rescuedLines.every(line => !line.includes('%') && !/credit/i.test(line)))
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

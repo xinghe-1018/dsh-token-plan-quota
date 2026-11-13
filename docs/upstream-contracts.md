@@ -15,6 +15,7 @@
 |---|---|---|---|---|---|
 | DeepSeek | A | `GET https://api.deepseek.com/user/balance` | Bearer `DEEPSEEK_API_KEY` | `balance_infos[]`：`total_balance` / `granted_balance` / `topped_up_balance`，多币种优先 CNY | ✅ 真实 Key 实测（本机长期在跳数） |
 | 千问 Token Plan | B | `POST https://cs-data.qianwenai.com/data/api.json?action=BroadScopeAspnGateway`（内层 `tokenplan/personal/api/v2` 的 `usage` / `quota-config` / `subscription`） | 登录 Cookie 会话；`sec_token` 由 `GET https://platform-home.qianwenai.com/tool/user/info.json` 自动取 | `usage.per1MonthPercentage` / `per1MonthResetTime`（**2026-09-23 实测：账期已改成按月，只回这两个**；旧套餐回 `per1WeekPercentage` / `per1WeekResetTime`，两条都读）；`quota-config[specCode].monthly` / `weekly` / `five_hour`，另有 `addon_quota.extrabundle`；`subscription.specCode`（lite/standard/pro/essential）/ `remainingDays` / `endTime` | ✅ 真账号实测（2026-09-06 周度形态、2026-09-23 月度形态，均由 `probe`/debug 核对字段集）。契约按其前端包 `shared.js` 逆向 |
+| 千问 Token Plan（用量明细） | B | `POST https://cs-data.qianwenai.com/data/api.json?action=…` 内层 Api `zeldaEasy.bailian-telemetry.platform-model.getModelMonitorDataWithOss`（见下方专节） | 同上（平台登录 Cookie） | 信封向下找 `originData[]`（数组）或 `dataDownloadUrl`（非空字符串）；series 元素 `{aggMethod, metricName, step, labels.usage_type, points[{timestamp, value}]}`，`timestamp` 是**桶右端点**、`usage_type` ∈ `total_tokens` / `input_tokens` / `cached_tokens` / `output_tokens` | ⚠️ 前端 bundle `analytics.js` 逆向 + 2026-11-13 实测；**单次区间 ≤ 30 天**（页面传 31，网关实测拒 31 天整月）。用于 `/usage-official` 的官方口径 |
 | Moonshot / Kimi 开放平台 | A | `GET https://api.moonshot.cn/v1/users/me/balance`（大陆，CNY）<br>`GET https://api.moonshot.ai/v1/users/me/balance`（国际，USD） | Bearer | 信封 `{code, status, data}`，**先判 `code==0 && status==true`**；`data.available_balance` / `cash_balance`（可负＝欠款）/ `voucher_balance` | ⚠️ 端点存在性实测（2026-09-06 两区均回 `401 invalid_authentication_error`）；字段名有官方文档与第三方实现背书，**未用真 Key 核对** |
 | OpenRouter | A | `GET https://openrouter.ai/api/v1/credits` | Bearer `sk-or-v1-…` | `data.total_credits` / `data.total_usage`，**余额＝差额**（两版信封都见过：`data.*` 与裸顶层） | ⚠️ 同上：存在性实测（`401 {"error":{"message":"User not found."}}`），未用真 Key 核对 |
 | OpenRouter（key 级限额） | A | `GET https://openrouter.ai/api/v1/key` | 同上 | `data.limit` / `limit_remaining` / `usage_daily\|_weekly\|_monthly` / `limit_reset` / `rate_limit.{requests,interval}` | 未接入：需要"一源第二次请求"这个架构件（见 ROADMAP T1.4b） |
@@ -64,6 +65,34 @@
 口径一句话：`tokens = input + output + cacheRead + cacheWrite`（纯求和），`steps = calls`；
 区间合计 == 各桶之和 == 各模型之和（三条恒等式由测试逐字段锁住）。
 缓存写入这一类当前宿主多数不上报，所以 `cacheWrite` 常年接近 0——是上游没报，不是插件漏计。
+
+## Token Plan 用量明细（bailian-telemetry）
+
+这一节与上一节是**互补的两把尺子**：上一节只数「经过本实例」的调用，这一节是**官方账号侧**的按天明细——
+同一把 Key 在其它设备、其它客户端、网页里用掉的量都在里面。两者相减（官方 − 本机）就是「官方比本机多出来的那部分」，
+官方小于本机时差额为负，照原样显示、不夹 0（前端对照条里的「差额」＝ 官方 − 本机）。
+
+| # | 项 | 事实 | 用于什么 |
+|---|---|---|---|
+| 1 | 完整 Api | `zeldaEasy.bailian-telemetry.platform-model.getModelMonitorDataWithOss`（挂在平台数据网关 `POST https://cs-data.qianwenai.com/data/api.json?action=…` 的 `Data` 里，与上面额度查询同一族网关） | 目前唯一能给出「官方账号侧按天 token 明细」的接口；额度接口只给百分比，不给绝对量 |
+| 2 | 鉴权 | **平台登录 Cookie**，与上面「千问 Token Plan」一行同源（`sec_token` 仍从 `GET https://platform-home.qianwenai.com/tool/user/info.json` 自动取） | 不需要 API Key、不需要 Admin/Management key；Cookie 过期就是 `official-login-expired` |
+| 3 | 请求体 | `Data.reqDTO = { productMode: "TokenPlanPersonal", startTime, endTime, step: 86400, metricFilters: [{ aggMethod: "sum", metricName: "model_usage" }] }` | 参数只走 `reqDTO`；`step` 固定 86400（天），本插件不做小时级 |
+| 4 | 时间窗 | `startTime` = 起日**本地零点**，`endTime` = 止日**本地零点 + 1 天**（右开区间，不是止日 23:59） | 按本地日切窗，跨时区/跨日边界不会漏掉最后一天；与宿主统计用的本地日界一致 |
+| 5 | 单次区间上限 | 前端传 `maxDayRangeDays: 31`，但**网关按 30 天卡**：2026-11-13 实测 2026-10-01..10-31 回 `ConsoleApiError: time range cannot be longer than 30 days`，改成 10-01..10-30 成功；再长官方改走导出任务（见第 12 条） | 宿主按 **30 天**切 chunk 查询再合并，`coverage.chunks` 记实际块数、`step: "day"` 记粒度 |
+| 6 | 最早可查 | 只能查到「**当前月往前 5 个月**的 1 号」（`officialEarliestDayKey({ now, monthsBack: 5 })`），更早的请求官方拒绝或回空 | 宿主先夹紧到该日，并把被夹过的起点如实写进 `coverage.clampedFrom`（只在夹紧时出现） |
+| 7 | 响应信封 | **别按固定层级取**：从响应树向下找同时含 `originData`（数组）或 `dataDownloadUrl`（非空字符串）的那一层（`parseOfficialEnvelope`） | 网关外面套着 `{success, data, result}` 若干层且随 action 变；写死 `data.data.originData` 会在网关换皮时静默变空 |
+| 8 | series 形状 | 每个 series 是 `{ aggMethod, metricName, step, labels: { usage_type }, points: [{ timestamp, value }] }` | 只认 `aggMethod === "sum"` 且 `metricName === "model_usage"` 的 series（`foldOfficialSeries`），别的聚合口径不猜 |
+| 9 | `timestamp` 是桶的**右端点** | 归桶要 `bucketStart = timestamp − (step ?? 86400) × 1000`，再按本地日落到 `YYYY-MM-DD`；官方控制台自己的图表也做同样的减 | 忘记减会让整段数字整体错后一天，而总量看着仍然「差不多」，是最难靠肉眼发现的一处 |
+| 10 | `usage_type` 四个值 | `total_tokens` / `input_tokens` / `cached_tokens` / `output_tokens` | 直接映射到 totals 的 `tokens` / `input` / `cacheRead` / `output`；未识别的值丢弃，不猜 |
+| 11 | input **含**缓存命中 | `cacheHitRate = cached_tokens / input_tokens`，即 `input_tokens` 里已经包含 `cached_tokens` | 只有缺 `total_tokens` 时才兜底 `input + output`（`coverage.totalDerived: true`），**绝不再加 cached**（会翻倍）；展示时 cached 单列成 cacheRead |
+| 12 | 只回下载链接 | 响应可能只有一个 `dataDownloadUrl`，指向对象存储上的导出文件（前端再去拉 CSV/JSON） | 本插件**不跟随该主机**（对象存储域名未在 `dshhub.permissions.network` 声明，`DECLARED_HOSTS` 保持 8 条不变），按 `official-download-url` 报错并提示去控制台看 |
+| 13 | 超长区间的导出任务 | 官方对超长区间走 `SubmitTokenPlanUsageExportTask` / `GetTokenPlanUsageExportTask` 生成导出文件 | 本插件**不用**（30 天切块已经够），也不声明导出主机；`official-download-url` 的提示里不提这两条任务 |
+| 14 | 失败口径 | HTTP 200 里的失败体是 `{ error: "official-unavailable", code, hint }`，`code` 是固定枚举：`official-disabled` / `official-no-credentials` / `official-login-expired` / `official-download-url` / `official-timeout` / `official-upstream` / `official-bad-response` | 客户端按 `code` 出可操作提示（例如「去控制台登录」）；**网络失败不等于 0 用量**，绝不渲染成一张全 0 的图 |
+| 15 | 与「本机实测」的关系 | 官方口径含同一账号在其它设备/其它客户端的用量，所以通常 ≥ 本机实测；两者窗口都按本地日切 | 差额 = 官方 − 本机（可为负，负数照原样），前端把它标成「差额」而不是「误差」——这是两把尺子的差，不是任何一方算错 |
+
+**证据来源**：从 `platform.qianwenai.com` 前端 bundle（`analytics.js`）逆向 + 2026-11-13 实测；**不是官方公开文档**，
+官方没有把这套 Api 写进 API 文档，字段与边界以本表的实测为准；实现侧的响应形状见 `specs/008-official-token-usage/INTERFACE.md`。
+
 ## 参考实现（都是 MIT，引用契约请注明出处）
 
 - [`steipete/CodexBar`](https://github.com/steipete/CodexBar) —— 每家一个 `docs/<provider>.md`，

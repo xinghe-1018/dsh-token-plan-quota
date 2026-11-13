@@ -235,6 +235,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Query by start/end date: the date row, the range title and the bars all come from the same response](docs/images/en/usage-range-2d.png)
 
+![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
+
 - **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
   so there is no percentage and no Credits.
@@ -252,6 +254,19 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   `usageBackfillDays` key that bounds index retention (365 by default), an end date after today is clamped
   to today, and the range shown on screen always uses the **clamped** value. Above 62 days it still aggregates
   weekly, but the **first and last buckets hug the selected range** - no padding out to whole weeks.
+- **Official account-side comparison** (opt-in via `officialUsage`): a strip under the bars puts the
+  **official "Token Plan usage details"** (account-level tokens) next to this instance's measurement, with
+  the difference (official − local) as the third cell. The official side counts the same key used by other
+  devices and clients, so the difference is what was spent outside this machine; a negative difference is not
+  a bug - it means the official series does not cover everything here (settlement lag, or it only counts calls
+  made with the Token Plan key). Both cells count tokens the same way: a cache hit counts once on each side
+  (the official side folds it into `input`, `total = input + output`), so the two numbers subtract directly.
+  Still absolute tokens only: no percentages, no Credits. The official API only
+  goes back to the first day of the month five months ago, so earlier ranges are clamped and the screen says
+  **which start was clamped away**; long ranges are split into 30-day chunks and re-joined (the gateway's real
+  limit). When it cannot be
+  fetched (no cookie / expired session / upstream failure) the cell shows **only an actionable message and no
+  numbers at all** - "unavailable" is never drawn as 0.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -277,7 +292,7 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
-The table below has 22 rows: 21 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+The table below has 24 rows: 23 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
 not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
 part of every name** (`Minutes` / `Seconds` / `Ms`).
 
@@ -303,6 +318,8 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `usageStats` | `true` | Enables usage statistics (session events folded into a per-local-day token history). Off = no sync and no in-memory counting; the **entry point stays**, and the screen states that it is disabled and which key turns it on - existing index data is kept, and the quota sources above are unaffected |
 | `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | Where the usage index lives. This is a **different file** from the `usagePath` ledger: one is day-by-day history (this screen), the other is the current month plus window anchors (the measured block in the detail panel) |
 | `usageBackfillDays` | `365` | How many days the index keeps, and the upper bound of the screen's range picker (1..365). Lowering it trims older day buckets; raising it backfills on the next sync |
+| `officialUsage` | `true` | Whether the usage screen shows the "official account side" strip: the console gateway's Token Plan usage details (account-level tokens, unrelated to the quota sources above). Off = that request is not made; bars and local numbers stay as they are |
+| `officialUsageMinutes` | `5` | Cache minutes for the official strip: the same range is reused for N minutes (`0` = always refetch) |
 | `minIntervalMs` | `1200` | Minimum interval between outbound calls (ms), throttling globally |
 | `timeoutMs` | `15000` | Per-request upstream timeout (ms, floor 1000) |
 
@@ -484,6 +501,7 @@ it does not list a speed per provider; that data stays in the snapshot and via `
 | `POST /token-plan-quota/reset` | Clear this instance's measured totals (including window anchors) |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`) |
 | `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | Aggregation for an explicit start/end date (both inclusive), taking precedence over `days`/`range`; one end only, malformed, start after end or in the future → 400 `usage-bad-range`; span above `usageBackfillDays` → 400 `usage-range-too-long` (with `maxDays`) |
+| `GET /token-plan-quota/usage-official?days=N` (also `range=` / `from&to=` / `fresh=1`) | **Official account-level tokens** (Token Plan usage details). Same parameters and error codes as `/usage`; success returns 200 with `{range, granularity, totals, buckets, source, coverage}`, and when it cannot be fetched 200 with `{error:"official-unavailable", code, hint}` - `code` is a fixed enum (disabled / no credentials / login expired / timeout / upstream / unrecognised response / download link only) and `hint` is safe to display |
 | `GET /token-plan-quota/probe?source=<id>` | Upstream field skeleton (for troubleshooting) |
 
 Same-origin requests only, and **keys are never returned**. On the model side there is the `token_plan_quota`
@@ -532,17 +550,17 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 665 assertions, offline
-node test/client.mjs                # 481 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 243 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 719 assertions, offline
+node test/client.mjs                # 555 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 256 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "21 DEFAULTS keys, a 22-row
-config table, 8 sources, 8 declared outbound hosts, 665/481 tests plus 243 guards assertions" - and checks them against
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "23 DEFAULTS keys, a 24-row
+config table, 8 sources, 8 declared outbound hosts, 719/555 tests plus 256 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

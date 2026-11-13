@@ -199,6 +199,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![按起止日期查询：日期行、区间标题与柱子都取自同一份响应](docs/images/usage-range-2d.png)
 
+![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
+
 - **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
   这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有百分比，也没有 Credits。
 - 数据来自**宿主自己的会话事件**（`sessionPersistence`），离线折叠成按本地日的索引：首轮要扫一遍历史会话
@@ -210,6 +212,15 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   非法输入（空、格式不对、开始晚于结束、开始在未来）在**本地拦下、一个请求都不发**；跨度上限与索引保留天数
   共用 `usageBackfillDays`（默认 365 天），结束日晚于今天会被夹到今天，屏上的范围一律按**夹紧后的真值**写。
   超过 62 天同样按周聚合，但**首末桶贴着所选区间**——不为了凑整周把区间外的日子算进来。
+- **官方账号侧对照**（可选，配 `officialUsage` 打开）：柱子下面另有一条对照条，把同一段时间的
+  **官方「Token Plan 用量明细」**（账号级 tokens）与本机实测并排，第三格是「官方 − 本机」的差额。
+  官方那边包含同一把 Key 在**其他设备 / 其他客户端**上的调用，所以差额就是「本机之外用了多少」；
+  差额为负不是算错——那说明这段时间官方明细里没有全部计入（结算滞后，或只统计走 Token Plan 专用 Key 的调用）。
+  两格的 token 口径同义：缓存命中在两边都只算一次（官方把它含在 `input` 里，`total = input + output`），所以可以直接相减。
+  这一格同样只取绝对 token，没有百分比与 Credits；官方接口最早只到「当前月往前 5 个月」，
+  更早的查询会被夹到那个起点并在屏上写明**被夹掉的原起点**；长区间按 30 天自动分片再拼（网关实测上限就是 30 天）。
+  取不到时（没配 Cookie / 会话过期 / 上游失败）这一格**只显示一句可操作的提示，不渲染任何数字**——
+  绝不把「取不到」画成 0。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - 统计不到的时候会明说：宿主没有 `sessionPersistence` → 退回「本进程启动以来」（重启归零）；历史还没回填完 →
@@ -232,7 +243,7 @@ JSON 优先级更高）：
 }
 ```
 
-下表 22 行：21 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
+下表 24 行：23 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
 通过 `regionConfigKey` 读取的区选择器。**一个键一行，单位都写在键名里**（`Minutes`/`Seconds`/`Ms`）。
 
 | 键 | 默认 | 含义 |
@@ -257,6 +268,8 @@ JSON 优先级更高）：
 | `usageStats` | `true` | 用量统计（把会话事件折叠成按本地日的 token 历史）的开关。关掉 = 不同步、内存也不累计；**入口保留**，统计屏里直接写已关闭并提示这个键——不删已有索引，也不影响上面那些额度源 |
 | `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | 用量索引落盘位置。与 `usagePath` 的月账本是**两个文件**：一个是按天的历史（统计屏用），一个是当月累计（明细里的本实例实测用） |
 | `usageBackfillDays` | `365` | 索引保留天数，同时是统计屏可选天数的上界（1..365）。调小会裁掉更早的日桶；调大后从下一轮同步开始往回补 |
+| `officialUsage` | `true` | 统计屏里是否显示「官方账号侧」对照条：走控制台网关的 Token Plan 用量明细（账号级 tokens，与上面那些额度源无关）。关掉 = 不发这次出网请求，柱子与本机数字照旧 |
+| `officialUsageMinutes` | `5` | 官方对照的缓存分钟数：同一区间在 N 分钟内复用上次结果（`0` = 每次回源） |
 | `minIntervalMs` | `1200` | 出站最小间隔（毫秒），全局节流 |
 | `timeoutMs` | `15000` | 单次上游请求超时（毫秒，下限 1000） |
 
@@ -415,6 +428,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 | `POST /token-plan-quota/reset` | 清零本实例实测统计（含窗口锚点） |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | 按本地日（`days > 62` 时按周）聚合的 token 用量；自定义天数用 `?days=N`（1..365，优先于 `range`） |
 | `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | 按起止日期（两端都含）聚合，优先于 `days`/`range`；只给一端、格式非法、开始晚于结束或开始在未来 → 400 `usage-bad-range`；跨度超 `usageBackfillDays` → 400 `usage-range-too-long`（带 `maxDays`） |
+| `GET /token-plan-quota/usage-official?days=N`（也可 `range=` / `from&to=` / `fresh=1`） | **官方账号级 tokens**（Token Plan 用量明细）。参数语义与 `/usage` 完全一致、错误码相同；成功 200 带 `{range, granularity, totals, buckets, source, coverage}`，取不到时 200 + `{error:"official-unavailable", code, hint}`——`code` 是固定枚举（禁用 / 没凭据 / 登录过期 / 超时 / 上游 / 响应不认识 / 只给下载链接），`hint` 可直接展示 |
 | `GET /token-plan-quota/probe?source=<id>` | 上游响应字段骨架（排查用） |
 
 只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`，或 `from` + `to`（`YYYY-MM-DD`，两端含，优先于 `days`））。
@@ -457,16 +471,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 665 项，离线
-node test/client.mjs               # 481 项，假 React/DOM/fetch
-node test/guards.mjs               # 243 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 719 项，离线
+node test/client.mjs               # 555 项，假 React/DOM/fetch
+node test/guards.mjs               # 256 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 21 个键、配置表 22 行、8 个数据源、声明 8 个出站主机、测试 665/481 项 + guards 243 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 23 个键、配置表 24 行、8 个数据源、声明 8 个出站主机、测试 719/555 项 + guards 256 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

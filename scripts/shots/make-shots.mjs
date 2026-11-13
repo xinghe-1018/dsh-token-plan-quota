@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -21,12 +21,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -153,7 +153,7 @@ function customRangeFor(now) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -188,8 +188,12 @@ async function main() {
   mkdirSync(outDir, { recursive: true })
   mkdirSync(workDir, { recursive: true })
 
-  /** 当前要喂的变体；改它不需要重载页面（点徽标就会重新拉一次 summary）。 */
-  const live = { variant: 'panel' }
+  /**
+   * 当前要喂的变体；改它不需要重载页面（点徽标就会重新拉一次 summary）。
+   * `officialError` 是 ⑫ 的开关：置 true 后官方接口回约定的失败体（200 + error/code/hint），
+   * 用来拍「官方失败但本机照常可读」的 QA 图（只落 .shots-work，不进 docs/）。
+   */
+  const live = { variant: 'panel', officialError: false }
   const built = variant => {
     const snapshot = makeSnapshot({ variant, lang: langKey, now: Date.now() })
     assertFixture(snapshot, { lang: langKey })
@@ -233,14 +237,55 @@ async function main() {
     }
     return usageCache.get(key)
   }
+  /**
+   * 008：官方账号侧对照是第二个接口（`/token-plan-quota/usage-official`），查询参数与本机那份
+   * 完全一致。缓存与落盘都必须分开：两份响应形状不同（官方多 source/coverage、没有 models/calls），
+   * 共用一份 JSON 会拍出「官方格读的其实是本机数」的假图。键同样按 days / from+to 分开。
+   */
+  const officialCache = new Map()
+  const builtOfficial = query => {
+    const custom = isDayKey(query.from) && isDayKey(query.to)
+    const key = custom ? `oc${query.from}_${query.to}` : `o${query.days}`
+    if (!officialCache.has(key)) {
+      const official = makeUsageOfficialSnapshot({ now: usageNow, ...query })
+      assertUsageOfficialFixture(official, { lang: langKey, now: usageNow, ...query })
+      const file = custom ? `usage-official-custom-${query.from}_${query.to}.json` : `usage-official-${query.days}d.json`
+      writeFileSync(join(workDir, file), JSON.stringify(official, null, 1))
+      officialCache.set(key, { json: JSON.stringify(official), official })
+    }
+    return officialCache.get(key)
+  }
   const hits = page.intercept({
     patterns: [
       { urlPattern: '*token-plan-quota/summary*' },
       { urlPattern: '*token-plan-quota/refresh*' },
       { urlPattern: '*token-plan-quota/usage*' },
+      { urlPattern: '*token-plan-quota/usage-official*' },
       { urlPattern: `*${CONNECTION_BUNDLE}*` },
     ],
     respond: async request => {
+      /*
+       * 先判官方路由：`/token-plan-quota/usage-official` 也含 '/token-plan-quota/usage' 这个子串，
+       * 顺序反了就会拿本机快照去回答官方请求（对照条上的三格会变成「官方 = 本机」）。
+       */
+      if (request.url.includes('/token-plan-quota/usage-official')) {
+        // ⑫ QA 专用：200 + {error,code,hint} 是宿主/客户端约定的失败体，客户端据此只坏这一块。
+        if (live.officialError === true) {
+          return { body: JSON.stringify({ error: 'official-unavailable', code: 'official-timeout', hint: '检查网络后重试' }), via: 'fixture-error' }
+        }
+        const params = new URL(request.url).searchParams
+        const from = params.get('from')
+        const to = params.get('to')
+        if (isDayKey(from) || isDayKey(to)) {
+          if (!(isDayKey(from) && isDayKey(to))) {
+            throw new Error('usage-official 拦截：请求只带了 from/to 之一（' + request.url + '），宿主会回 400，不造图')
+          }
+          return { body: builtOfficial({ from, to }).json, via: 'fixture-official' }
+        }
+        const asked = Number(params.get('days'))
+        const days = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : 7
+        return { body: builtOfficial({ days }).json, via: 'fixture-official' }
+      }
       if (request.url.includes('/token-plan-quota/usage')) {
         const params = new URL(request.url).searchParams
         const from = params.get('from')
@@ -388,11 +433,15 @@ async function main() {
     // （英文整套连跑时，GIF 刚关掉的旧菜单还会短暂留在 DOM 里，撞上过）。
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const done = await page.evaluate(`(() => {
-        // 取最后一个可见的 menu 容器：菜单是后挂载的，第一个往往是侧栏里别的 menu 类节点。
+        // 先找最后一个可见的 menu 容器：菜单是后挂载的，第一个往往是侧栏里别的 menu 类节点。
+        // **但宿主换过弹层实现**：0.1.7-rc.2 的模型弹层容器 class 里没有 "menu"/"popover" 这类词
+        // （行标签是 span._3B-Unq_cellLabel），只在这个容器里找就永远点不到「模型」行。
+        // 所以容器里找不到就退回全文档搜：弹层打开时行文本本身就是唯一可点的目标。
         const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
-        const root = menus.length > 0 ? menus[menus.length - 1] : document
-        const cands = [...root.querySelectorAll('*')].filter(n => n.offsetParent !== null
-          && (n.innerText || '').replace(/\\s+/g, '').includes(${JSON.stringify(match.replace(/\s+/g, ''))}))
+        const needles = ${JSON.stringify(match.replace(/\s+/g, ''))}
+        const pick = root => [...root.querySelectorAll('*')].filter(n => n.offsetParent !== null
+          && (n.innerText || '').replace(/\\s+/g, '').includes(needles))
+        const cands = menus.length > 0 && pick(menus[menus.length - 1]).length > 0 ? pick(menus[menus.length - 1]) : pick(document)
         if (cands.length === 0) return false
         const leaf = cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
         for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter']) {
@@ -456,16 +505,27 @@ async function main() {
     // 而宿主语言不完全等于浏览器的 --lang。只等一个词，就会在宿主恰好说中文的那次运行里
     // 干等到超时（英文套第一次就是这么挂的）。
     const expects = Array.isArray(expectChip) ? expectChip : [expectChip]
-    if (!await clickText(fromLabel)) throw new Error(`点不到模型按钮（应显示「${fromLabel}」）`)
+    // fromLabel 同样可以是候选数组：宿主默认模型的显示名跟着**本体版本**变
+    // （0.1.7-rc.2 的按钮写「DeepSeek-V41-Flash」，更早的写「DeepSeek-V4-Flash」）。
+    // 只认一个名字时，换模型这一步一断，后面的链和用量图就一张都拍不出来。
+    const froms = Array.isArray(fromLabel) ? fromLabel : [fromLabel]
+    // 触发按钮在**页面级**（不在弹出的菜单容器里），所以要用 clickText 扫 document 的 button；
+    // deepClick 只在"最后一个可见 menu 容器"里找，用在菜单开启之前必然点空。
+    let fromHit = null
+    for (const one of froms) if (await clickText(one)) { fromHit = one; break }
+    if (fromHit === null) {
+      const visible = await page.evaluate(`(() => [...document.querySelectorAll('button')].filter(n => n.offsetParent !== null).map(n => (n.innerText || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 24))()`)
+      throw new Error(`点不到模型按钮（试过 ${JSON.stringify(froms)}）；可见按钮：${JSON.stringify(visible)}`)
+    }
     await sleep(700)
     const rowLabels = [...new Set([UI[langKey].modelRow, '模型', 'Model'])]
     if (await deepClickAny(rowLabels) === null) {
       throw new Error(`点不到菜单里的模型行（试过 ${JSON.stringify(rowLabels)}）；当前可见菜单：${JSON.stringify(await menuDump())}`)
     }
+    // 同上：宿主的模型弹层容器不一定带 "menu" 类，不能只在"最后一个 menu 容器"里等。
+    // 弹层打开后模型名在可见文本里唯一，整页文本检查即可（滚动/隐藏节点不算）。
     await page.waitFor(`(() => {
-      const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
-      const root = menus[menus.length - 1]
-      return root !== undefined && (root.innerText || '').includes(${JSON.stringify(toLabel)})
+      return (document.body.innerText || '').includes(${JSON.stringify(toLabel)})
     })()`, { timeoutMs: 10_000, label: `二级菜单出现 ${toLabel}` })
     await sleep(600)
     if (!await deepClick(toLabel)) throw new Error(`点不到 ${toLabel}；当前可见菜单：${JSON.stringify(await menuDump())}`)
@@ -552,7 +612,7 @@ async function main() {
     await sleep(700)
     // 走和 ⑤⑥⑦ 同一个换模型函数：那里面已经有重试和"失败时把菜单内容贴出来"的诊断，
     // 这里再抄一份内联点击，等于让 GIF 这条路径永远拿不到它们（英文整套连跑时就是在这翻的车）。
-    await switchModel('DeepSeek-V4-Flash', 'GPT-5', [UI[langKey].measured, '实测', 'measured'])
+    await switchModel(['DeepSeek-V41-Flash', 'DeepSeek-V4.1-Flash', 'DeepSeek-V4-Flash'], 'GPT-5', [UI[langKey].measured, '实测', 'measured'])
     await sleep(1600)
     await cast.stop()
     const after = await page.evaluate(`document.querySelector('.tpq-chip')?.innerText.replace(/\\s+/g,' ') ?? null`)
@@ -603,9 +663,10 @@ async function main() {
      */
     const chain = [
       { shot: 5, file: 'state-deepseek-balance.png', to: null },
-      { shot: 6, file: 'state-token-plan-credits.png', to: 'Qwen3.8 Flash', from: 'DeepSeek-V4-Flash', chip: 'Token Plan' },
+      // from 给候选数组：默认模型的显示名随本体版本变（V41 / V4.1 / V4 三种写法都见过）。
+      { shot: 6, file: 'state-token-plan-credits.png', to: 'Qwen3.8 Flash', from: ['DeepSeek-V41-Flash', 'DeepSeek-V4.1-Flash', 'DeepSeek-V4-Flash'], chip: 'Token Plan' },
       // zhOnly：那张卡的说明文字宿主只发中文，英文界面下也是 —— 英文套宁可少一张。
-      { shot: 7, file: 'state-no-history.png', to: 'MiniMax-M3', from: 'Qwen3.8 Flash', chip: 'minimax-cn', zhOnly: true },
+      { shot: 7, file: 'state-no-history.png', to: 'MiniMax-M3', from: ['Qwen3.8 Flash', 'Qwen3.8-Flash'], chip: 'minimax-cn', zhOnly: true },
     ]
     for (const step of chain) {
       if (step.zhOnly === true && langKey !== 'zh') {
@@ -618,9 +679,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ------------------------------------- ⑧⑨⑩ 用量统计整页座位（2D / 3D / 自定义区间） */
-  if (args.shots.some(n => [8, 9, 10].includes(n))) {
-    console.log('⑧⑨⑩ 用量统计整页座位（2D / 3D / 自定义区间）')
+  /* ---------------------------- ⑧⑨⑩⑪⑫ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照） */
+  if (args.shots.some(n => [8, 9, 10, 11, 12].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -665,6 +726,34 @@ async function main() {
       await sleep(400)
     }
 
+    /**
+     * 官方账号侧对照块（spec 008）就绪断言：008 起每次本机快照成功都会再请求 usage-official，
+     * 并把对照条渲染在柱图卡下面。任何用量场景拍之前都要过这一关 —— 少了它，图里要么缺一块，
+     * 要么是「官方取不到」的错误态，而截图本身看不出来。
+     * 三格数字必须是纯整数（INTERFACE §3.2：无千分位），细分行与说明段非空；块内不许出现 % / Credits。
+     */
+    const officialReady = async label => {
+      const wait = '(() => { const b = document.querySelector("[data-usage-official]"); if (b === null) return false; const neg = b.querySelector("[data-usage-official-error]"); if (neg !== null) return true; const v = b.querySelector("[data-usage-official-local] .tpq-usage-official-value"); return b.getAttribute("data-stale") === "0" && v !== null && (v.textContent || "").trim() !== "" })()'
+      await page.waitFor(wait, { timeoutMs: 25_000, label: label + ' 官方账号侧对照块' })
+      await sleep(300)
+      const probe = '(() => { const box = document.querySelector("[data-usage-official]"); if (box === null) return { ok: false, why: "missing" }; const val = s => { const n = box.querySelector(s + " .tpq-usage-official-value"); return n === null ? null : (n.textContent || "").trim() }; const errEl = box.querySelector("[data-usage-official-error]"); const loadEl = box.querySelector("[data-usage-official-loading]"); const splitEl = box.querySelector("[data-usage-official-split]"); const noteEl = box.querySelector(".tpq-usage-official-note"); const r = box.getBoundingClientRect(); let sc = box.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const text = (box.innerText || ""); return { ok: true, stale: box.getAttribute("data-stale"), err: errEl === null ? "" : (errEl.textContent || "").trim(), loading: loadEl !== null, cells: { official: val("[data-usage-official-official]"), local: val("[data-usage-official-local]"), gap: val("[data-usage-official-gap]") }, split: splitEl === null ? "" : (splitEl.textContent || "").trim(), note: noteEl === null ? "" : (noteEl.textContent || "").trim(), percent: text.indexOf("%") >= 0, credits: text.indexOf("Credits") >= 0, rect: { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }, vh: innerHeight, scrollTop: sc === null ? 0 : Math.round(sc.scrollTop) } })()'
+      const state = await page.evaluate(probe)
+      if (state === null || state.ok !== true) throw new Error(label + '：官方账号侧对照块不存在（[data-usage-official] 缺失），官方请求没发或渲染被关掉，不拍')
+      if (state.loading === true) throw new Error(label + '：官方对照块还在 loading，不拍')
+      if (state.err !== '') throw new Error(label + '：官方对照块是错误态（' + state.err + '），不拍')
+      if (state.stale !== '0') throw new Error(label + '：官方对照块 data-stale=' + state.stale + '（还是上一个区间的数据），不拍')
+      for (const key of ['official', 'local', 'gap']) {
+        const raw = state.cells[key]
+        const num = Number(String(raw === null ? '' : raw).replace(/[^0-9-]/g, ''))
+        if (raw === null || String(raw).trim() === '' || !Number.isFinite(num)) throw new Error(label + '：官方对照块「' + key + '」格不是数字（' + raw + '），不拍')
+      }
+      if (state.split === '' || state.note === '') throw new Error(label + '：官方对照块缺细分行或说明段，不拍')
+      if (state.percent === true) throw new Error(label + '：官方对照块出现百分比（%），不拍')
+      if (state.credits === true) throw new Error(label + '：官方对照块出现 Credits，不拍')
+      console.log('  官方对照就绪（' + label + '）：' + JSON.stringify(state.cells) + '；块 top ' + state.rect.top + ' / bottom ' + state.rect.bottom + ' / 高 ' + state.rect.h + '；视口 ' + state.vh + '；scrollTop ' + state.scrollTop)
+      return state
+    }
+
     const head = await headText()
     if (head.title === null || head.range === null) throw new Error('用量统计屏缺标题或区间副标题（拍出来会是无标题的图）')
     console.log('  标题：' + head.title + '；区间：' + head.range)
@@ -673,6 +762,7 @@ async function main() {
     const text2d = await bigText()
     const count2d = await barCount()
     if (text2d === null || count2d === 0) throw new Error('2D 视图没有数据（总分或柱子为空），不拍')
+    await officialReady('2D 视图（默认区间）')
     if (args.shots.includes(8)) save('usage-2d.png', await page.shot({}))
 
     // 3D 只在真要第 9 张（或要交叉验证 2D/3D 同源）时切：--shots 10 不该因为 3D 视图坏掉而失败。
@@ -685,15 +775,17 @@ async function main() {
       if (text2d !== text3d || count2d !== count3d) {
         throw new Error('2D/3D 数据不一致（总分 ' + text2d + ' vs ' + text3d + '，柱数 ' + count2d + ' vs ' + count3d + '），不拍 3D')
       }
+      await officialReady('3D 视图（默认区间）')
       if (args.shots.includes(9)) save('usage-3d.png', await page.shot({}))
     }
     console.log('  用量统计：' + count2d + ' 个桶，总分 ' + text2d)
 
-    if (args.shots.includes(10)) {
+    if (args.shots.some(n => [10, 11, 12].includes(n))) {
       /*
        * 第 10 张证明 007 的自定义区间：屏上必须有可见的日期行（data-usage-custom + 两个 date input），
        * 桶数必须与 fixture 的 buckets 一致，标题/区间副标题必须回显该 from/to（被宿主夹紧时以响应真值为准）。
        * 任一条不满足就抛错 —— 拍一张没有日期行的图，等于把"自定义查询"的证据换成一张普通柱图。
+       * ⑪⑫ 复用这一段查询：8 安装好以后，官方对照条只在这块屏上出现，用同一次自定义查询最省时间。
        */
       const range = customRangeFor(usageNow)
       const expected = builtUsage({ from: range.from, to: range.to }).usage.buckets.length
@@ -737,8 +829,151 @@ async function main() {
       // chip 必须停在「自定义」：否则日期行与"预设仍在生效"同时出现，读者无法判断这张图是哪种查询。
       const cleanChip = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"custom\"]'); return b !== null && b.getAttribute('data-active') === '1' && b.getAttribute('aria-pressed') === 'true' })()")
       if (cleanChip !== true) throw new Error('「自定义」chip 没有处于选中态（data-active/aria-pressed 不对），不拍')
-      save('usage-range-2d.png', await page.shot({}))
+      await officialReady('自定义区间 ' + range.from + ' → ' + range.to)
+      if (args.shots.includes(10)) save('usage-range-2d.png', await page.shot({}))
       console.log('  自定义区间：' + range.from + ' → ' + range.to + '（' + expected + ' 个桶，总分 ' + customBig + '）')
+
+      /**
+       * 把一个块滚进视口。整页座位在宿主的 main 区里滚动，官方对照条位于柱状图下方 ——
+       * 自定义区间在 >62 天时会聚合成周桶，这块很容易落到折叠线以下。拍一张"块被裁掉一半"的图
+       * 等于没拍到证据。用 scrollIntoView 而不是 window.scrollTo：滚动容器是宿主 main，不一定是 window。
+       */
+      /**
+       * 官方对照条的取景：块在柱图卡下面，自定义区间很容易落到折叠线以下；拍一张"块被裁一半"的图
+       * 等于没拍到证据。规则：先把块底边贴到视口底 16px（上面留最多上下文），再把顶边往上吸到
+       * 最近的一个 .tpq-usage 子块边界 —— 避免图顶正好切在一行标题中间。只调滚动容器的 scrollTop
+       * （滚动容器是宿主 main，不一定是 window）。取完仍不完整就抛错，不拍半块。
+       */
+      const frameUsage = async label => {
+        const info = await page.evaluate(`(() => {
+          const root = document.querySelector('.tpq-usage');
+          if (root === null) return null;
+          let sc = root.parentElement;
+          while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement;
+          if (sc === null) sc = document.scrollingElement;
+          const box = document.querySelector('[data-usage-official]');
+          if (box === null) return { missing: true };
+          const doc = y => y + sc.scrollTop;
+          const br = box.getBoundingClientRect();
+          const docTop = doc(br.top);
+          const docBottom = doc(br.bottom);
+          const vh = innerHeight;
+          const maxScroll = Math.max(0, sc.scrollHeight - sc.clientHeight);
+          const children = [...root.children].map(n => { const r = n.getBoundingClientRect(); return { top: doc(r.top), cls: (n.className || '').toString().slice(0, 30) } });
+          let scrollTop = Math.max(0, Math.min(maxScroll, docBottom - (vh - 16)));
+          const limit = docTop - 12;
+          const cand = children.filter(c => c.top - 12 >= scrollTop && c.top - 12 <= limit).map(c => c.top - 12).sort((a, b) => a - b);
+          if (cand.length > 0) scrollTop = Math.max(0, Math.min(maxScroll, cand[0]));
+          sc.scrollTop = scrollTop;
+          return { scrollTop: Math.round(sc.scrollTop), vh, docTop: Math.round(docTop), docBottom: Math.round(docBottom), blockH: Math.round(br.height) };
+        })()`)
+        if (info === null) throw new Error(label + '：量不到用量统计屏，不拍')
+        if (info.missing === true) throw new Error(label + '：官方对照块不存在，不拍')
+        await sleep(400)
+        const after = await page.evaluate('(() => { const box = document.querySelector("[data-usage-official]"); if (box === null) return null; const r = box.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight } })()')
+        if (after === null || after.top < 6 || after.bottom > after.vh - 4) {
+          throw new Error(label + '：官方对照块取景后仍不完整（top ' + (after === null ? '?' : after.top) + ' / bottom ' + (after === null ? '?' : after.bottom) + ' / 视口 ' + (after === null ? '?' : after.vh) + '），不拍')
+        }
+        console.log('  取景（' + label + '）：scrollTop ' + info.scrollTop + '；块 ' + after.top + '→' + after.bottom + ' / 视口 ' + after.vh + '（块高 ' + info.blockH + '）')
+      }
+
+      const bringIntoView = async (selector, label) => {
+        const probe = '(() => { const n = document.querySelector(' + JSON.stringify(selector) + '); if (n === null) return null; const r = n.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, vh: innerHeight } })()'
+        const before = await page.evaluate(probe)
+        if (before === null) throw new Error(label + '不存在（' + selector + '），不拍')
+        if (before.top >= 0 && before.bottom <= before.vh) return
+        await page.evaluate('(() => { const n = document.querySelector(' + JSON.stringify(selector) + '); if (n === null) return false; n.scrollIntoView({ block: "center" }); return true })()')
+        await sleep(500)
+        const after = await page.evaluate(probe)
+        if (after === null || after.top < 0 || after.bottom > after.vh) {
+          throw new Error(label + '滚不进视口（top ' + (after === null ? '?' : Math.round(after.top)) + ' / bottom ' + (after === null ? '?' : Math.round(after.bottom)) + ' / 视口高 ' + (after === null ? '?' : after.vh) + '），不拍')
+        }
+      }
+
+      /*
+       * ⑪ 官方账号侧对照（spec 008）。三格数字必须与 fixture 的 totals 逐个相等 —— 只等"块出现"
+       * 会拍到 loading，或拍到上一个区间的数字。差额按官方 − 本机带符号比，别信肉眼。
+       * 说明段要同时含两层意思：其他设备/客户端也算在里面；官方口径是 Token 总数、输入侧已含缓存读取（两项不相加）。
+       */
+      if (args.shots.includes(11)) {
+        const officialFixture = builtOfficial({ from: range.from, to: range.to }).official
+        const localFixture = builtUsage({ from: range.from, to: range.to }).usage
+        const expectOfficial = Math.round(Number(officialFixture.totals.tokens))
+        const expectLocal = Math.round(Number(localFixture.totals.tokens))
+        const expectGap = expectOfficial - expectLocal
+        const gapText = expectGap > 0 ? '+' + expectGap : String(expectGap)
+        const waitOfficial = '(() => { const root = document.querySelector("[data-usage-official]"); if (root === null) return false; const val = s => { const n = root.querySelector(s + " .tpq-usage-official-value"); if (n === null) return false; const t = (n.textContent || "").trim(); return t !== "" && Number.isFinite(Number(t)) }; return root.getAttribute("data-stale") === "0" && val("[data-usage-official-official]") && val("[data-usage-official-local]") && val("[data-usage-official-gap]") })()'
+        await page.waitFor(waitOfficial, { timeoutMs: 25_000, label: '官方账号侧对照（三格数字）' })
+        await sleep(400)
+        const cells = await page.evaluate('(() => { const root = document.querySelector("[data-usage-official]"); if (root === null) return null; const val = s => { const n = root.querySelector(s + " .tpq-usage-official-value"); return n === null ? null : (n.textContent || "").trim() }; const split = root.querySelector("[data-usage-official-split]"); const note = root.querySelector(".tpq-usage-official-note"); const gapCell = root.querySelector("[data-usage-official-gap]"); return { official: val("[data-usage-official-official]"), local: val("[data-usage-official-local]"), gap: val("[data-usage-official-gap]"), gapSign: gapCell === null ? null : gapCell.getAttribute("data-sign"), split: split === null ? null : (split.textContent || "").trim(), note: note === null ? null : (note.textContent || "").trim() } })()')
+        if (cells === null) throw new Error('官方对照块读不到（[data-usage-official] 缺失），不拍')
+        const toInt = text => { const num = Number(String(text === null ? '' : text).replace(/[^0-9-]/g, '')); return Number.isFinite(num) ? num : null }
+        const gotOfficial = toInt(cells.official)
+        const gotLocal = toInt(cells.local)
+        if (gotOfficial !== expectOfficial) throw new Error('官方格「' + cells.official + '」与 fixture totals.tokens ' + expectOfficial + ' 不一致，不拍')
+        if (gotLocal !== expectLocal) throw new Error('本机格「' + cells.local + '」与 fixture totals.tokens ' + expectLocal + ' 不一致，不拍')
+        if (String(cells.gap).replace(/\s+/g, '') !== gapText) throw new Error('差额格「' + cells.gap + '」应为「' + gapText + '」（官方 − 本机），不拍')
+        const expectSign = expectGap > 0 ? 'pos' : expectGap < 0 ? 'neg' : 'zero'
+        if (cells.gapSign !== expectSign) throw new Error('差额格的 data-sign 是「' + cells.gapSign + '」，应为「' + expectSign + '」，不拍')
+        const splitNumbers = (String(cells.split === null ? '' : cells.split).match(/-?[0-9]+/g) || []).map(Number).sort((a, b) => a - b)
+        const expectSplit = [Math.round(Number(officialFixture.totals.input)), Math.round(Number(officialFixture.totals.cacheRead)), Math.round(Number(officialFixture.totals.output))].sort((a, b) => a - b)
+        if (splitNumbers.length !== 3 || splitNumbers.some((value, index) => value !== expectSplit[index])) {
+          throw new Error('官方四项细分「' + cells.split + '」与 fixture 的 input/cacheRead/output ' + JSON.stringify(expectSplit) + ' 不一致，不拍')
+        }
+        const noteNeedles = langKey === 'zh' ? ['其他设备', '缓存读取', '不相加'] : ['other devices', 'cache reads', 'do not add']
+        for (const needle of noteNeedles) {
+          if (!String(cells.note === null ? '' : cells.note).includes(needle)) {
+            throw new Error('官方说明段缺「' + needle + '」（实际：' + cells.note + '），不拍')
+          }
+        }
+        /* 口径：整屏不许出现百分比；「Credits」只允许出现在脚注（006 起脚注原文就有"不折算 Credits"）。 */
+        const banned = await page.evaluate('(() => { const root = document.querySelector(".tpq-usage"); if (root === null) return null; const notes = root.querySelector(".tpq-usage-notes"); const notesText = notes === null ? "" : (notes.innerText || ""); const body = (root.innerText || "").replace(notesText, ""); return { percent: body.indexOf("%") >= 0, credits: body.indexOf("Credits") >= 0 } })()')
+        if (banned === null) throw new Error('量不到用量统计屏，不拍')
+        if (banned.percent === true) throw new Error('官方对照屏出现百分比（%），不拍')
+        if (banned.credits === true) throw new Error('官方对照屏（脚注以外）出现 Credits，不拍')
+        await frameUsage('官方对照块')
+        save('usage-official-2d.png', await page.shot({}))
+        console.log('  官方对照：官方 ' + expectOfficial + ' / 本机 ' + expectLocal + ' / 差额 ' + gapText + '；细分 ' + cells.split)
+      }
+
+      /*
+       * ⑫ QA：官方失败态（只落 .shots-work，不进 docs/）。失败体是 200 + {error,code,hint}，
+       * 客户端只把这一块换成「原因 + 重试」，本机三张卡照旧 —— 图要证明的是「块内零数字」。
+       * 失败必须靠换查询来触发：官方请求只在 key 变了（或显式 fresh）时才重发，而重试按钮本身
+       * 只存在于错误态 —— 在成功态去找它，等于找一个不存在的按钮（实测踩过）。
+       */
+      if (args.shots.includes(12)) {
+        live.officialError = true
+        const altDate = new Date(range.from + 'T00:00:00')
+        altDate.setDate(altDate.getDate() + 1)
+        const altFrom = localDayKey(altDate)
+        const altExpected = builtUsage({ from: altFrom, to: range.to }).usage.buckets.length
+        const refilled = await page.evaluate('(() => { const el = document.querySelector("[data-usage-from]"); if (el === null) return null; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; setter.call(el, ' + JSON.stringify(altFrom) + '); el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return el.value })()')
+        if (refilled !== altFrom) throw new Error('官方失败态换日期没生效（期望 ' + altFrom + '，实际 ' + refilled + '），不拍')
+        const reapplied = await page.evaluate('(() => { const b = document.querySelector("[data-usage-apply]"); if (b === null) return false; b.click(); return true })()')
+        if (reapplied !== true) throw new Error('找不到自定义区间的「查询」按钮（data-usage-apply），拍不了官方失败态')
+        await page.waitFor('document.querySelector("[data-usage-official] [data-usage-official-error]") !== null', { timeoutMs: 25_000, label: '官方失败态' })
+        await sleep(400)
+        const errorState = await page.evaluate('(() => { const blk = document.querySelector("[data-usage-official]"); if (blk === null) return null; const digits = (blk.innerText || "").match(/[0-9]/g); return { hasError: blk.querySelector("[data-usage-official-error]") !== null, hasRetry: blk.querySelector("[data-usage-official-retry]") !== null, cells: blk.querySelectorAll("[data-usage-official-official],[data-usage-official-local],[data-usage-official-gap],[data-usage-official-split]").length, digits: digits === null ? 0 : digits.length, text: (blk.innerText || "").trim() } })()')
+        if (errorState === null) throw new Error('官方失败态读不到块，不拍')
+        if (errorState.hasError !== true || errorState.hasRetry !== true) throw new Error('官方失败态缺 [data-usage-official-error] 或重试按钮，不拍')
+        if (errorState.cells !== 0) throw new Error('官方失败态还留着 ' + errorState.cells + ' 个数字格，不拍')
+        if (errorState.digits !== 0) throw new Error('官方失败态块内出现 ' + errorState.digits + ' 个数字字符，不拍')
+        const errCopy = langKey === 'zh' ? '官方账号侧用量没取到' : 'Could not load official account usage'
+        if (!errorState.text.includes(errCopy)) throw new Error('官方失败态文案不对（应含「' + errCopy + '」，实际：' + errorState.text + '），不拍')
+        if (langKey === 'zh' && !errorState.text.includes('检查网络后重试')) throw new Error('官方失败态没有透出 hint（实际：' + errorState.text + '），不拍')
+        /* 失败只落在一块：本机柱图必须照旧是这份 fixture 的桶数，别把整屏拍成空的。 */
+        const errorBars = await barCount()
+        if (errorBars !== altExpected) throw new Error('官方失败态下本机柱数 ' + errorBars + ' 与 fixture 桶数 ' + altExpected + ' 不一致，不拍')
+        await frameUsage('官方失败态块')
+        const qaDir = join(workDir, 'qa')
+        mkdirSync(qaDir, { recursive: true })
+        const qaPath = join(qaDir, 'usage-official-error.png')
+        const qaBuffer = await page.shot({})
+        writeFileSync(qaPath, qaBuffer)
+        console.log('  QA 官方失败态（不进 docs/）：' + qaPath + '（' + (qaBuffer.length / 1024).toFixed(0) + ' KB）')
+        live.officialError = false
+      }
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

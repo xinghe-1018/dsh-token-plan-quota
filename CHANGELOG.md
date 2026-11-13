@@ -10,6 +10,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **官方账号侧用量对照（008）**：统计屏的柱子下面新增一条对照条，把同一段时间的
+  **官方「Token Plan 用量明细」**（账号级 tokens）与本机实测并排，第三格是「官方 − 本机」的差额——
+  官方的洞是"别的设备/客户端用同一把 Key"，本机的洞是"只看得到这台机器"，两个数字放一起才解释得清。
+  新增纯函数模块 `lib/official-usage.js`（零 import：`sliceOfficialRange` 按 **30 天**切片并夹到官方最早日 /
+  `officialChunkRequest` / `parseOfficialEnvelope` 向下找 `originData` 或 `dataDownloadUrl` /
+  `foldOfficialSeries` 认四种 `usage_type` 且只按桶右端点减一个 step 归日 / `buildOfficialUsage` 缺日补 0 桶）。
+  新增 `GET /token-plan-quota/usage-official?days=N`（也认 `range=`、`from&to=`、`fresh=1`，参数与错误码同 `/usage`），
+  取不到时回 200 + `{error:"official-unavailable", code, hint}`：七个固定码（禁用 / 没凭据 / 登录过期 / 超时 /
+  上游 / 响应不认识 / 只给下载链接），**不跟随未声明主机、不把上游原文或凭据值带进响应**；
+  工具 `token_plan_quota` 增加 `action=usage-official`。
+  配置新增 2 键：`officialUsage`（默认 `true`，关掉即不出网）、`officialUsageMinutes`（默认 5 分钟缓存，`0` = 每次回源）。
+  官方只有日/时粒度且最早只到「当前月往前 5 个月」，所以屏上按**被夹掉的原起点**明说截断，长区间分片拼接。
+  出站主机没有扩表（仍 8 条）——telemetry 走已有的 `cs-data.qianwenai.com` 数据网关。
+  新增宿主断言 665→719、客户端断言 481→555、guards 静态矩阵 243→256（其中 13 项是 008 自己的矩阵，另 2 项是 007 客户端断言随 `usageQueryPath` 重构同步改写）；zh/en 对照条截图见 `docs/images/usage-official-2d.png` 与 `docs/images/en/usage-official-2d.png`。
+  方案见 `specs/008-official-token-usage/`，接口契约见 `docs/upstream-contracts.md` 的「Token Plan 用量明细」节。
+
 - **按起止日期查用量（007）**：新增 `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD`（两端都含，优先于 `days`/`range`），
   用量统计屏的预设行后面多一个「自定义」：展开两个日期框 + 查询按钮，非法输入在本地挡下、不发请求。
   跨度上限复用 `usageBackfillDays`（默认 365 天）；结束日晚于今天夹到今天，响应里的 `range` 报夹紧后的真值。

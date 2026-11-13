@@ -798,6 +798,248 @@ export function assertUsageFixture(usage, options = {}) {
   return checks
 }
 
+/** 官方用量明细的 Api 名（presets["token-plan-console"].telemetryApi，见 INTERFACE §2.3）。 */
+const OFFICIAL_USAGE_API = 'zeldaEasy.bailian-telemetry.platform-model.getModelMonitorDataWithOss'
+
+/** 宿主 buildOfficialUsage 写死的来源标签（lib/index.js 同一串；客户端不渲染它，只用于语义）。 */
+const OFFICIAL_USAGE_LABEL = '官方账号侧（Token Plan 用量明细）'
+
+const USAGE_OFFICIAL_TOP_KEYS = ['generatedAt', 'range', 'granularity', 'totals', 'buckets', 'source', 'coverage']
+const USAGE_OFFICIAL_TOTAL_KEYS = ['tokens', 'input', 'cacheRead', 'output']
+const USAGE_OFFICIAL_BUCKET_KEYS = ['from', 'to', ...USAGE_OFFICIAL_TOTAL_KEYS]
+const USAGE_OFFICIAL_SOURCE_KEYS = ['kind', 'veracity', 'label']
+const USAGE_OFFICIAL_COVERAGE_KEYS = ['api', 'chunks', 'step', 'cached', 'totalDerived', 'clampedFrom']
+/** 官方单次区间上限（presets.telemetryChunkDays = 30，INTERFACE §1.1；网关实测上限 30 天）。 */
+const USAGE_OFFICIAL_CHUNK_DAYS = 30
+/** 「官方 > 本机」的直观倍率：本机同一天 × 1.6。 */
+const USAGE_OFFICIAL_VS_LOCAL = 1.6
+
+/** 「当前月往前 5 个月的 1 号」本地日键（officialEarliestDayKey 同口径，INTERFACE §1.2）。 */
+function usageOfficialEarliestKey(now) {
+  const date = new Date(now)
+  date.setDate(1)
+  date.setMonth(date.getMonth() - 5)
+  return usageDayKey(date)
+}
+
+/** 把一天的官方 tokens 拆成 input / cacheRead / output：60% / 25% / 15%，余数归 output（逐项求和严格相等）。 */
+function usageOfficialSplit(tokens) {
+  const input = Math.round(tokens * 0.6)
+  const cacheRead = Math.round(tokens * 0.25)
+  return { input, cacheRead, output: tokens - input - cacheRead }
+}
+
+/**
+ * 造一份 `/token-plan-quota/usage-official` 的响应（008）。
+ *
+ * 形状严格照 `specs/008-official-token-usage/INTERFACE.md` §2.1：**只有** totals + buckets，
+ * 没有 models / calls / steps / enabled / refreshing —— 那些是本机实测（session-index）那一路的字段，
+ * 混进来就是宿主永远发不出的 payload。
+ *
+ * 与本机那一路的口径差别：
+ *  - 桶**恒为日桶**（官方 series 本身就是按天回的），区间 > 62 天也不聚成周桶；
+ *  - `tokens = input + cacheRead + output`（INTERFACE §2.1 的示例同此算术）；
+ *  - 量级取本机同一天的 1.6 倍，让「官方 > 本机」一眼可读，同时逐项自洽（totals = Σbuckets）。
+ *  - 不模拟宿主的夹紧：`from` 早于最早可查日、或 `to` 晚于今天时直接抛错 —— 截图只用今天为止、
+ *    落在可查窗口内的区间；真被夹紧的响应带 `coverage.clampedFrom`，那是另一张图的事。
+ *
+ * @param {{now?: number, days?: number, from?: string, to?: string}} [options]
+ * @returns {object} 与 INTERFACE §2.1 同形的 payload。
+ */
+export function makeUsageOfficialSnapshot(options = {}) {
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  const today = usageDayKey(new Date(now))
+  const earliest = usageOfficialEarliestKey(now)
+  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
+  let from
+  let to
+  let days
+  let kind
+  if (custom) {
+    from = options.from
+    to = options.to
+    if (to > today) {
+      throw new Error('makeUsageOfficialSnapshot：to（' + to + '）晚于今天（' + today
+        + '），截图请用今天为止的区间（宿主会把 to 夹到今天，fixture 不模拟夹紧）')
+    }
+    if (from > to) throw new Error('makeUsageOfficialSnapshot：from 晚于 to（' + from + ' > ' + to + '），宿主会回 400')
+    days = usageCountDays(from, to)
+    kind = 'custom'
+  } else {
+    days = clampUsageDays(options.days)
+    to = today
+    from = usageAddDays(to, -(days - 1))
+    kind = days === 1 ? 'today' : days + 'd'
+  }
+  if (from < earliest) {
+    throw new Error('makeUsageOfficialSnapshot：from（' + from + '）早于最早可查日 ' + earliest
+      + '（当前月往前 5 个月的 1 号），宿主会夹紧并回 clampedFrom；fixture 不模拟夹紧')
+  }
+  if (days > 365) throw new Error('makeUsageOfficialSnapshot：区间 ' + days + ' 天超过 usageBacklogDays，宿主会回 400')
+
+  const buckets = []
+  const totals = { tokens: 0, input: 0, cacheRead: 0, output: 0 }
+  let index = 0
+  for (let key = from; key <= to; key = usageAddDays(key, 1)) {
+    const local = usageDayCounters(index)
+    const localTokens = local.input + local.output + local.cacheRead + local.cacheWrite
+    const tokens = Math.round(localTokens * USAGE_OFFICIAL_VS_LOCAL)
+    const bucket = { from: key, to: key, tokens, ...usageOfficialSplit(tokens) }
+    buckets.push(bucket)
+    for (const field of USAGE_OFFICIAL_TOTAL_KEYS) totals[field] += bucket[field]
+    index += 1
+  }
+
+  return {
+    generatedAt: now,
+    range: { kind, days, from, to },
+    granularity: 'day',
+    totals,
+    buckets,
+    source: { kind: 'official-console', veracity: 'verified', label: OFFICIAL_USAGE_LABEL },
+    // 没有 clampedFrom：本函数拒绝需要夹紧的区间，所以图上永远是「请求什么就查什么」。
+    coverage: {
+      api: OFFICIAL_USAGE_API,
+      chunks: Math.ceil(days / USAGE_OFFICIAL_CHUNK_DAYS),
+      step: 'day',
+      cached: false,
+      totalDerived: false,
+    },
+  }
+}
+
+
+/**
+ * `/usage-official` fixture 的自检（008）：字段集严格等于 INTERFACE §2.1、桶逐日铺满区间、
+ * totals = Σbuckets、range 回显请求、官方量级大于本机、无百分比 / Credits / 真实痕迹。
+ * 任何一条不过就不该拍照。
+ *
+ * @param {object} official makeUsageOfficialSnapshot 的产物
+ * @param {{lang?: 'zh'|'en', now?: number, days?: number, from?: string, to?: string}} [options]
+ * @returns {string[]} 通过的断言说明（抛错表示不通过）
+ */
+export function assertUsageOfficialFixture(official, options = {}) {
+  const checks = []
+  const need = (label, cond) => {
+    if (!cond) throw new Error('official usage fixture 自检失败：' + label)
+    checks.push(label)
+  }
+  const sameKeys = (value, keys) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  const today = usageDayKey(new Date(now))
+  const earliest = usageOfficialEarliestKey(now)
+  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
+  let expectFrom
+  let expectTo
+  let expectDays
+  let expectKind
+  if (custom) {
+    expectFrom = options.from
+    expectTo = options.to
+    expectDays = usageCountDays(expectFrom, expectTo)
+    expectKind = 'custom'
+  } else {
+    expectDays = clampUsageDays(options.days)
+    expectTo = today
+    expectFrom = usageAddDays(expectTo, -(expectDays - 1))
+    expectKind = expectDays === 1 ? 'today' : expectDays + 'd'
+  }
+  need('请求区间不晚于今天（否则该用例根本不该拍照）', expectTo <= today)
+  need('请求区间不早于最早可查日 ' + earliest + '（否则宿主会夹紧）', expectFrom >= earliest)
+
+  // 1) 字段集：多一个（models/calls）或少一个都不是宿主会发的形状。
+  need('顶层键集 = INTERFACE §2.1 的 7 个键', sameKeys(official, USAGE_OFFICIAL_TOP_KEYS))
+  need('generatedAt 是毫秒时间戳', isClockMillis(official.generatedAt))
+
+  // 2) range 回显请求（不夹紧：夹紧的响应一定带 coverage.clampedFrom，那是另一种图）。
+  need('range 键集 = kind/days/from/to', sameKeys(official.range, USAGE_RANGE_KEYS))
+  need('range.kind 回显请求（' + expectKind + '）', official.range.kind === expectKind)
+  need('range.days = ' + expectDays, official.range.days === expectDays)
+  need('range.from 回显请求的 from', official.range.from === expectFrom)
+  need('range.to 回显请求的 to（不夹紧）', official.range.to === expectTo)
+
+  // 3) 官方这一路恒为日桶。
+  need('granularity 恒为 day', official.granularity === 'day')
+
+  // 4) totals：四类，tokens 是三项之和（INTERFACE §2.1 示例同此算术）。
+  need('totals 键集 = tokens/input/cacheRead/output', sameKeys(official.totals, USAGE_OFFICIAL_TOTAL_KEYS))
+  for (const field of USAGE_OFFICIAL_TOTAL_KEYS) {
+    need('totals.' + field + ' 是非负整数', Number.isInteger(official.totals[field]) && official.totals[field] >= 0)
+  }
+  need('totals.tokens = input + cacheRead + output',
+    official.totals.tokens === official.totals.input + official.totals.cacheRead + official.totals.output)
+  need('区间里确实有量（否则屏上是空态）', official.totals.tokens > 0)
+
+  // 5) 桶：逐日铺满 [from, to]，桶数 = 天数，缺日也是 0 桶（这里每天都造了量）。
+  need('buckets 是数组', Array.isArray(official.buckets))
+  need('桶数 = 区间天数（' + expectDays + '）', official.buckets.length === expectDays)
+  const sum = { tokens: 0, input: 0, cacheRead: 0, output: 0 }
+  for (let index = 0; index < official.buckets.length; index += 1) {
+    const bucket = official.buckets[index]
+    const label = '桶 ' + (bucket === undefined ? index : bucket.from)
+    need(label + ' 的键集 = INTERFACE §2.1 的 6 个键', sameKeys(bucket, USAGE_OFFICIAL_BUCKET_KEYS))
+    need(label + ' from/to 是日期', usageIsDayKey(bucket.from) && usageIsDayKey(bucket.to))
+    need(label + ' 是单日桶（from === to）', bucket.from === bucket.to)
+    const expectKey = index === 0 ? expectFrom : usageAddDays(official.buckets[index - 1].to, 1)
+    need(label + ' 与前一桶日连续', bucket.from === expectKey)
+    for (const field of USAGE_OFFICIAL_TOTAL_KEYS) {
+      need(label + ' 的 ' + field + ' 是非负整数', Number.isInteger(bucket[field]) && bucket[field] >= 0)
+      sum[field] += bucket[field]
+    }
+    need(label + ' tokens = input + cacheRead + output',
+      bucket.tokens === bucket.input + bucket.cacheRead + bucket.output)
+  }
+  need('首桶 = 区间起点', official.buckets[0].from === expectFrom)
+  need('末桶 = 区间终点', official.buckets[official.buckets.length - 1].to === expectTo)
+  for (const field of USAGE_OFFICIAL_TOTAL_KEYS) {
+    need('totals.' + field + ' = Σbuckets.' + field, official.totals[field] === sum[field])
+  }
+
+  // 6) 来源：官方账号侧、verified（客户端据此把这一块标成「官方」而不是「本机」）。
+  need('source 键集 = kind/veracity/label', sameKeys(official.source, USAGE_OFFICIAL_SOURCE_KEYS))
+  need('source.kind 是 official-console', official.source.kind === 'official-console')
+  need('source.veracity 是 verified', official.source.veracity === 'verified')
+  need('source.label 与宿主常量一致', official.source.label === OFFICIAL_USAGE_LABEL)
+
+  // 7) coverage：Api 名、30 天切块数、日粒度、未走缓存、没兜底、没夹紧。
+  for (const key of Object.keys(official.coverage)) {
+    need('coverage 的键 ' + key + ' ⊆ INTERFACE §2.1 白名单', USAGE_OFFICIAL_COVERAGE_KEYS.includes(key))
+  }
+  need('coverage.api = ' + OFFICIAL_USAGE_API, official.coverage.api === OFFICIAL_USAGE_API)
+  need('coverage.chunks = ceil(days / 30)', official.coverage.chunks === Math.ceil(expectDays / USAGE_OFFICIAL_CHUNK_DAYS))
+  need('coverage.step 是 day', official.coverage.step === 'day')
+  need('coverage.cached 为 false（截图不吃缓存）', official.coverage.cached === false)
+  need('coverage.totalDerived 为 false（官方回了 total_tokens）', official.coverage.totalDerived === false)
+  need('没有 clampedFrom（本函数拒绝需要夹紧的区间）', official.coverage.clampedFrom === undefined)
+
+  // 8) 「官方 > 本机」必须一眼可读：同一请求下比本机实测大，且至少 1.5 倍。
+  const local = makeUsageSnapshot(options)
+  need('官方总量大于本机（' + official.totals.tokens + ' > ' + local.totals.tokens + '）',
+    official.totals.tokens > local.totals.tokens)
+  need('官方总量至少是本机的 1.5 倍', official.totals.tokens >= local.totals.tokens * 1.5)
+
+  // 9) 屏上不许出现百分比 / Credits / 真实痕迹（日期串按口径豁免）。
+  const strings = collectLeaves(official).filter(value => typeof value === 'string')
+  need('没有百分比字符串', strings.every(value => !value.includes('%')))
+  need('没有 Credits 字样的数据串', strings.every(value => !/credits/i.test(value)))
+  const nonDateStrings = strings.filter(value => !/^\d{4}-\d{2}-\d{2}$/.test(value))
+  for (const banned of BANNED_TRACES) {
+    const hit = nonDateStrings.find(value => value.includes(banned))
+    need('不含真实痕迹 ' + JSON.stringify(banned) + (hit === undefined ? '' : '（命中 ' + JSON.stringify(hit) + '）'),
+      hit === undefined)
+  }
+
+  if (options.lang === 'en') {
+    // 英文套：官方块屏上只剩数字；source.label 是宿主写死的中文且客户端不渲染它（与 006 同口径）。
+    const han = /\p{Script=Han}/u
+    const rendered = nonDateStrings.filter(value => value !== OFFICIAL_USAGE_LABEL)
+    const hit = rendered.find(value => han.test(value))
+    need('英文套里被渲染的字符串无中文' + (hit === undefined ? '' : '（命中 ' + JSON.stringify(hit) + '）'),
+      hit === undefined)
+  }
+  return checks
+}
+
 /**
  * 用户实拍图里出现过的真实值 —— 那三张图是真实账号，任何"照着抄一组数"的改动都必须被拦住。
  * `assertFixture` 逐个叶值比对它。

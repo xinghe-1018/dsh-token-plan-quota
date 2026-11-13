@@ -241,8 +241,9 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
   so there is no percentage and no Credits.
 - The data comes from the **host's own session events** (`sessionPersistence`), folded offline into a
-  per-local-day index: the first run walks the existing sessions (measured here: 215 sessions, 211 MB, ~20 s to
-  decode and fold), after which it syncs incrementally every 5 minutes, so the numbers are at most 5 minutes old.
+  per-local-day index: the first run walks the existing sessions (measured here: 217 session directories, ~200 MB of
+  logs, ~20 s to decode and fold), after which it syncs incrementally every 5 minutes, so the numbers are at most
+  5 minutes old.
   This is not the same thing as the measured **window** in the detail panel (7 days from the first call): that is
   a window, this is day-by-day history.
 - Range selection: four presets (today / 7 / 30 / 90 days) plus a custom 1..365 input (out-of-range values are
@@ -273,6 +274,15 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 - When the data is not available it says so: no `sessionPersistence` → falls back to "since this process started"
   (resets on restart); backfill still running → a thin progress bar and "backfilling (N/M sessions)"; statistics
   turned off → the screen states that, instead of pretending "cannot measure" means zero.
+- **No need to chat before opening the screen after a restart**: the index is loaded from disk synchronously on the
+  first query. It used to wait for the first sync 20 s after boot, so opening the stats screen right after a restart
+  (with no turn in between) showed zeros until you sent a message to kick the sync.
+- **Sessions missing from the host list are recovered by scanning**: the host's session list occasionally omits a
+  session (measured here: 2 of 217 session directories were missing from it, about 65M tokens that were never
+  counted). At the end of each sync the plugin reads those logs straight from the `$DSH_HOME/sessions` layout:
+  highest-version log file only, a signature of file size plus mtime (skip when unchanged), at most 64 MB per round
+  (the rest continues next round), and forked sessions are truncated at the inherited-prefix marker so the parent's
+  calls are not counted twice. The count of recovered sessions is stated in the screen footnote.
 
 The index is persisted at `$DSH_HOME/token-plan-quota.usage-index.json` and holds counters plus `provider/model`
 identifiers only - **no message text, no request headers, no file paths**. A corrupt file is backed up as
@@ -292,7 +302,7 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
-The table below has 24 rows: 23 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+The table below has 26 rows: 25 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
 not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
 part of every name** (`Minutes` / `Seconds` / `Ms`).
 
@@ -320,6 +330,8 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `usageBackfillDays` | `365` | How many days the index keeps, and the upper bound of the screen's range picker (1..365). Lowering it trims older day buckets; raising it backfills on the next sync |
 | `officialUsage` | `true` | Whether the usage screen shows the "official account side" strip: the console gateway's Token Plan usage details (account-level tokens, unrelated to the quota sources above). Off = that request is not made; bars and local numbers stay as they are |
 | `officialUsageMinutes` | `5` | Cache minutes for the official strip: the same range is reused for N minutes (`0` = always refetch) |
+| `usageScanFallback` | `true` | Whether the end of each sync also scans `usageScanPath` for session logs the host list does not mention. Off = trust the host list only (and keep missing the sessions it hides) |
+| `usageScanPath` | `$DSH_HOME/sessions` | Root directory of the fallback scan (two levels: project directory / session directory / log file) |
 | `minIntervalMs` | `1200` | Minimum interval between outbound calls (ms), throttling globally |
 | `timeoutMs` | `15000` | Per-request upstream timeout (ms, floor 1000) |
 
@@ -499,7 +511,7 @@ it does not list a speed per provider; that data stays in the snapshot and via `
 | `GET /token-plan-quota/summary` | Snapshot (official sources honour the TTL; `?fresh=1` forces a refetch); includes the `detection` diagnostics block |
 | `POST /token-plan-quota/refresh` | Refetch official sources |
 | `POST /token-plan-quota/reset` | Clear this instance's measured totals (including window anchors) |
-| `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`) |
+| `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`). The `coverage` block also reports `scanned` / `rescued` / `scanFailed` / `scanDeferred`, where `rescued` is how many sessions this round recovered from the log directory |
 | `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | Aggregation for an explicit start/end date (both inclusive), taking precedence over `days`/`range`; one end only, malformed, start after end or in the future → 400 `usage-bad-range`; span above `usageBackfillDays` → 400 `usage-range-too-long` (with `maxDays`) |
 | `GET /token-plan-quota/usage-official?days=N` (also `range=` / `from&to=` / `fresh=1`) | **Official account-level tokens** (Token Plan usage details). Same parameters and error codes as `/usage`; success returns 200 with `{range, granularity, totals, buckets, source, coverage}`, and when it cannot be fetched 200 with `{error:"official-unavailable", code, hint}` - `code` is a fixed enum (disabled / no credentials / login expired / timeout / upstream / unrecognised response / download link only) and `hint` is safe to display |
 | `GET /token-plan-quota/probe?source=<id>` | Upstream field skeleton (for troubleshooting) |
@@ -522,6 +534,7 @@ seconds waited and the effective policy - read from the persisted `llm/retry` ev
 - **`reset` clears the monthly ledger and window anchors but not the usage index**: the screen reads history folded from session logs, and deleting it would be pointless (the logs are still there, the next sync folds them back).
 - Observation counters cover the current process lifetime; the day-by-day history lives in the usage index (the screen). Both cover **this instance only**.
 - The usage index backfills in the background: right after install you see partial history with a progress line at the top; one sync cycle (5 minutes) is enough for the full picture.
+- The fallback scan only sees logs under `usageScanPath` (default `$DSH_HOME/sessions`): once a log file is deleted or moved it cannot be recovered, and the 64 MB per-round budget means a large backlog takes several rounds - the `rescued` number in the footnote grows round by round.
 - Seat fallback: if the shell does not declare `conversation.input.left`, the chip docks to
   `conversation.input.dock`; on shells that expose no react-dom seed the panel falls back to inline CSS
   anchoring and dragging is disabled.
@@ -550,17 +563,17 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 719 assertions, offline
-node test/client.mjs                # 555 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 256 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 795 assertions, offline
+node test/client.mjs                # 586 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 271 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "23 DEFAULTS keys, a 24-row
-config table, 8 sources, 8 declared outbound hosts, 719/555 tests plus 256 guards assertions" - and checks them against
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
+config table, 8 sources, 8 declared outbound hosts, 795/586 tests plus 271 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

@@ -93,6 +93,30 @@
 **证据来源**：从 `platform.qianwenai.com` 前端 bundle（`analytics.js`）逆向 + 2026-11-13 实测；**不是官方公开文档**，
 官方没有把这套 Api 写进 API 文档，字段与边界以本表的实测为准；实现侧的响应形状见 `specs/008-official-token-usage/INTERFACE.md`。
 
+## 会话日志文件（多帧 zstd，兜底扫描）
+
+宿主给的会话列表**不保证全**：本机 2026-11-13 实测 217 个会话目录里有 **2 个不在 `list()` 的返回里**
+（`session-373f78cb-…` 137 calls / 8,535,136 tokens、`session-73bbb3d1-…` 314 calls / 56,700,666 tokens），
+目录与 header 都正常，只是列表里没有。所以同步末尾会按下面的契约直接读日志文件补扫——这一节记的就是这些事实。
+
+| # | 项 | 事实 | 本插件的处理 |
+|---|---|---|---|
+| 1 | 目录结构 | `<sessions>/<项目目录>/<会话目录>/<日志文件>`，本机 24 个项目目录、217 个会话目录 | 只扫**两级**（项目/会话），不递归更深；根目录由 `usageScanPath` 给（默认 `$DSH_HOME/sessions`） |
+| 2 | 目录名就是会话 id | 两种形态并存：132 个 `session-<uuid>` + 85 个裸 `<uuid>`，索引键同样是 130 前缀 + 85 裸 | **不剥 `session-` 前缀**，目录名原样当 id；剥了会对不上已有索引、把同一会话算两遍 |
+| 3 | 一个会话可能有多个版本的日志 | 本机 242 份日志对应 217 个目录，同时存在 `session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd` 的目录不少 | 只读**版本最高**的一份（v4 > v3 > v2 > 无版本），否则同一份事件被折两次 |
+| 4 | 日志是**多帧** zstd | 242 份里 237 份是多帧；整份 buffer 直接 `zlib.zstdDecompressSync` 只出第一帧（实测 451 KB 的文件只解出 271 字节的 header） | 按 magic `28 B5 2F FD` 切帧、逐帧解压再拼文本；坏帧延展到下一个 magic 重试（最多 8 次），全失败计 `scanFailed` 不猜内容 |
+| 5 | 解压 API 有版本门槛 | `zlib.zstdDecompressSync` 在 Node 24 有，但本包声明 `engines.node >= 20` | 能力守卫：没有该 API 时跳过兜底扫描（`reason: "no-zstd"`），不影响主路径 |
+| 6 | 每行一个 JSON 事件 | 与读片拿到的事件同构：`{ seq, type, time, data }`；`request/header` 与 `assistant/message`+`usage` 才计量 | 复用读书片同一个折叠函数（`foldUsageEvents`），**不另写一套计数逻辑**，口径不会漂 |
+| 7 | fork 会话有继承前缀 | 3 份日志 `header.isSeeded: true`；前缀结束标记是 `type === "session/end-seed"` 且 `data.inherited === true`（本机例：seq 6 / 622 / 2090） | 有该标记时 cut = 位置 + 1，`seq < cut` 跳过；`isSeeded` 不为真时 cut = 0。**缺这层会把父会话的历史再算一遍** |
+| 8 | 增量靠文件签名 | 日志只追加，没有可比的 revision | 签名 = `file:<bytes>:<mtimeMs 取整>` 写进 `index.sessions[id].revision`；签名没变直接跳过，不重复读 |
+| 9 | 文件可能变短（归档/被重写） | 变短意味着 `maxSeq < previous.lastSeq`，此时继续往后追加会漏一段 | 变短**不折**（保留旧条目）并计 `scanFailed`，等下次完整重扫 |
+| 10 | 全量解码很贵 | 132 份 / 195 MB / 334,571 事件 → 23,742 calls / 6,365,369,524 tokens，耗时 18.4 秒 | 每轮 64 MB 预算（`FALLBACK_SCAN_BUDGET`），超了记 `scanDeferred`、下一轮接着扫；逐文件 `setImmediate` 让出，不卡事件循环 |
+| 11 | 正常只扫几个 | 补集就是列表缺的那几个目录（本机 2 个，约 1.3 MB） | 候选 = 「不在宿主列表里」且「索引里没有成功条目或签名变了」，所以稳态每轮只碰这几个文件 |
+| 12 | 口径 | 与读片完全相同：只认 `assistant/message` 的 `usage` 四字段，日界是本地日，`tokens = input + output + cacheRead + cacheWrite` | 屏上不区分来源，只在脚注写「另有 N 个会话不在宿主的会话列表里，已按日志目录补扫」（`coverage.rescued`）；本机实测这段历史共约 6,500 万 tokens，多数落在 9 月（10 月约 640 万） |
+
+**证据来源**：2026-11-13 在本机 `$DSH_HOME/sessions` 上全量实测（切帧解码脚本 + 与 `list()` 结果做补集对比），
+不是宿主文档；宿主把日志格式改掉时这一节的第 4/6/7 条会先失效，那时兜底扫描应当静默退化为「不补」而不是算错数。
+
 ## 参考实现（都是 MIT，引用契约请注明出处）
 
 - [`steipete/CodexBar`](https://github.com/steipete/CodexBar) —— 每家一个 `docs/<provider>.md`，

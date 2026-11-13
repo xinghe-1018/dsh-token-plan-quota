@@ -10,6 +10,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **重启即可见 + 兜底补扫（009）**：统计屏有两个「看不见就以为没发生」的坑，这一版一起修。
+  一是**重启后没对话时打开屏是空的**：索引只在启动 20 秒后的首轮同步里 `loadUsageIndex`，在那之前查询读到的是
+  内存里的空索引，客户端又不轮询，屏上就一直是 0；现在 `buildUsageSnapshot` 首次调用先同步读盘（`ensureUsageIndexLoaded`），
+  重启后直接开屏就是上次的数字。
+  二是**宿主会话列表会漏**：本机 217 个会话目录里有 2 个不在 `persistence.list()` 的返回里（合计约 6,500 万 tokens，多数落在 9 月，
+  其中 10 月约 640 万），一直没进过索引；同步末尾改为按 `usageScanPath` 的目录结构直接读日志补扫
+  （`lib/usage-stats.js` 新增 `decodeSessionLog` 切多帧 zstd / `parseSessionEvents` / `fallbackCutOf` 认继承前缀 /
+  `fallbackLogsOf` 只取最高版本日志 / `fallbackSignature` 用大小+修改时间做增量），每轮 64 MB 预算、逐文件让出、
+  变短的日志不折，稳态每轮只碰缺的那几个文件。
+  响应 `coverage` 新增 `scanned` / `rescued` / `scanFailed` / `scanDeferred`；屏上只有 `rescued > 0` 时在脚注
+  多写一行「另有 N 个会话不在宿主的会话列表里，已按日志目录补扫」——`rescued = 0` 时布局与既有截图一字不变。
+  配置新增 2 键：`usageScanFallback`（默认 `true`，关掉就只信宿主列表）、`usageScanPath`（默认 `$DSH_HOME/sessions`）。
+  出站主机仍 8 条（整个补扫是纯本地读盘）。新增宿主断言 719→795、客户端断言 555→586、guards 静态矩阵 256→271（第 9 节 15 条）
+  方案见 `specs/009-usage-fallback-scan/`，日志文件契约见 `docs/upstream-contracts.md` 的「会话日志文件（多帧 zstd，兜底扫描）」节。
+
 - **官方账号侧用量对照（008）**：统计屏的柱子下面新增一条对照条，把同一段时间的
   **官方「Token Plan 用量明细」**（账号级 tokens）与本机实测并排，第三格是「官方 − 本机」的差额——
   官方的洞是"别的设备/客户端用同一把 Key"，本机的洞是"只看得到这台机器"，两个数字放一起才解释得清。

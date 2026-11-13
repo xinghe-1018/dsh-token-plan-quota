@@ -38,6 +38,9 @@ const {
   emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange, resolveCustomRange,
   loadUsageIndex, saveUsageIndex, trimUsageIndex, syncUsageIndex,
   buildUsageSnapshot, runUsageSync,
+  buildOfficialUsageSnapshot, resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
+  sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
+  officialChunkRequest, officialEarliestDayKey, officialErrorHint, DECLARED_HOSTS,
 } = __internals
 
 let passed = 0
@@ -1970,7 +1973,7 @@ function recursiveKeys(value, out = []) {
   ok('live fallback：没有百分号', !JSON.stringify(snapshot).includes('%'))
 
   const tool = buildQuotaTool(() => liveConfig, ctxStub)
-  check('工具 action 枚举含 usage', tool.parameters.properties.action.enum, ['status', 'refresh', 'reset', 'usage'])
+  check('工具 action 枚举含 usage 与 usage-official', tool.parameters.properties.action.enum, ['status', 'refresh', 'reset', 'usage', 'usage-official'])
   check('工具 days 参数 1..365', [tool.parameters.properties.days.type, tool.parameters.properties.days.minimum, tool.parameters.properties.days.maximum], ['integer', 1, 365])
   const out = await tool.execute({ action: 'usage', days: 7 })
   check('工具 usage：ok=true', out.ok, true)
@@ -2323,7 +2326,218 @@ function recursiveKeys(value, out = []) {
   }
 }
 
-// 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
+/* ============================================ 008 官方账号侧用量明细（Token Plan Usage Details）
+ *
+ * 为什么必须逐条钉死而不是只测"能跑通"：这一格显示的是**账号级**数字，用户拿它和本机账对账
+ * （官方 20 亿 vs 本机 12.5 亿）。它错了不会崩，只会安静地把差额算错，所以每一条退化路径
+ * ——缺日、无 total_tokens、缓存、夹紧、下载链接、登录失效——都要有断言。
+ * 全程只进回环服务器：不给真实控制台打一个请求。
+ */
+{
+  const pureChunk = officialChunkRequest({ from: '2026-10-01', to: '2026-10-03' })
+  check('008 切片请求：止日次日零点 + 日步长', [pureChunk.step, pureChunk.endTime - pureChunk.startTime], [86_400, 3 * 86_400_000])
+  const threeChunks = sliceOfficialRange({ from: '2026-09-01', to: '2026-11-13' })
+  check('008 切片：74 天 → 30/30/14 三片（网关实测上界 30 天）', threeChunks.chunks.map(c => c.days), [30, 30, 14])
+  const clamped = sliceOfficialRange({ from: '2026-01-01', to: '2026-10-02', earliest: '2026-06-01' })
+  // clampedFrom 是**被夹掉的那个起点**（不是夹紧后的值）：UI 要靠它解释"你要的更早，官方只给到这里"。
+  check('008 切片：早于官方最早日 → 夹紧，并回报被夹掉的原始起点',
+    [clamped.from, clamped.clampedFrom, clamped.days], ['2026-06-01', '2026-01-01', 124])
+  check('008 切片：起点晚于终点 → 空区间固定码', sliceOfficialRange({ from: '2026-10-03', to: '2026-10-01' }).error, 'official-empty-range')
+  check('008 切片：官方最早日 = 当前月往前 5 个月的 1 号',
+    officialEarliestDayKey({ now: Date.parse('2026-11-13T04:00:00Z'), monthsBack: 5 }), '2026-06-01')
+
+  const nested = parseOfficialEnvelope({ code: '200', data: { DataV2: { data: { extra: { originData: [{ metricName: 'model_usage' }] } } } } })
+  check('008 解析：向下找 originData 那层', nested.series?.length, 1)
+  check('008 解析：data 是 JSON 字符串时也要认',
+    parseOfficialEnvelope({ data: JSON.stringify({ data: { originData: [1] } }) }).series?.length, 1)
+  check('008 解析：只给下载链接时单独回报（不跟随外部主机）',
+    parseOfficialEnvelope({ data: { dataDownloadUrl: 'https://oss.example/x.json' } }).downloadUrl, 'https://oss.example/x.json')
+  check('008 解析：认不出结构 → 固定码', parseOfficialEnvelope({ nope: 1 }).error, 'official-bad-response')
+
+  const folded = foldOfficialSeries([
+    { labels: { usage_type: 'total_tokens' }, points: [{ timestamp: Date.parse('2026-10-02T00:00:00Z'), value: 100 }] },
+    { labels: { usage_type: 'input_tokens' }, points: [{ timestamp: Date.parse('2026-10-02T00:00:00Z'), value: 70 }] },
+    // 官方枚举外的东西不能被当成某个已知类型累加进去（伪装成 total 会让数字翻倍）。
+    { labels: { usage_type: 'mystery_tokens' }, points: [{ timestamp: Date.parse('2026-10-02T00:00:00Z'), value: 9_999 }] },
+  ], { dayStart: '2026-10-01', dayEnd: '2026-10-02' })
+  check('008 折叠：timestamp 是桶右端点（减一个 step 才是当天）', folded.days.get('2026-10-01')?.input, 70)
+  check('008 折叠：枚举外类型被忽略（只认四类白名单）', folded.days.get('2026-10-01')?.total, 100)
+  const builtDerived = buildOfficialUsage({ from: '2026-10-01', to: '2026-10-02', days: folded.days })
+  check('008 汇总：缺日补 0 桶、桶尾 = 日键', builtDerived.buckets.map(b => b.to), ['2026-10-01', '2026-10-02'])
+  check('008 汇总：有 total 时不派生', [builtDerived.totals.tokens, builtDerived.totalDerived], [100, false])
+  const derivedOnly = buildOfficialUsage({ from: '2026-10-01', to: '2026-10-01', days: new Map([['2026-10-01', { total: 0, input: 70, cached: 0, output: 30, hasTotal: false }]]) })
+  check('008 汇总：没有 total_tokens 时 tokens = input + output 并标记派生', [derivedOnly.totals.tokens, derivedOnly.totalDerived], [100, true])
+  for (const code of ['official-disabled', 'official-no-credentials', 'official-login-expired', 'official-download-url', 'official-timeout', 'official-upstream', 'official-bad-response']) {
+    const hint = String(officialErrorHint(code))
+    ok('008 错误提示可操作且不带百分比：' + code, hint.length > 4 && !hint.includes('%'), hint)
+  }
+  ok('008 声明主机集合没有被 telemetry 改动',
+    DECLARED_HOSTS.length === 8 && DECLARED_HOSTS.every(host => host.startsWith('https://'))
+    && !DECLARED_HOSTS.some(host => /telemetry|oss\./i.test(host)), DECLARED_HOSTS.join(','))
+
+  // ---- 回环全链路 ----
+  const seen = []
+  let mode = 'ok'
+  const seriesOf = (reqDTO) => {
+    const start = Number(reqDTO.startTime)
+    const step = Number(reqDTO.step) * 1000
+    const first = start + step
+    const out = []
+    const push = (type, value) => out.push({
+      aggMethod: 'sum',
+      metricName: 'model_usage',
+      step: Number(reqDTO.step),
+      labels: { usage_type: type },
+      points: [{ timestamp: first, value }],
+    })
+    // 只给第一天数据：这样"缺日补 0"与"逐日桶"能在同一份响应里一起验。
+    if (mode === 'no-total') {
+      push('input_tokens', 70)
+      push('output_tokens', 30)
+    } else {
+      push('total_tokens', 100)
+      push('input_tokens', 70)
+      push('cached_tokens', 50)
+      push('output_tokens', 30)
+    }
+    return out
+  }
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      const u = new URL(req.url, 'http://x')
+      if (u.pathname === '/tool/user/info.json') {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: '200', successResponse: true, data: { secToken: 'SECTOKEN_CANARY' } }))
+        return
+      }
+      let params = {}
+      try { params = JSON.parse(new URLSearchParams(body).get('params') ?? '{}') } catch { params = {} }
+      const reqDTO = params?.Data?.reqDTO ?? {}
+      seen.push({ api: params.Api, reqDTO, cookie: req.headers.cookie ?? null })
+      if (mode === 'http-500') { res.writeHead(500); res.end('boom'); return }
+      if (mode === 'login') {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ data: { errorCode: 'BailianGateway.Login.NotLogined', errorMsg: 'not logged in' } }))
+        return
+      }
+      if (mode === 'download') {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: '200', successResponse: true, data: { dataDownloadUrl: 'https://oss.example/x.json' } }))
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ code: '200', successResponse: true, data: { originData: seriesOf(reqDTO) } }))
+    })
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const realCookie = process.env.BAILIAN_CONSOLE_COOKIE
+  process.env.BAILIAN_CONSOLE_COOKIE = 'cna=AAA; login_qianwenai_ticket=TICKET_CANARY'
+  try {
+    const loopSource = {
+      ...PRESETS['token-plan-console'],
+      url: 'http://127.0.0.1:' + server.address().port + '/data/api.json',
+      infoUrl: 'http://127.0.0.1:' + server.address().port + '/tool/user/info.json',
+    }
+    const loopConfig = { ...effectiveConfig({ minIntervalMs: 0, timeoutMs: 5000 }, ctxStub), sources: [loopSource] }
+    const ask = (query, config = loopConfig) => buildOfficialUsageSnapshot(config, ctxStub, query)
+
+    officialCache.clear()
+    seen.length = 0
+    const three = await ask({ from: '2026-10-01', to: '2026-10-03' })
+    check('008 回环：range / granularity / 日桶数', [three.range, three.granularity, three.buckets.length],
+      [{ kind: 'custom', days: 3, from: '2026-10-01', to: '2026-10-03' }, 'day', 3])
+    check('008 回环：四个口径分别累加', three.totals, { tokens: 100, input: 70, cacheRead: 50, output: 30 })
+    check('008 回环：无点日补 0（不是漏桶）', three.buckets.map(b => b.tokens), [100, 0, 0])
+    check('008 回环：coverage 交代接口与切片', [three.coverage.api, three.coverage.chunks, three.coverage.step, three.coverage.cached, three.coverage.totalDerived],
+      [PRESETS['token-plan-console'].telemetryApi, 1, 'day', false, false])
+    check('008 回环：source 标官方账号侧', [three.source.kind, three.source.veracity], ['official-console', 'verified'])
+    ok('008 回环：官方数字是 tokens 口径，不出现计费点数/百分比',
+      !JSON.stringify(three).includes('Credits') && !JSON.stringify(three).includes('%'))
+    check('008 回环：Api 整条覆盖到 telemetry（不在 apiPrefix 下）', seen[0]?.api, PRESETS['token-plan-console'].telemetryApi)
+    check('008 回环：reqDTO 按官方契约（productMode/step/metricFilters）',
+      [seen[0]?.reqDTO.productMode, seen[0]?.reqDTO.step, seen[0]?.reqDTO.metricFilters?.[0]?.metricName],
+      ['TokenPlanPersonal', 86_400, 'model_usage'])
+    ok('008 回环：Cookie 与 sec_token 都带上', seen[0]?.cookie?.includes('TICKET_CANARY') === true)
+
+    const again = await ask({ from: '2026-10-01', to: '2026-10-03' })
+    check('008 缓存：同区间第二次不打网络', [again.coverage.cached, seen.length], [true, 1])
+    const refreshed = await buildOfficialUsageSnapshot(loopConfig, ctxStub, { from: '2026-10-01', to: '2026-10-03' }, { fresh: true })
+    check('008 缓存：fresh 强制回源', [refreshed.coverage.cached, seen.length], [false, 2])
+
+    // 缓存按 from|to 命中，但 kind 属于**请求**：同一段日期先按自定义查、再按预设查，
+    // 第二次命中的 range.kind 必须是 '3d' 而不是上次的 'custom'（否则屏上标题会写成自定义区间）。
+    officialCache.clear()
+    const todayKey = dayKey(Date.now())
+    const minusTwo = dayKey(Date.now() - 2 * 86_400_000)
+    await ask({ from: minusTwo, to: todayKey })
+    const byPreset = await ask({ days: 3 })
+    check('008 缓存：命中缓存时 range.kind 跟本次请求走', [byPreset.coverage.cached, byPreset.range.kind, byPreset.range.from, byPreset.range.to],
+      [true, '3d', minusTwo, todayKey])
+
+    mode = 'no-total'
+    const derived = await ask({ from: '2026-10-05', to: '2026-10-05' })
+    check('008 回环：没有 total_tokens 时派生并标记', [derived.totals.tokens, derived.coverage.totalDerived], [100, true])
+    mode = 'ok'
+
+    const earliestNow = officialEarliestDayKey({ now: Date.now(), monthsBack: 5 })
+    const clampedAsk = await ask({ from: '2026-01-01', to: '2026-10-02' })
+    check('008 回环：早于官方最早日被夹紧，并把被夹掉的起点报出来',
+      [clampedAsk.coverage.clampedFrom, clampedAsk.range.from], ['2026-01-01', earliestNow])
+    ok('008 回环：夹紧后的 from 早于请求的 from', clampedAsk.range.from > '2026-01-01')
+    check('008 回环：夹紧后按 30 天分片（124 天 → 5 片）', clampedAsk.coverage.chunks, 5)
+
+    const before = seen.length
+    const badRange = await ask({ from: '2026-10-01' })
+    check('008 参数：只给一端 → paramError + 固定码', [badRange.paramError, badRange.error], [true, 'usage-bad-range'])
+    const tooLong = await ask({ from: '2025-01-01', to: '2026-11-12' })
+    check('008 参数：超跨度 → paramError + maxDays', [tooLong.paramError, tooLong.error, tooLong.maxDays], [true, 'usage-range-too-long', 365])
+    check('008 参数：两次非法请求都没有出网', seen.length, before)
+
+    officialCache.clear()
+    const off = await ask({ from: '2026-10-01', to: '2026-10-02' }, { ...loopConfig, officialUsage: false })
+    check('008 开关：officialUsage=false → 固定码且不打网络', [off.code, seen.length], ['official-disabled', before])
+
+    delete process.env.BAILIAN_CONSOLE_COOKIE
+    const noCred = await ask({ from: '2026-10-06', to: '2026-10-06' })
+    check('008 凭据：没有 Cookie → 固定码（不是空数字）', noCred.code, 'official-no-credentials')
+    process.env.BAILIAN_CONSOLE_COOKIE = 'cna=AAA; login_qianwenai_ticket=TICKET_CANARY'
+
+    mode = 'http-500'
+    const up = await ask({ from: '2026-10-07', to: '2026-10-07' })
+    check('008 上游：500 → official-unavailable / official-upstream', [up.error, up.code], ['official-unavailable', 'official-upstream'])
+    mode = 'login'
+    const login = await ask({ from: '2026-10-08', to: '2026-10-08' })
+    check('008 上游：登录失效 → 单独的错误码', [login.error, login.code], ['official-unavailable', 'official-login-expired'])
+    ok('008 上游：登录失效的提示可操作（有下一步，而不是只有错误码）', String(login.hint).length > 4, login.hint)
+    ok('008 上游：任何错误体都不带凭据值', !JSON.stringify(login).includes('TICKET_CANARY') && !JSON.stringify(up).includes('TICKET_CANARY'))
+    ok('008 上游：任何错误体都不带上游原文', !JSON.stringify(up).includes('boom'))
+    mode = 'download'
+    const download = await ask({ from: '2026-10-09', to: '2026-10-09' })
+    check('008 上游：只给下载链接 → 明确的固定码（不跟外部主机）', [download.error, download.code], ['official-unavailable', 'official-download-url'])
+    mode = 'ok'
+
+    // 工具入口：模型侧也要能拿到同一份数字（且不把 365 个桶塞进工具输出）。
+    const tool = buildQuotaTool(() => loopConfig, ctxStub)
+    officialCache.clear()
+    const toolOk = await tool.execute({ action: 'usage-official', from: '2026-10-01', to: '2026-10-03' })
+    check('008 工具：usage-official 回 ok + 总量', [toolOk.ok, toolOk.official?.totals?.tokens], [true, 100])
+    check('008 工具：不把逐日桶塞进工具输出', 'buckets' in (toolOk.official ?? {}), false)
+    ok('008 工具：文本点明账号级口径', String(toolOk.text).includes('账号级'), toolOk.text)
+    const toolBad = await tool.execute({ action: 'usage-official', from: '2026-10-01' })
+    check('008 工具：参数非法 → ok=false + 固定码', [toolBad.ok, toolBad.error], [false, 'usage-bad-range'])
+    const toolClip = await tool.execute({ action: 'usage-official', days: 7 })
+    check('008 工具：按 days 查询也走同一条链路', [toolClip.ok, toolClip.official?.range?.kind], [true, '7d'])
+  } finally {
+    if (realCookie === undefined) delete process.env.BAILIAN_CONSOLE_COOKIE
+    else process.env.BAILIAN_CONSOLE_COOKIE = realCookie
+    await new Promise(resolve => server.close(resolve))
+    officialCache.clear()
+  }
+}
+
+// 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 

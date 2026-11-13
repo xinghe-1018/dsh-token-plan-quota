@@ -500,7 +500,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
 
   // 被扫的段落必须真的存在：否则下面所有断言都在扫一段空字符串（门禁自身的假绿形态）。
   const usageStart = indexSrc.indexOf('/* ==================================================== 用量索引（006）')
-  const usageEnd = indexSrc.indexOf('/* ==================================================== 滑动 TPM + 重试观测')
+  // 008 段插在 006 与 008 之间：先在自己的段界上收口，否则 008 的文案会带着 006 的禁词矩阵一起红/绿。
+  const usageEnd = indexSrc.indexOf('/* ==================================================== 官方账号侧用量（008）')
   ok('用量统计段在 lib/index.js 里存在且可定位', usageStart > 0 && usageEnd > usageStart)
   const usageRegion = indexSrc.slice(usageStart, usageEnd)
   ok('用量统计段被完整扫到（字符数 > 4000）', usageRegion.length > 4000)
@@ -768,9 +769,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       ok('007 客户端：钩子 ' + hook + ' 存在', clientSrc.includes(hook))
     }
     ok('007 客户端：自定义查询只发 ?from=&to=（不带 days / range）',
-      clientSrc.includes('USAGE + "?from=" + checked.from + "&to=" + checked.to'))
-    ok('007 客户端：两处本地校验都先于请求（非法输入零请求）',
-      clientSrc.includes('if (checked.ok !== true) return Promise.resolve()')
+      clientSrc.includes('"?from=" + checked.from + "&to=" + checked.to')
+        && clientSrc.includes('const path = USAGE + suffix;')
+        && !clientSrc.includes('USAGE + "?range="'))
+    ok('007 客户端：本地校验先于请求（非法输入零请求，两处独立校验）',
+      // 008 把请求串统一收进 usageQueryPath：校验失败 → null → 调用方直接返回，一个字节都不发。
+      /if \(checked\.ok !== true\) return null;/.test(clientSrc)
+        && clientSrc.includes('if (suffix === null) return Promise.resolve();')
+        && clientSrc.includes('if (suffix === null || key === null) return Promise.resolve();')
         && /if \(checked\.ok !== true\) \{/.test(clientSrc))
     ok('007 客户端：两条 400 映射成本地文案（不回显宿主原文）',
       clientSrc.includes('code === "usage-bad-range" || code === "usage-range-too-long"')
@@ -797,6 +803,42 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     const rangeRegion = rangeStart > 0 ? strip007(usageSrc.slice(rangeStart, rangeEnd)) : ''
     ok('007 纯函数段：不出现百分比与 Credits', rangeRegion !== '' && !/%/.test(rangeRegion) && !/credit/i.test(rangeRegion))
     ok('007 纯函数段：不联网、不读凭据', rangeRegion !== '' && !/fetch\(|https?:\/\//.test(rangeRegion) && !/credential|apiKey|cookie/i.test(rangeRegion))
+  }
+
+  /* 8) 008 官方用量明细：纯函数层必须保持"只算数"，宿主段必须"只经网关出网、不落盘"。
+   * 这一格最容易悄悄坏的方式是把官方历史顺手写进索引文件（那就把账号级数据落到本机了），
+   * 或者为了取数在段内直接 fetch（绕开声明主机闸门）。 */
+  {
+    const officialSrc = readFileSync(join(ROOT, 'lib', 'official-usage.js'), 'utf8')
+    const strip8 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    const officialCode = strip8(officialSrc)
+    ok('008 官方模块：纯函数层（没有 import / require）', !/^\s*import\s/m.test(officialCode) && !/require\(/.test(officialCode))
+    ok('008 官方模块：不联网、不读文件', !/fetch\(|https?:\/\/|readFile|writeFile|renameSync|process\.env/.test(officialCode))
+    // 错误提示段会点名 Cookie 的**环境变量名**（那是给用户的操作指引，值永远不进文案）：
+    // 凭据扫描只扫它之前的部分，否则要么把整段吞掉、要么逼文案说一句用户看不懂的行话。
+    const officialDataCode = officialCode.slice(0, officialCode.indexOf('export function officialErrorHint'))
+    ok('008 官方模块：不读凭据（注释与提示文案除外）',
+      officialDataCode !== '' && !/credential|apiKey|api_key|cookie|process\.env/i.test(officialDataCode))
+    ok('008 官方模块：不出现百分比与 Credits 字样', !/%/.test(officialCode) && !/credit/i.test(officialCode))
+
+    const officialStart = indexSrc.indexOf('/* ==================================================== 官方账号侧用量（008）')
+    const officialEnd = indexSrc.indexOf('/* ==================================================== 滑动 TPM + 重试观测')
+    ok('008 宿主段在 lib/index.js 里存在且可定位', officialStart > 0 && officialEnd > officialStart)
+    const officialRegion = officialStart > 0 ? indexSrc.slice(officialStart, officialEnd) : ''
+    ok('008 宿主段被完整扫到（字符数 > 2000）', officialRegion.length > 2000)
+    ok('008 宿主段：不直接出网（只经 callConsoleGateway，声明主机闸门才拦得住）', !/fetch\(/.test(officialRegion))
+    ok('008 宿主段：不出现百分比与 Credits 字样', !/%/.test(officialRegion) && !/credit/i.test(officialRegion))
+    ok('008 宿主段：官方历史不落盘', !/writeFileSync|saveUsageIndex|appendFile/.test(officialRegion))
+
+    const tp = __internals.PRESETS['token-plan-console']
+    ok('008 预设：telemetry 用 platform-model 网关的用量明细接口',
+      tp.telemetryApi === 'zeldaEasy.bailian-telemetry.platform-model.getModelMonitorDataWithOss')
+    ok('008 预设：切片 30 天 / 最早 5 个月 / 日步长（与纯函数默认同源）',
+      tp.telemetryChunkDays === 30 && tp.telemetryEarliestMonths === 5 && tp.telemetryStepSeconds === 86_400)
+    ok('008 DEFAULTS：officialUsage 默认开、officialUsageMinutes 默认 5',
+      __internals.DEFAULTS.officialUsage === true && __internals.DEFAULTS.officialUsageMinutes === 5)
+    ok('008 出站主机没有被这份功能扩表（仍 8 条 https）',
+      __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
   }
 }
 

@@ -216,6 +216,11 @@ let fetchCalls = []
 function makeFetch(mode) {
   return async (url, init) => {
     fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    // 008 官方账号侧必须排在 /usage 之前：前者是后者的前缀，顺序反了会被本机分支吞掉。
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      const span = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(span) }
+    }
     // 整页屏的数据路由（spec 006）：days 从查询串读，快照形状照 INTERFACE §3。
     if (String(url).startsWith('/token-plan-quota/usage')) {
       const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
@@ -528,6 +533,39 @@ function makeUsageSnapshot(days = 7) {
     source: { kind: 'session-index', veracity: 'measured', label: '本实例实测' },
     coverage: { sessions: 12, indexed: 12, failed: 0, unknownModel: 0, skippedOld: 0 },
     refreshing: false,
+  }
+}
+
+/**
+ * 官方账号侧假响应（spec 008 / INTERFACE §2.1）。口径必须自洽，否则测出来的「同源」是假的：
+ * totals.tokens = input + output，cacheRead 已含在 input 内（不相加）；buckets 每日均摊，
+ * 之和等于 totals（三格与拆分同源、任意 days 都能算期望值）。
+ * 300,000,000 tokens/天 × 7 天 = 2,100,000,000，与本机 fixture 的 1,000,000 差出正号。
+ */
+function makeOfficialSnapshot(days = 7) {
+  const span = Math.max(1, Math.round(Number(days) || 7))
+  const dayMs = 86_400_000
+  const end = Date.parse('2026-11-13T00:00:00Z')
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
+  const perDay = { tokens: 300_000_000, input: 180_000_000, cacheRead: 162_000_000, output: 120_000_000 }
+  const buckets = []
+  for (let offset = span - 1; offset >= 0; offset -= 1) {
+    const start = end - offset * dayMs
+    buckets.push({ from: iso(start), to: iso(start + dayMs), ...perDay })
+  }
+  return {
+    generatedAt: Date.parse('2026-11-13T00:42:00Z'),
+    range: { kind: 'days', days: span, from: iso(end - (span - 1) * dayMs), to: iso(end) },
+    granularity: 'day',
+    totals: {
+      tokens: perDay.tokens * span,
+      input: perDay.input * span,
+      cacheRead: perDay.cacheRead * span,
+      output: perDay.output * span,
+    },
+    buckets,
+    source: { kind: 'official-console', veracity: 'verified', label: '官方账号侧（Token Plan 用量明细）' },
+    coverage: { api: 'console-gateway', chunks: 1, step: 'day', cached: false, totalDerived: true },
   }
 }
 
@@ -1626,8 +1664,9 @@ function findChip(node) {
   const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
-  // 007 增了 9 个自定义区间键（INTERFACE §3.3 的 8 个 + 多天标题模板），109 → 118。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [118, 118])
+  // 007 增了 9 个自定义区间键（109 → 118）；008 增了 10 个官方对照键（INTERFACE §3.3 的 8 个
+  // + 「官方」格标签 + clampedFrom 说明），118 → 128。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [128, 128])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1834,9 +1873,19 @@ function collectText(node, out = []) {
   return out
 }
 
-/** 本用例里对整页屏数据路由的全部请求。 */
+/** 本用例里对整页屏数据路由的全部请求（末尾的 "?" 把 -official 挡在外面）。 */
 function usageRequests() {
-  return fetchCalls.filter((entry) => String(entry.url).startsWith('/token-plan-quota/usage'))
+  return fetchCalls.filter((entry) => String(entry.url).startsWith('/token-plan-quota/usage?'))
+}
+
+/** 008：官方账号侧路由的请求（与本机路由分开计数，断言互不污染）。 */
+function officialRequests() {
+  return fetchCalls.filter((entry) => String(entry.url).startsWith('/token-plan-quota/usage-official'))
+}
+
+/** 官方侧回一个 200 包（成功体或 {error, code, hint} 失败体都由调用方给全）。 */
+function officialResponse(body) {
+  return { ok: true, status: 200, json: async () => body }
 }
 
 /** 用一份改过的假快照回包（五个状态各要一份）。 */
@@ -1844,6 +1893,10 @@ function usageFetch(mutate) {
   return async (url, init) => {
     fetchCalls.push({ url, method: init?.method ?? 'GET' })
     const days = Number(new URL(String(url), 'http://localhost').searchParams.get('days')) || 7
+    // 008：官方路由单独回官方形状（mutate 只描述本机快照，别拿它冒充官方数字）。
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(days) }
+    }
     return { ok: true, status: 200, json: async () => mutate(makeUsageSnapshot(days)) }
   }
 }
@@ -2572,6 +2625,11 @@ function usageCustomFetch(options = {}) {
     const parsed = new URL(String(url), 'http://localhost')
     const from = parsed.searchParams.get('from')
     const to = parsed.searchParams.get('to')
+    // 008：官方路由走同一组 from/to，但回官方形状；handler 只用来控制本机侧回包。
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      const spanDays = Number(parsed.searchParams.get('days')) || 7
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(spanDays) }
+    }
     if (options.handler) {
       const handled = options.handler({ from, to, parsed })
       if (handled !== undefined) return handled
@@ -2854,6 +2912,354 @@ function openCustom(bundle) {
   store.setRange({ rangeMode: 'days', from: '', to: '' })
   check('T005 回天数模式时清空起止',
     [store.create().getSnapshot().rangeMode, store.create().getSnapshot().from], ['days', ''])
+}
+
+
+/* ======================================================== T006（spec 008）官方账号侧对照条 */
+
+/** 数字是否出现在画面上（错误态「零数字」断言；不依赖正则转义）。 */
+function hasDigit(text) {
+  return String(text).split('').some((ch) => ch >= '0' && ch <= '9')
+}
+
+/** 从渲染树里取官方对照 section。 */
+function officialSectionOf(tree) {
+  return findNodes(tree, 'tpq-usage-official')[0]
+}
+
+/** 取官方三格里某一格的数字文本（official / local / gap）。 */
+function officialCellTextOf(tree, which) {
+  const cell = findNodes(tree, 'tpq-usage-official-' + which)[0]
+  if (cell === undefined) return null
+  const value = findNodes(cell, 'tpq-usage-official-value')[0]
+  return value === undefined ? null : collectText(value).join('')
+}
+
+/** 官方侧回包由本函数指定，本机侧仍回 makeUsageSnapshot（mutate 只管本机）。 */
+function officialFetchOf(bodyOrFactory) {
+  return async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      return { ok: true, status: 200, json: async () => (typeof bodyOrFactory === 'function' ? bodyOrFactory(parsed) : bodyOrFactory) }
+    }
+    const days = Number(parsed.searchParams.get('days')) || 7
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+  }
+}
+
+/* T006 ①：静态契约 —— 路由常量、10 个官方文案键双语齐备、禁 % 与 Credits、375px 折行。 */
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T006 官方路由常量与 INTERFACE §3 一致（/token-plan-quota/usage-official）',
+    source.includes('const USAGE_OFFICIAL = "/token-plan-quota/usage-official"'))
+  const zhBlock = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(source)?.[1] ?? ''
+  const enBlock = /\n      en: \{([\s\S]*?)\n      \},/.exec(source)?.[1] ?? ''
+  // 逐行取值（不拼动态正则：转义层数一多，测试本身就先错了）。
+  const copyEntriesOf = (block) => block.split('\n').flatMap((line) => {
+    const trimmed = line.trim()
+    const colon = trimmed.indexOf(': "')
+    if (colon <= 0) return []
+    const rest = trimmed.slice(colon + 3)
+    const end = rest.lastIndexOf('"')
+    if (end < 0) return []
+    return [{ key: trimmed.slice(0, colon), value: rest.slice(0, end) }]
+  })
+  const zhEntries = copyEntriesOf(zhBlock)
+  const enEntries = copyEntriesOf(enBlock)
+  const officialOf = (entries) => entries.filter((entry) => entry.key.startsWith('usageOfficial'))
+  const zhOfficial = officialOf(zhEntries)
+  const enOfficial = officialOf(enEntries)
+  check('T006 官方文案 zh / en 各 10 键（8 契约键 + 格标签 + 夹紧说明）',
+    [zhOfficial.length, enOfficial.length], [10, 10])
+  const contractKeys = ['usageOfficialTitle', 'usageOfficialLocal', 'usageOfficialGap', 'usageOfficialLoading',
+    'usageOfficialError', 'usageOfficialRetry', 'usageOfficialNote', 'usageOfficialEmpty']
+  const zhKeys = zhOfficial.map((entry) => entry.key)
+  const enKeys = enOfficial.map((entry) => entry.key)
+  ok('T006 INTERFACE §3.3 的 8 个键 zh / en 一个不少',
+    contractKeys.every((key) => zhKeys.includes(key) && enKeys.includes(key)), zhKeys.join(','))
+  const zhCopy = zhOfficial.map((entry) => entry.value).join(' ')
+  const enCopy = enOfficial.map((entry) => entry.value).join(' ')
+  ok('T006 zh 官方文案不含 % 与 Credits', !zhCopy.includes('%') && !zhCopy.includes('Credits'), zhCopy)
+  ok('T006 en 官方文案不含 % 与 Credits、也不混中文',
+    !enCopy.includes('%') && !enCopy.includes('Credits') && !/[\u3400-\u9fff]/u.test(enCopy), enCopy)
+  const zhNote = zhOfficial.find((entry) => entry.key === 'usageOfficialNote')?.value ?? ''
+  const enNote = enOfficial.find((entry) => entry.key === 'usageOfficialNote')?.value ?? ''
+  ok('T006 中文脚注写明含其他设备 / Token 口径 / 输入侧已含缓存且不相加',
+    zhNote.includes('其他设备') && zhNote.includes('Token') && zhNote.includes('缓存') && zhNote.includes('不相加'), zhNote)
+  ok('T006 英文脚注写明 cacheRead 已在 input 内、不相加',
+    enNote.includes('cache reads') && enNote.includes('input') && enNote.includes('do not add'), enNote)
+  const narrowCss = source.slice(source.indexOf('@media (max-width:520px){'))
+  ok('T006 375px：官方三格折两行、差额整行（不横向溢出）',
+    narrowCss.includes('.tpq-usage-official-grid{grid-template-columns:repeat(2,minmax(0,1fr))}')
+    && narrowCss.includes('.tpq-usage-official-gap{grid-column:1/-1}'))
+  ok('T006 宽屏三格自适应（auto-fit），数字可换行不撑破卡片',
+    source.includes('.tpq-usage-official-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr))')
+    && source.includes('.tpq-usage-official-value{font-size:18px') && source.includes('overflow-wrap:anywhere}'))
+}
+
+/* T006 ②：__internals 的纯函数 —— 请求串唯一构造、ready 只看参数 key、差额符号。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T006 __internals 暴露官方查询 / 判定 / 差额的纯函数',
+    ['usageQueryPath', 'officialQueryKeyOf', 'officialPayloadState', 'officialIsEmpty', 'officialGapText', 'usageOfficialSection']
+      .every((key) => typeof internals[key] === 'function'))
+  check('T006 官方与本机共用同一个请求串构造函数',
+    [internals.usageQueryPath({ mode: 'days', days: 7 }),
+      internals.usageQueryPath({ mode: 'custom', from: '2026-09-01', to: '2026-09-30' })],
+    ['?days=7', '?from=2026-09-01&to=2026-09-30'])
+  check('T006 非法自定义区间 → 零请求（null）',
+    internals.usageQueryPath({ mode: 'custom', from: '2026-09-30', to: '2026-09-01' }), null)
+  check('T006 天数照旧走 clampDays（0 被夹到 1）', internals.usageQueryPath({ mode: 'days', days: 0 }), '?days=1')
+  check('T006 查询 key 只由请求参数决定（不掺响应内容）',
+    [internals.officialQueryKeyOf({ mode: 'days', days: 7 }),
+      internals.officialQueryKeyOf({ mode: 'days', days: 7.4 }),
+      internals.officialQueryKeyOf({ mode: 'custom', from: '2026-09-01', to: '2026-09-30' }),
+      internals.officialQueryKeyOf({ mode: 'custom', from: 'bad', to: 'bad' }),
+      internals.officialQueryKeyOf(null)],
+    ['days:7', 'days:7', 'custom:2026-09-01:2026-09-30', null, null])
+  const ready = internals.officialPayloadState(makeOfficialSnapshot(7))
+  check('T006 成功体判为 ready', [ready.kind, ready.code], ['ready', ''])
+  const failed = internals.officialPayloadState({ error: 'official-unavailable', code: 'official-disabled', hint: '去控制台开一下' })
+  check('T006 失败体保留 code / hint（code 不上屏、hint 可展示）',
+    [failed.kind, failed.code, failed.hint], ['error', 'official-disabled', '去控制台开一下'])
+  check('T006 形状不对判 official-bad-response（绝不当成 0 用量）',
+    internals.officialPayloadState({ totals: {}, buckets: null }).code, 'official-bad-response')
+  ok('T006 只有全 0 才算「官方也没用量」',
+    internals.officialIsEmpty({ totals: { tokens: 0 }, buckets: [{ tokens: 0 }] }) === true
+    && internals.officialIsEmpty(makeOfficialSnapshot(7)) === false)
+  ok('T006 totals 为 0 但桶里有量 → 不算空（不拿 0 冒充）',
+    internals.officialIsEmpty({ totals: { tokens: 0 }, buckets: [{ tokens: 5 }] }) === false)
+  check('T006 差额：正数带 +、负数带 -、0 写 0、缺数据不瞎算',
+    [internals.officialGapText(2100000000, 1000000), internals.officialGapText(500000, 1000000),
+      internals.officialGapText(1000000, 1000000), internals.officialGapText(undefined, 5)],
+    ['+2099000000', '-500000', '0', '-5'])
+}
+
+/* T006 ③：就绪态三格与拆分严格同源，脚注与请求次数也在这里钉住。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const section = officialSectionOf(tree)
+  ok('T006 柱状图卡片之后渲染官方对照条（data-usage-official）',
+    section !== undefined && section.props['data-usage-official'] === '1')
+  check('T006 官方对照条是独立 section，不共用 .tpq-usage-card（既有 3 卡计数不被污染）',
+    section?.props.className, 'tpq-usage-official')
+  check('T006 就绪态不是 stale', section?.props['data-stale'], '0')
+  check('T006 标题取自 COPY', collectText(findNodes(section, 'tpq-usage-official-title')[0]).join(''), '官方账号侧用量对照')
+  check('T006 三格与两边 totals.tokens 严格同源（官方 2.1e9 / 本机 1e6）',
+    [officialCellTextOf(tree, 'official'), officialCellTextOf(tree, 'local')], ['2100000000', '1000000'])
+  check('T006 差额 = 官方 − 本机（正号必显）',
+    [officialCellTextOf(tree, 'gap'), findNodes(tree, 'tpq-usage-official-gap')[0].props['data-sign']],
+    ['+2099000000', 'pos'])
+  check('T006 官方四项拆分同源且不与 tokens 相加',
+    collectText(findNodes(tree, 'tpq-usage-official-split')[0]).join(''),
+    'input 1260000000 · cacheRead 1134000000 · output 840000000')
+  const note = collectText(findNodes(tree, 'tpq-usage-official-note')[0]).join('')
+  ok('T006 脚注点明口径差异（其他设备 + 不相加）',
+    note.includes('其他设备') && note.includes('不相加') && note.includes('本机会话记录'), note)
+  ok('T006 就绪态不残留 loading / empty 文案',
+    findNodes(tree, 'tpq-usage-official-loading').length === 0
+    && findNodes(tree, 'tpq-usage-official-empty').length === 0)
+  check('T006 同一查询只打一次官方（重复渲染 / 轮询不重复回源）',
+    officialRequests().filter((entry) => entry.url === '/token-plan-quota/usage-official?days=7').length, 1)
+  check('T006 官方接入不改既有结构（本机三张卡照旧）', findNodes(tree, 'tpq-usage-card').length, 3)
+}
+
+/* T006 ④：差额负数与零 —— 同一个函数，三种符号。 */
+{
+  const negative = { ...makeOfficialSnapshot(7), totals: { tokens: 500000, input: 400000, cacheRead: 0, output: 100000 } }
+  const bundle = await mountUsage({ fetchImpl: officialFetchOf(negative) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  check('T006 负差额（官方低于本机）带负号',
+    [officialCellTextOf(tree, 'gap'), findNodes(tree, 'tpq-usage-official-gap')[0].props['data-sign']],
+    ['-500000', 'neg'])
+  ok('T006 负差额时两格照旧各自取值（不是把差额当绝对值）',
+    officialCellTextOf(tree, 'official') === '500000' && officialCellTextOf(tree, 'local') === '1000000')
+}
+{
+  const equal = { ...makeOfficialSnapshot(7), totals: { tokens: 1000000, input: 700000, cacheRead: 0, output: 300000 } }
+  const bundle = await mountUsage({ fetchImpl: officialFetchOf(equal) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  check('T006 零差额写 0（不带正负号）',
+    [officialCellTextOf(tree, 'gap'), findNodes(tree, 'tpq-usage-official-gap')[0].props['data-sign']], ['0', 'zero'])
+}
+
+/* T006 ⑤：官方全 0 → 空文案，且不出现任何 0 的对照数字。 */
+{
+  const empty = {
+    ...makeOfficialSnapshot(7),
+    totals: { tokens: 0, input: 0, cacheRead: 0, output: 0 },
+    buckets: [{ from: '2026-11-13', to: '2026-11-14', tokens: 0, input: 0, cacheRead: 0, output: 0 }],
+  }
+  const bundle = await mountUsage({ fetchImpl: officialFetchOf(empty) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const section = officialSectionOf(tree)
+  const text = collectText(section).join(' ')
+  ok('T006 官方空区间显示空文案', findNodes(tree, 'tpq-usage-official-empty').length === 1 && text.includes('官方账号侧这段时间也没有用量记录'))
+  check('T006 空态不渲染三格', findNodes(tree, 'tpq-usage-official-grid').length, 0)
+  ok('T006 空态不出现任何数字（不拿 0 冒充对照）', !hasDigit(text), text)
+}
+
+/* T006 ⑥：错误态零数字、不显示 code 原文、重试带 fresh=1 且不污染本机三卡。 */
+{
+  let officialHits = 0
+  const fetchImpl = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      officialHits += 1
+      if (officialHits === 1) {
+        return { ok: true, status: 200, json: async () => ({ error: 'official-unavailable', code: 'official-disabled', hint: '去 Token Plan 控制台开启用量统计后重试。' }) }
+      }
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(7) }
+    }
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(Number(parsed.searchParams.get('days')) || 7) }
+  }
+  const bundle = await mountUsage({ fetchImpl })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 8)
+  const section = officialSectionOf(tree)
+  const text = collectText(section).join(' ')
+  const errorNode = findNodes(tree, 'tpq-usage-official-error')[0]
+  ok('T006 错误态一行 role=status 的说明', errorNode !== undefined && errorNode.props.role === 'status')
+  ok('T006 错误态用 COPY 文案 + 宿主中文 hint', text.includes('官方账号侧用量没取到') && text.includes('去 Token Plan 控制台开启用量统计后重试'), text)
+  ok('T006 错误态零数字（连 0 都不许出现）', !hasDigit(text), text)
+  ok('T006 错误态不回显 code 原文', !text.includes('official-disabled') && !text.includes('official-unavailable'), text)
+  check('T006 错误态只有一个重试按钮', findNodes(tree, 'tpq-usage-official-retry').length, 1)
+  check('T006 错误态不渲染三格', findNodes(tree, 'tpq-usage-official-grid').length, 0)
+  ok('T006 官方失败不污染本机屏（三张卡与区间总数照旧）',
+    findNodes(tree, 'tpq-usage-card').length === 3 && findNodes(tree, 'tpq-usage-value').length === 1)
+  const localBefore = usageRequests().length
+  findNodes(tree, 'tpq-usage-official-retry')[0].props.onClick()
+  check('T006 官方重试带 fresh=1（强制回源）',
+    officialRequests().at(-1)?.url, '/token-plan-quota/usage-official?days=7&fresh=1')
+  check('T006 官方重试不重打本机路由', usageRequests().length, localBefore)
+  tree = await settle(bundle.renderUsage, 8)
+  ok('T006 重试成功后换成三格、错误消失',
+    findNodes(tree, 'tpq-usage-official-official').length === 1
+    && findNodes(tree, 'tpq-usage-official-error').length === 0
+    && officialCellTextOf(tree, 'official') === '2100000000')
+}
+
+/* T006 ⑦：loading —— 官方还没回来时只出「正在读取」，不先摆 0。 */
+{
+  let release = () => {}
+  const gate = new Promise((resolve) => { release = resolve })
+  const fetchImpl = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      await gate
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(7) }
+    }
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(Number(parsed.searchParams.get('days')) || 7) }
+  }
+  const bundle = await mountUsage({ fetchImpl, timeoutMs: 5000 })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  ok('T006 loading：官方未回包时出 COPY 的读取文案',
+    findNodes(tree, 'tpq-usage-official-loading').length === 1
+    && collectText(findNodes(tree, 'tpq-usage-official-loading')[0]).join('') === '正在读取官方账号侧用量…')
+  check('T006 loading：不渲染三格（不先摆 0）', findNodes(tree, 'tpq-usage-official-grid').length, 0)
+  ok('T006 loading 期间本机三卡照旧可用', findNodes(tree, 'tpq-usage-card').length === 3)
+  release()
+  tree = await settle(bundle.renderUsage, 8)
+  ok('T006 官方回包后替换成三格', findNodes(tree, 'tpq-usage-official-official').length === 1
+    && officialCellTextOf(tree, 'official') === '2100000000')
+}
+
+/* T006 ⑧：切天数 —— 立刻 stale 且不展示上一区间数字，新请求换成 days=30。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 8)
+  const thirty = findNodes(tree, 'tpq-usage-day').find((node) => collectText(node).join('') === '30')
+  thirty.props.onClick()
+  tree = bundle.renderUsage()
+  check('T006 切天数后官方块立刻 stale 并退回 loading（不显示上一区间数字）',
+    [officialSectionOf(tree).props['data-stale'], findNodes(tree, 'tpq-usage-official-official').length], ['1', 0])
+  tree = await settle(bundle.renderUsage, 8)
+  check('T006 切 30 天后官方请求换成 days=30（常规取数不带 fresh）',
+    officialRequests().at(-1)?.url, '/token-plan-quota/usage-official?days=30')
+  check('T006 30 天的官方三格跟着换区间', [officialCellTextOf(tree, 'official'), officialCellTextOf(tree, 'gap')],
+    ['9000000000', '+8999000000'])
+}
+
+/* T006 ⑨：自定义区间 —— 官方与本机参数一字不差（共用 usageQueryPath）。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  await settle(bundle.renderUsage, 8)
+  let tree = openCustom(bundle)
+  tree = await settle(bundle.renderUsage, 2)
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-01' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-30' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 8)
+  check('T006 自定义区间：官方与本机请求参数一字不差',
+    [officialRequests().at(-1)?.url, usageRequests().at(-1)?.url],
+    ['/token-plan-quota/usage-official?from=2026-09-01&to=2026-09-30',
+      '/token-plan-quota/usage?from=2026-09-01&to=2026-09-30'])
+}
+
+/* T006 ⑩：clampedFrom —— 官方把起点夹紧时仍然 ready，文案写「被夹掉的原始起点」。 */
+{
+  const fetchImpl = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ...makeOfficialSnapshot(7),
+          range: { kind: 'custom', from: '2026-06-01', to: '2026-11-13' },
+          totals: { tokens: 500000000, input: 300000000, cacheRead: 0, output: 200000000 },
+          coverage: { api: 'console-gateway', chunks: 6, step: 'day', cached: false, totalDerived: true, clampedFrom: '2026-01-01' },
+        }),
+      }
+    }
+    const from = parsed.searchParams.get('from')
+    const to = parsed.searchParams.get('to')
+    const base = makeUsageSnapshot(7)
+    if (from === null || to === null) return { ok: true, status: 200, json: async () => base }
+    return { ok: true, status: 200, json: async () => ({ ...base, range: { kind: 'custom', days: 317, from, to } }) }
+  }
+  const bundle = await mountUsage({ fetchImpl })
+  resetHooks()
+  let tree = openCustom(bundle)
+  tree = await settle(bundle.renderUsage, 2)
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-01-01' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-11-13' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 10)
+  const section = officialSectionOf(tree)
+  check('T006 官方夹紧起点时仍判 ready（ready 只看请求参数，不比响应 range.from）',
+    section?.props['data-stale'], '0')
+  const clamped = findNodes(tree, 'tpq-usage-official-clamped')[0]
+  ok('T006 夹紧说明写「你查的原始起点」而不是夹紧后的值',
+    clamped !== undefined && collectText(clamped).join('') === '你查的 2026-01-01 起，官方最早只到 2026-06-01 起。',
+    clamped === undefined ? 'clamped 节点不存在' : collectText(clamped).join(''))
+  check('T006 夹紧不影响三格取值', officialCellTextOf(tree, 'official'), '500000000')
+}
+
+/* T006 ⑪：英文界面 —— 官方块的 en 文案真的用上，中文 hint 不上屏。 */
+{
+  const bundle = await mountUsage({ lang: 'en-US', fetchImpl: officialFetchOf({ error: 'official-unavailable', code: 'official-disabled', hint: '去控制台开启用量统计' }) })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 8)
+  const text = collectText(tree).join(' ')
+  ok('T006 en 错误态文案是英文', text.includes('Could not load official account usage') && text.includes('Retry official query'), text.slice(0, 300))
+  ok('T006 en 不展示中文 hint（宿主提示只给中文界面）', !text.includes('去控制台开启用量统计'), text.slice(0, 300))
+  ok('T006 en 整屏没有中文字符', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 300))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

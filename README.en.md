@@ -233,6 +233,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![The same screen in 3D: isometric projection sharing the 2D scale](docs/images/en/usage-3d.png)
 
+![Query by start/end date: the date row, the range title and the bars all come from the same response](docs/images/en/usage-range-2d.png)
+
 - **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
   so there is no percentage and no Credits.
@@ -244,6 +246,12 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 - Range selection: four presets (today / 7 / 30 / 90 days) plus a custom 1..365 input (out-of-range values are
   clamped and written back). **Above 62 days the buckets become weekly** (local Monday boundaries, first and last
   buckets may be short) - 365 daily bars neither fit nor read.
+- You can also query an **explicit date range**: "Custom" next to the presets opens two date boxes, and picking
+  Sep 1 to Sep 30 shows exactly those 30 days (both ends inclusive). Invalid input (empty, malformed, start after
+  end, start in the future) is blocked **locally, without sending a request**; the span limit is the same
+  `usageBackfillDays` key that bounds index retention (365 by default), an end date after today is clamped
+  to today, and the range shown on screen always uses the **clamped** value. Above 62 days it still aggregates
+  weekly, but the **first and last buckets hug the selected range** - no padding out to whole weeks.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -475,10 +483,11 @@ it does not list a speed per provider; that data stays in the snapshot and via `
 | `POST /token-plan-quota/refresh` | Refetch official sources |
 | `POST /token-plan-quota/reset` | Clear this instance's measured totals (including window anchors) |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`) |
+| `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | Aggregation for an explicit start/end date (both inclusive), taking precedence over `days`/`range`; one end only, malformed, start after end or in the future → 400 `usage-bad-range`; span above `usageBackfillDays` → 400 `usage-range-too-long` (with `maxDays`) |
 | `GET /token-plan-quota/probe?source=<id>` | Upstream field skeleton (for troubleshooting) |
 
 Same-origin requests only, and **keys are never returned**. On the model side there is the `token_plan_quota`
-tool (`status` / `refresh` / `reset` / `usage`, where `usage` accepts `days: 1..365`).
+tool (`status` / `refresh` / `reset` / `usage`, where `usage` accepts `days: 1..365` or `from` + `to` (`YYYY-MM-DD`, both inclusive, taking precedence over `days`)).
 
 Working with 429s: configure `retryPolicy` for that provider in `settings.yaml` (add `QUOTA` to
 `retryableCodes`, and set `initialDelayMs == maxDelayMs` with `jitterRatio: 0` to flatten the backoff into a
@@ -523,9 +532,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 600 assertions, offline
-node test/client.mjs                # 407 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 198 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 665 assertions, offline
+node test/client.mjs                # 481 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 243 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -533,7 +542,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "21 DEFAULTS keys, a 22-row
-config table, 8 sources, 8 declared outbound hosts, 600/407 tests plus 198 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 665/481 tests plus 243 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

@@ -197,6 +197,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![同一屏切到 3D：等轴投影，与 2D 共用同一线性刻度](docs/images/usage-3d.png)
 
+![按起止日期查询：日期行、区间标题与柱子都取自同一份响应](docs/images/usage-range-2d.png)
+
 - **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
   这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有百分比，也没有 Credits。
 - 数据来自**宿主自己的会话事件**（`sessionPersistence`），离线折叠成按本地日的索引：首轮要扫一遍历史会话
@@ -204,6 +206,10 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   它和明细里的「本实例实测用量」不是一套：那一块是**窗口**（默认 7 天，从第一次调用起算），这一屏是**按日/按周的历史**。
 - 天数自选：今日 / 7 / 30 / 90 四个预设 + 自定义 1..365（超出范围自动夹回并回填输入框）。
   **超过 62 天自动按周聚合**（以本地周一为界，首末桶可不足 7 天）——365 根日柱既画不下，也看不出趋势。
+- 也能按**起止日期**查：预设旁边的「自定义」展开两个日期框，选 9 月 1 日到 9 月 30 日就只看这 30 天（两端都含）。
+  非法输入（空、格式不对、开始晚于结束、开始在未来）在**本地拦下、一个请求都不发**；跨度上限与索引保留天数
+  共用 `usageBackfillDays`（默认 365 天），结束日晚于今天会被夹到今天，屏上的范围一律按**夹紧后的真值**写。
+  超过 62 天同样按周聚合，但**首末桶贴着所选区间**——不为了凑整周把区间外的日子算进来。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - 统计不到的时候会明说：宿主没有 `sessionPersistence` → 退回「本进程启动以来」（重启归零）；历史还没回填完 →
@@ -408,9 +414,10 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 | `POST /token-plan-quota/refresh` | 官方源回源 |
 | `POST /token-plan-quota/reset` | 清零本实例实测统计（含窗口锚点） |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | 按本地日（`days > 62` 时按周）聚合的 token 用量；自定义天数用 `?days=N`（1..365，优先于 `range`） |
+| `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | 按起止日期（两端都含）聚合，优先于 `days`/`range`；只给一端、格式非法、开始晚于结束或开始在未来 → 400 `usage-bad-range`；跨度超 `usageBackfillDays` → 400 `usage-range-too-long`（带 `maxDays`） |
 | `GET /token-plan-quota/probe?source=<id>` | 上游响应字段骨架（排查用） |
 
-只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`）。
+只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`，或 `from` + `to`（`YYYY-MM-DD`，两端含，优先于 `days`））。
 
 配合 429：`settings.yaml` 里给该 provider 配 `retryPolicy`（把 `QUOTA` 纳入 `retryableCodes`，
 `initialDelayMs == maxDelayMs` + `jitterRatio: 0` 可把退避压成固定间隔）。明细的「自动重试观测」显示真实
@@ -423,6 +430,8 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 - 上游控制台做过「额度重置」后，本实例窗口不会自动感知，用 `token_plan_quota`（`reset`）重新起算。
 - **`reset` 只清月账本与窗口锚点，不清用量索引**：统计屏读的是会话日志折出来的历史，删它没有意义（日志还在，下一轮会折回来）。
 - 观测计数是本次进程启动以来的；按天历史在用量索引里（统计屏），两者都只覆盖**经过本实例**的调用。
+- 自定义区间里**早于索引覆盖范围**的日子按 0 计：索引只留 `usageBackfillDays` 天，刚装好时能覆盖的历史更短，
+  所以那几根 0 柱的意思是「索引里没有这天的记录」，不是「这天一次都没调用」。
 - 用量索引的首轮回填是后台跑的：刚装好时先看到的是部分历史，顶部会显示进度；最多等一个同步周期（5 分钟）就是全量。
 - 座位退化：外壳没声明 `conversation.input.left` 时退到 `conversation.input.dock`；
   老外壳拿不到 react-dom 时面板退回内联 CSS 锚定，拖拽悬浮禁用。
@@ -448,16 +457,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 600 项，离线
-node test/client.mjs               # 407 项，假 React/DOM/fetch
-node test/guards.mjs               # 198 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 665 项，离线
+node test/client.mjs               # 481 项，假 React/DOM/fetch
+node test/guards.mjs               # 243 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 21 个键、配置表 22 行、8 个数据源、声明 8 个出站主机、测试 600/407 项 + guards 198 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 21 个键、配置表 22 行、8 个数据源、声明 8 个出站主机、测试 665/481 项 + guards 243 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

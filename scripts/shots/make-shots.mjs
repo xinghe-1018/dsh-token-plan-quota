@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -26,7 +26,7 @@ import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture } fr
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -132,12 +132,28 @@ async function clipOf(page, selector, pad) {
   }
 }
 
+/**
+ * 007 那张自定义区间图要一段**跨月**的固定跨度：今天所在月往前推 2 个月的 1 号 → 今天。
+ * 日期不能写死：写死某天以后，它会变成"未来日期"或超出宿主能回填的范围，图就再也拍不出来。
+ * 这里用与 fixture 同一套本地日算法现算（本地时区，不经 UTC 换算）。
+ */
+function localDayKey(date) {
+  const pad = n => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function customRangeFor(now) {
+  const today = new Date(now)
+  const first = new Date(today.getFullYear(), today.getMonth() - 2, 1)
+  return { from: localDayKey(first), to: localDayKey(today) }
+}
+
 /* ------------------------------------------------------------------ 主流程 */
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -194,19 +210,28 @@ async function main() {
   /** 客户端包改写一次就缓存住：每次重载都重新拉 350 KB 没必要。 */
   let patchedBundle = null
   /**
-   * 用量统计是另一个接口，且**按 days 取参**：7 天的 fixture 拿去回答 90 天的请求，
-   * 屏上的区间副标题、桶数和坐标轴就会和数字对不上 —— 那不是截图瑕疵，是假数据。
-   * 所以按 days 分开缓存，各写一份 .shots-work/<lang>/usage-<days>d.json 供事后核对。
+   * 用量统计是另一个接口，006 按 `days` 取参、007 追加 `from`+`to`（自定义区间）。7 天的 fixture
+   * 拿去回答 90 天的请求，屏上的区间副标题、桶数和坐标轴就会和数字对不上 —— 那不是截图瑕疵，是假数据。
+   * 所以按查询分开缓存，各写一份 .shots-work/<lang>/usage-<days>d.json 或
+   * usage-custom-<from>_<to>.json 供事后核对。
+   *
+   * `now` 只取一次：自定义区间的 `to` 会被宿主夹到今天，若造 fixture 与断言各取一次 Date.now()，
+   * 跨零点那次运行就会出现「桶数对不上」的假失败。
    */
+  const usageNow = Date.now()
+  const isDayKey = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
   const usageCache = new Map()
-  const builtUsage = days => {
-    if (!usageCache.has(days)) {
-      const usage = makeUsageSnapshot({ days, now: Date.now() })
-      assertUsageFixture(usage, { lang: langKey, days })
-      writeFileSync(join(workDir, `usage-${days}d.json`), JSON.stringify(usage, null, 1))
-      usageCache.set(days, JSON.stringify(usage))
+  const builtUsage = query => {
+    const custom = isDayKey(query.from) && isDayKey(query.to)
+    const key = custom ? `c${query.from}_${query.to}` : `d${query.days}`
+    if (!usageCache.has(key)) {
+      const usage = makeUsageSnapshot({ now: usageNow, ...query })
+      assertUsageFixture(usage, { lang: langKey, now: usageNow, ...query })
+      const file = custom ? `usage-custom-${query.from}_${query.to}.json` : `usage-${query.days}d.json`
+      writeFileSync(join(workDir, file), JSON.stringify(usage, null, 1))
+      usageCache.set(key, { json: JSON.stringify(usage), usage })
     }
-    return usageCache.get(days)
+    return usageCache.get(key)
   }
   const hits = page.intercept({
     patterns: [
@@ -217,10 +242,21 @@ async function main() {
     ],
     respond: async request => {
       if (request.url.includes('/token-plan-quota/usage')) {
+        const params = new URL(request.url).searchParams
+        const from = params.get('from')
+        const to = params.get('to')
+        // 007：两端都在才走自定义分支（与宿主路由同一条判据）；只带一个宿主会回 400，
+        // 这里也直接报错 —— 拿 days 分支糊过去会拍出一张"查询条件与数据不一致"的图。
+        if (isDayKey(from) || isDayKey(to)) {
+          if (!(isDayKey(from) && isDayKey(to))) {
+            throw new Error('usage 拦截：请求只带了 from/to 之一（' + request.url + '），宿主会回 400，不造图')
+          }
+          return { body: builtUsage({ from, to }).json, via: 'fixture' }
+        }
         // 参数解析不出来就按宿主默认（7 天）；天数上限由 fixture 自己夹紧，不在这里猜。
-        const asked = Number(new URL(request.url).searchParams.get('days'))
+        const asked = Number(params.get('days'))
         const days = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : 7
-        return { body: builtUsage(days), via: 'fixture' }
+        return { body: builtUsage({ days }).json, via: 'fixture' }
       }
       if (!request.url.includes(CONNECTION_BUNDLE)) {
         return { body: JSON.stringify(built(live.variant)), via: 'fixture' }
@@ -403,7 +439,7 @@ async function main() {
   /** 失败时把当前可见的菜单内容抓出来贴进报错——"点不到 X"这种信息不足以复盘。 */
   const menuDump = async () => await page.evaluate(`(() => {
     const menus = [...document.querySelectorAll('[class*="menu" i]')].filter(n => n.offsetParent !== null)
-    return menus.slice(-3).map(m => (m.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 90))
+    return menus.slice(-3).map(m => (m.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 90))
   })()`)
   /**
    * 依次试多个候选文案，点中任何一个就算成功。
@@ -582,9 +618,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ------------------------------------- ⑧⑨ 用量统计整页座位（2D / 3D 各一张） */
-  if (args.shots.some(n => [8, 9].includes(n))) {
-    console.log('⑧⑨ 用量统计整页座位（2D / 3D）')
+  /* ------------------------------------- ⑧⑨⑩ 用量统计整页座位（2D / 3D / 自定义区间） */
+  if (args.shots.some(n => [8, 9, 10].includes(n))) {
+    console.log('⑧⑨⑩ 用量统计整页座位（2D / 3D / 自定义区间）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -601,12 +637,19 @@ async function main() {
     // 首帧先是骨架、随后换数据。等「柱子 + 总分数字」都到位再拍，否则拍到的是灰条。
     await page.waitFor("(() => { const root = document.querySelector('.tpq-usage'); if (!root) return false; const bars = root.querySelectorAll('.tpq-usage-rect, .tpq-usage-face-front'); const big = root.querySelector('.tpq-usage-big'); return bars.length > 0 && big !== null && (big.textContent || '').trim().length > 0 })()", { timeoutMs: 20_000, label: '用量数据渲染（柱子 + 总分）' })
     await sleep(600)
-    const geometry = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (!root) return null; const r = root.getBoundingClientRect(); return { width: r.width, height: r.height, vw: innerWidth, vh: innerHeight } })()")
+    const geometry = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (!root) return null; const r = root.getBoundingClientRect(); return { width: r.width, height: r.height, vw: innerWidth, vh: innerHeight, sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth } })()")
     if (geometry === null) throw new Error('量不到用量统计屏的矩形')
     // 座位必须真的替换会话主区（侧栏保留）。只占一小块 = 它退化成了浮层，
     // 与 README 说的「独立整页座位」不符 —— 那种图不能进 docs/。
     if (geometry.width < geometry.vw * 0.6) {
       throw new Error('用量统计没有占满主区（宽 ' + Math.round(geometry.width) + 'px / 视口 ' + geometry.vw + 'px），不拍')
+    }
+    /*
+     * 整页座位不许横向溢出：一旦 scrollWidth 超过 clientWidth，右侧（关闭按钮/最后一个日期框）
+     * 会被裁在图外，而截图本身看不出来"少了东西"。窄视口 QA 尤其要靠这条，而不是靠肉眼。
+     */
+    if (geometry.sw > geometry.cw + 1) {
+      throw new Error('用量统计整页横向溢出（scrollWidth ' + geometry.sw + ' > clientWidth ' + geometry.cw + '，视口 ' + geometry.vw + 'px），不拍')
     }
     const bigText = async () => await page.evaluate("(() => { const n = document.querySelector('.tpq-usage-big'); return n === null ? null : (n.textContent || '').trim() })()")
     const barCount = async () => await page.evaluate("document.querySelectorAll('.tpq-usage rect.tpq-usage-rect, .tpq-usage polygon.tpq-usage-face-front').length")
@@ -632,16 +675,71 @@ async function main() {
     if (text2d === null || count2d === 0) throw new Error('2D 视图没有数据（总分或柱子为空），不拍')
     if (args.shots.includes(8)) save('usage-2d.png', await page.shot({}))
 
-    await switchMode('3D', '.tpq-usage polygon.tpq-usage-face-front')
-    const text3d = await bigText()
-    const count3d = await barCount()
-    if (text3d === null || count3d === 0) throw new Error('3D 视图没有数据（总分或柱子为空），不拍')
-    // 同一份数据的两个投影：总分与桶数不一致，说明 3D 那次是另一次（可能失败的）加载，不是换了个画法。
-    if (text2d !== text3d || count2d !== count3d) {
-      throw new Error('2D/3D 数据不一致（总分 ' + text2d + ' vs ' + text3d + '，柱数 ' + count2d + ' vs ' + count3d + '），不拍 3D')
+    // 3D 只在真要第 9 张（或要交叉验证 2D/3D 同源）时切：--shots 10 不该因为 3D 视图坏掉而失败。
+    if (args.shots.some(n => [8, 9].includes(n))) {
+      await switchMode('3D', '.tpq-usage polygon.tpq-usage-face-front')
+      const text3d = await bigText()
+      const count3d = await barCount()
+      if (text3d === null || count3d === 0) throw new Error('3D 视图没有数据（总分或柱子为空），不拍')
+      // 同一份数据的两个投影：总分与桶数不一致，说明 3D 那次是另一次（可能失败的）加载，不是换了个画法。
+      if (text2d !== text3d || count2d !== count3d) {
+        throw new Error('2D/3D 数据不一致（总分 ' + text2d + ' vs ' + text3d + '，柱数 ' + count2d + ' vs ' + count3d + '），不拍 3D')
+      }
+      if (args.shots.includes(9)) save('usage-3d.png', await page.shot({}))
     }
-    if (args.shots.includes(9)) save('usage-3d.png', await page.shot({}))
     console.log('  用量统计：' + count2d + ' 个桶，总分 ' + text2d)
+
+    if (args.shots.includes(10)) {
+      /*
+       * 第 10 张证明 007 的自定义区间：屏上必须有可见的日期行（data-usage-custom + 两个 date input），
+       * 桶数必须与 fixture 的 buckets 一致，标题/区间副标题必须回显该 from/to（被宿主夹紧时以响应真值为准）。
+       * 任一条不满足就抛错 —— 拍一张没有日期行的图，等于把"自定义查询"的证据换成一张普通柱图。
+       */
+      const range = customRangeFor(usageNow)
+      const expected = builtUsage({ from: range.from, to: range.to }).usage.buckets.length
+      if (expected < 1) throw new Error('自定义区间 fixture 没有桶，不拍')
+      // 2D 柱形最容易读"桶覆盖区间首尾"；第 9 张可能把视图留在 3D。
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+
+      const picked = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"custom\"]'); if (b === null) return false; b.click(); return true })()")
+      if (picked !== true) throw new Error('找不到「自定义」天数 chip（[data-usage-preset="custom"]）：007 客户端未落盘或钩子改名，不拍')
+      await page.waitFor("document.querySelector('[data-usage-custom]') !== null", { timeoutMs: 8_000, label: '自定义日期行' })
+      const hooks = await page.evaluate("(() => { const vis = n => n !== null && n.getBoundingClientRect().width > 0; const row = document.querySelector('[data-usage-custom]'); return { row: vis(row), from: vis(document.querySelector('[data-usage-from]')), to: vis(document.querySelector('[data-usage-to]')), apply: vis(document.querySelector('[data-usage-apply]')) } })()")
+      if (hooks.row !== true || hooks.from !== true || hooks.to !== true || hooks.apply !== true) {
+        throw new Error('自定义日期行不完整（data-usage-custom / data-usage-from / data-usage-to / data-usage-apply 缺失或不可见），不拍')
+      }
+      /*
+       * 原生 date input 的值必须走 prototype setter 再派发 input/change：直接 el.value = ... 不会更新
+       * React 的受控状态，点「查询」时发出去的还是旧日期 —— 那种图拍出来日期行和请求对不上。
+       */
+      const filled = await page.evaluate("(() => { const set = (selector, value) => { const el = document.querySelector(selector); if (el === null) return null; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return el.value }; return { from: set('[data-usage-from]', '" + range.from + "'), to: set('[data-usage-to]', '" + range.to + "') } })()")
+      if (filled === null || filled.from !== range.from || filled.to !== range.to) {
+        throw new Error('date input 没接受查询区间（期望 ' + range.from + ' → ' + range.to + '，实际 ' + JSON.stringify(filled) + '），不拍')
+      }
+      const applied = await page.evaluate("(() => { const b = document.querySelector('[data-usage-apply]'); if (b === null) return false; b.click(); return true })()")
+      if (applied !== true) throw new Error('找不到自定义区间的「查询」按钮（data-usage-apply），不拍')
+
+      const waitCustom = "(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return false; const t = root.querySelector('.tpq-usage-title'); const r = root.querySelector('.tpq-usage-range'); const head = ((t === null ? '' : t.textContent) || '') + ' ' + ((r === null ? '' : r.textContent) || ''); const big = root.querySelector('.tpq-usage-big'); const bars = root.querySelectorAll('rect.tpq-usage-rect').length; return bars === " + expected + " && head.indexOf(" + JSON.stringify(range.from) + ") >= 0 && head.indexOf(" + JSON.stringify(range.to) + ") >= 0 && big !== null && (big.textContent || '').trim().length > 0 })()"
+      await page.waitFor(waitCustom, { timeoutMs: 25_000, label: '自定义区间数据（日期回显 + 桶数）' })
+      await sleep(600)
+
+      const customHead = await headText()
+      const customBars = await barCount()
+      const customBig = await bigText()
+      const headAll = ((customHead.title || '') + ' ' + (customHead.range || '')).replace(/\\s+/g, ' ').trim()
+      if (customBars !== expected) throw new Error('自定义区间柱数 ' + customBars + ' 与 fixture 桶数 ' + expected + ' 不一致，不拍')
+      if (!headAll.includes(range.from) || !headAll.includes(range.to)) {
+        throw new Error('标题/区间副标题没有回显 ' + range.from + ' → ' + range.to + '（实际：' + headAll + '），不拍')
+      }
+      for (const banned of ['%', 'Credits']) {
+        if (headAll.includes(banned) || (customBig || '').includes(banned)) throw new Error('自定义区间屏出现禁用词「' + banned + '」，不拍')
+      }
+      // chip 必须停在「自定义」：否则日期行与"预设仍在生效"同时出现，读者无法判断这张图是哪种查询。
+      const cleanChip = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"custom\"]'); return b !== null && b.getAttribute('data-active') === '1' && b.getAttribute('aria-pressed') === 'true' })()")
+      if (cleanChip !== true) throw new Error('「自定义」chip 没有处于选中态（data-active/aria-pressed 不对），不拍')
+      save('usage-range-2d.png', await page.shot({}))
+      console.log('  自定义区间：' + range.from + ' → ' + range.to + '（' + expected + ' 个桶，总分 ' + customBig + '）')
+    }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。
     const closed = await page.evaluate("(() => { const b = document.querySelector('.tpq-usage-close'); if (!b) return false; b.click(); return true })()")

@@ -390,6 +390,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/state-token-plan-credits.png',
     'docs/images/state-no-history.png',
     'docs/images/usage-2d.png',
+  'docs/images/usage-range-2d.png',
     'docs/images/usage-3d.png',
     'docs/images/en/badge-follows-model.gif',
     'docs/images/en/panel-official-plus-meters.png',
@@ -398,6 +399,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/en/state-deepseek-balance.png',
     'docs/images/en/state-token-plan-credits.png',
     'docs/images/en/usage-2d.png',
+  'docs/images/en/usage-range-2d.png',
     'docs/images/en/usage-3d.png',
   ]
   // 结构图与截图套不同源（由 diagrams/ 的规格产出、中英共用一张），所以它只进**存在性**清单，

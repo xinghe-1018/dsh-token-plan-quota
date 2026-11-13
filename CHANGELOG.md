@@ -10,6 +10,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **按起止日期查用量（007）**：新增 `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD`（两端都含，优先于 `days`/`range`），
+  用量统计屏的预设行后面多一个「自定义」：展开两个日期框 + 查询按钮，非法输入在本地挡下、不发请求。
+  跨度上限复用 `usageBackfillDays`（默认 365 天）；结束日晚于今天夹到今天，响应里的 `range` 报夹紧后的真值。
+  超过 62 天仍按周聚合，但桶恰好铺满所选区间——首桶从 `from` 起（不往前补到周一）、末桶到 `to` 止，无记录日也出 0 桶。
+  错误码两条：`usage-bad-range`（只给一端 / 格式非法 / 非真实日历日 / 开始晚于结束 / 开始在未来）、
+  `usage-range-too-long`（带 `maxDays`）；路由仍 GET-only + 同源，客户端把两条错误映射成本地文案，不回显宿主原文。
+  纯函数 `resolveCustomRange` 与 `aggregateUsageRange` 的自定义分支在 `lib/usage-stats.js`，方案见 `specs/007-custom-range/`。
 - **用量统计屏（006）**：徽标小窗底部新增「用量统计」，打开一张**独立整页**（替换会话主区、侧栏保留，`Esc` / `✕` 回会话），
   回答「最近用了多少 token」——区间总分、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行，
   **只有绝对 tokens，没有百分比、没有 Credits**。数据来自宿主自己的会话事件（`sessionPersistence`）离线折叠成按本地日的索引：

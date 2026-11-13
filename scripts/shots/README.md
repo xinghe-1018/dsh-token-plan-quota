@@ -73,7 +73,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 `--lang` 决定浏览器语言，而插件界面文案跟着 `document.documentElement.lang` 走，所以中英各跑一次就是两套图。
 新版 `dsh web` 启动时会打印一条带 `?token=…` 的地址（首次访问 303 换 cookie）；**把整条地址原样传给 `--url`**
 即可，脚本会自己接 `fixture` 参数（直接传裸端口会被 401 挡在门外）。
-`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9`，`1` 是要 ffmpeg 的 GIF）。产物：
+`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10`，`1` 是要 ffmpeg 的 GIF）。产物：
 
 | # | 文件 | 证明什么 |
 | --- | --- | --- |
@@ -86,6 +86,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 7 | `state-no-history.png` | 既没官方额度、本实例又还没调用过：徽标「无官方额度数据」，面板只说清为什么没有 |
 | 8 | `usage-2d.png` | 用量统计整页座位（2D）：区间总分、四类拆分、调用次数、逐日柱状图 |
 | 9 | `usage-3d.png` | 同一份数据的 3D 等轴柱图。视图只是前端投影，数字必须与 2D 完全一致 |
+| 10 | `usage-range-2d.png` | 自定义起止日期：日期行可见、chip 停在「自定义」、桶恰好铺满 `[from, to]` |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -98,7 +99,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 说明那是另一次（可能失败的）加载，不是换了个画法。
 
 中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload；用量统计是
-`.shots-work/<lang>/usage-<days>d.json`）与
+`.shots-work/<lang>/usage-<days>d.json` / `usage-custom-<from>_<to>.json`）与
 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
 `package.json` 的 `files` 显式列了 `docs`，而 allowlist 会压过 `.gitignore`，帧文件会直接被打进 npm 包。
 
@@ -139,6 +140,12 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 
 ⑧⑨ 的额外两条：**两条恒等式必须成立**（区间 totals == 各桶 totals 之和 == 顶层模型 totals 之和），
 否则总分卡与柱状图会各说各话；**不许出现 `%` 与 "Credits"**——用量统计只报绝对 token，不折算、不派生百分比。
+
+⑩ 是 007 的自定义区间，比 ⑧⑨ 多两道关卡，因为一张柱图本身证明不了"查询条件生效了"：
+**日期行必须可见且回显拍图用的那对日期**（`data-usage-custom` 与两个 `<input type="date">` 都在视口内，
+标题/区间副标题同时出现 `from` 与 `to`），**桶数必须与 fixture 的 `buckets` 数量相等**（桶恰好铺满 `[from, to]`，
+周桶首桶从 `from` 起）。区间取"今天所在月往前推 2 个月的 1 号 → 今天"，跨度随月份在 60–92 天之间浮动，
+正好落在 `>62 天按周聚合` 那一档；日期由脚本现算，不写死。
 
 ## 两个静默失败的坑（都变成断言了）
 

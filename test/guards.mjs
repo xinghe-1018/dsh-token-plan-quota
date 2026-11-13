@@ -19,7 +19,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertFixture, makeSnapshot } from '../scripts/shots/fixture.mjs'
+import { assertFixture, assertUsageFixture, makeSnapshot, makeUsageSnapshot } from '../scripts/shots/fixture.mjs'
 import { findLineRefs } from '../scripts/check-refs.mjs'
 import { classifyTarget, extractHtmlTargets, extractImageTargets, extractLinkTargets, mentionsTarget, normalizeTarget } from '../scripts/link-targets.mjs'
 import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs'
@@ -659,6 +659,145 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const entryEnd = clientSrc.indexOf('function usagePanelActive')
   ok('客户端用量屏：关闭走 layout.selectPanel(null)',
     entryStart > 0 && entryEnd > entryStart && clientSrc.slice(entryStart, entryEnd).includes('selectPanel(null)'))
+}
+
+/* 007 自定义起止日期：纯函数校验顺序 + fixture 的「桶贴区间」守卫 + 路由/工具/客户端钩子静态矩阵。
+ * 为什么放门禁：这四项都是**跨文件契约**——宿主 400 码与客户端本地校验必须同序（否则客户端放行的
+ * 请求会被宿主拒），fixture 的周桶边界必须与宿主一致（否则截图是「查询条件与数据对不上」的假图），
+ * 任一处漂移时功能测试往往仍全绿。 */
+{
+  const usageSrc = readFileSync(join(ROOT, 'lib', 'usage-stats.js'), 'utf8')
+  const indexSrc = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+  const clientSrc = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  /* 固定 now 的本机日键：所有相对日期都从它推，断言不随真实日期漂移。 */
+  const todayKey = __internals.dayKey(FIXED_NOW)
+  const shift = (key, delta) => {
+    const parts = key.split('-').map(Number)
+    const stamp = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]) + delta * 86_400_000)
+    return stamp.getUTCFullYear() + '-' + String(stamp.getUTCMonth() + 1).padStart(2, '0') + '-' + String(stamp.getUTCDate()).padStart(2, '0')
+  }
+  const custom = opts => __internals.resolveCustomRange({ now: FIXED_NOW, ...opts })
+
+  // 1) 应放行：闭区间 30 天 / 单日 / 恰好等于上限 / 闰日
+  {
+    const month = custom({ from: shift(todayKey, -29), to: todayKey })
+    ok('007 resolveCustomRange：闭区间 30 天', month.error === undefined && month.days === 30 && month.to === todayKey)
+    const one = custom({ from: todayKey, to: todayKey })
+    ok('007 resolveCustomRange：单日仍走自定义（days=1，与 006 的 today 区分）',
+      one.error === undefined && one.days === 1 && one.from === todayKey && one.to === todayKey)
+    const exact = custom({ from: shift(todayKey, -9), to: todayKey, maxDays: 10 })
+    ok('007 resolveCustomRange：恰好等于上限放行（10 天 / maxDays=10）', exact.error === undefined && exact.days === 10)
+    const leap = custom({ from: '2024-02-29', to: '2024-02-29' })
+    ok('007 resolveCustomRange：闰日 2024-02-29 是真实日期', leap.error === undefined && leap.days === 1)
+  }
+
+  // 2) 应报：六类非法 + 单脚本就能看出的顺序（格式先于日历、日历先于顺序、顺序先于夹紧、夹紧先于跨度）
+  {
+    ok('007 resolveCustomRange：格式非法（2026-9-1）', custom({ from: '2026-9-1', to: '2026-09-30' }).error === 'usage-bad-range')
+    ok('007 resolveCustomRange：非真实日历日（2026-02-30）', custom({ from: '2026-02-30', to: '2026-03-02' }).error === 'usage-bad-range')
+    ok('007 resolveCustomRange：非闰年 2025-02-29 被拒', custom({ from: '2025-02-29', to: '2025-03-01' }).error === 'usage-bad-range')
+    ok('007 resolveCustomRange：from 晚于 to', custom({ from: shift(todayKey, -1), to: shift(todayKey, -2) }).error === 'usage-bad-range')
+    ok('007 resolveCustomRange：from 在未来', custom({ from: shift(todayKey, 1), to: shift(todayKey, 1) }).error === 'usage-bad-range')
+    const tooLong = custom({ from: shift(todayKey, -365), to: todayKey })
+    ok('007 resolveCustomRange：超上限回 usage-range-too-long 并带 maxDays',
+      tooLong.error === 'usage-range-too-long' && tooLong.maxDays === 365)
+    const customCap = custom({ from: shift(todayKey, -10), to: todayKey, maxDays: 10 })
+    ok('007 resolveCustomRange：maxDays 取自调用方（配置漂了能测出来）',
+      customCap.error === 'usage-range-too-long' && customCap.maxDays === 10)
+  }
+
+  // 3) to 在未来：夹到今天而不是报错（用户手选了明天不该看到 400，也不该出现一串未来空桶）
+  {
+    const clamped = custom({ from: shift(todayKey, -2), to: shift(todayKey, 5) })
+    ok('007 resolveCustomRange：to 在未来被夹到今天，days 按夹紧后的真值算',
+      clamped.error === undefined && clamped.to === todayKey && clamped.days === 3)
+  }
+
+  // 4) fixture 守卫：自定义区间的桶必须恰好铺满 [from, to]（首桶从 from 起、末桶到 to 止）
+  {
+    const weekFrom = shift(todayKey, -69)
+    const weekSnap = makeUsageSnapshot({ now: FIXED_NOW, from: weekFrom, to: todayKey })
+    accepts('007 fixture：自定义 70 天（周桶贴区间）放行',
+      () => assertUsageFixture(weekSnap, { now: FIXED_NOW, from: weekFrom, to: todayKey, lang: 'zh' }))
+    ok('007 fixture：70 天走周粒度，首桶从 from 起、末桶到 to 止',
+      weekSnap.granularity === 'week' && weekSnap.range.kind === 'custom'
+        && weekSnap.buckets[0].from === weekFrom
+        && weekSnap.buckets[weekSnap.buckets.length - 1].to === todayKey)
+    rejects('007 fixture：首桶不再覆盖区间起点被拦（图上会漏掉区间第一天）', () => {
+      const dirty = structuredClone(weekSnap)
+      /* 标签与 from 同步改，避免先被「label = MM-DD」拦下——要测的是首桶边界这条规则本身。 */
+      dirty.buckets[0].from = shift(dirty.buckets[0].from, 1)
+      dirty.buckets[0].label = dirty.buckets[0].from.slice(5)
+      assertUsageFixture(dirty, { now: FIXED_NOW, from: weekFrom, to: todayKey, lang: 'zh' })
+    }, /覆盖区间起点/)
+    rejects('007 fixture：末桶没到 to 被拦（会少算区间末尾几天）', () => {
+      const dirty = structuredClone(weekSnap)
+      const last = dirty.buckets.length - 1
+      dirty.buckets[last].to = shift(dirty.buckets[last].to, -1)
+      assertUsageFixture(dirty, { now: FIXED_NOW, from: weekFrom, to: todayKey, lang: 'zh' })
+    }, /覆盖区间终点/)
+    rejects('007 fixture：kind 写成 30d 被拦（否则客户端标题会按天数模式渲染）', () => {
+      const dirty = structuredClone(weekSnap)
+      dirty.range.kind = '30d'
+      assertUsageFixture(dirty, { now: FIXED_NOW, from: weekFrom, to: todayKey, lang: 'zh' })
+    }, /range.kind 是 custom/)
+  }
+
+  // 5) 宿主接线：/usage 解析 from/to、400 固定码、工具 schema 与失败形状
+  {
+    ok('007 路由：/usage 把 from/to 交给 buildUsageSnapshot',
+      indexSrc.includes("from: url.searchParams.get('from')") && indexSrc.includes("to: url.searchParams.get('to')"))
+    ok('007 路由：参数错误回 400 固定码，超限才带 maxDays',
+      /json\(res, 400, usage\.maxDays === undefined/.test(indexSrc)
+        && indexSrc.includes("'usage-bad-range'") && indexSrc.includes("'usage-range-too-long'"))
+    ok('007 工具 schema：from / to 两个参数都在 properties 里',
+      /from: \{ type: 'string'/.test(indexSrc) && /(\n|\s)to: \{ type: 'string'/.test(indexSrc))
+    ok('007 工具：action=usage 传 from/to，失败回 ok:false（不带宿主原文）',
+      indexSrc.includes('from: args?.from, to: args?.to')
+        && indexSrc.includes('ok: false, text, error: usage.error'))
+    ok('007 纯函数：resolveCustomRange 从 usage-stats.js 导入并在 internals 里可测（不另写一份）',
+      /import \{[^}]*resolveCustomRange[^}]*\} from '\.\/usage-stats\.js'/.test(indexSrc)
+        && indexSrc.includes('  resolveCustomRange,'))
+  }
+
+  // 6) 客户端钩子与查询形状（截图脚本按 data-* 找元素；契约漂了脚本会抛错而不是拍假图）
+  {
+    for (const hook of ['"data-usage-preset": "custom"', '"data-usage-custom": "1"',
+      '"data-usage-apply": "1"', '"data-usage-range-error": "1"',
+      '"data-usage-from"', '"data-usage-to"']) {
+      ok('007 客户端：钩子 ' + hook + ' 存在', clientSrc.includes(hook))
+    }
+    ok('007 客户端：自定义查询只发 ?from=&to=（不带 days / range）',
+      clientSrc.includes('USAGE + "?from=" + checked.from + "&to=" + checked.to'))
+    ok('007 客户端：两处本地校验都先于请求（非法输入零请求）',
+      clientSrc.includes('if (checked.ok !== true) return Promise.resolve()')
+        && /if \(checked\.ok !== true\) \{/.test(clientSrc))
+    ok('007 客户端：两条 400 映射成本地文案（不回显宿主原文）',
+      clientSrc.includes('code === "usage-bad-range" || code === "usage-range-too-long"')
+        && clientSrc.includes('usageRangeTooLong') && clientSrc.includes('failure.maxDays = Math.round(maxDays)'))
+    ok('007 客户端：跨度上限写死 365，与宿主默认 usageBackfillDays 同值',
+      clientSrc.includes('const USAGE_DAYS_MAX = 365;')
+        && __internals.DEFAULTS.usageBackfillDays === 365)
+    const i18nKeys = ['usageRangeCustom', 'usageRangeFrom', 'usageRangeTo', 'usageRangeApply', 'usageRangeBad',
+      'usageRangeTooLong', 'usageRangeDayOne', 'usageRangeCustomTitle', 'usageRangeLocalOnly']
+    for (const key of i18nKeys) {
+      const hits = (clientSrc.match(new RegExp('\\b' + key + ':', 'g')) || []).length
+      ok('007 i18n：' + key + ' 在 zh / en 两份 COPY 里都有（命中 ' + hits + '）', hits >= 2)
+    }
+    ok('007 客户端：脚注「仅统计本机」只在 session-index 数据源下出现',
+      clientSrc.includes('sourceKind === "session-index"') && clientSrc.includes('copy.usageRangeLocalOnly'))
+  }
+
+  // 7) 展示口径：007 新增的代码同样不许派生百分比 / 折算 Credits
+  {
+    const strip007 = source => source.replace(/\/\*[\s\S]*?\*\//g, '')
+    const rangeStart = usageSrc.indexOf('function resolveCustomRange')
+    const rangeEnd = usageSrc.indexOf('function emptyUsageIndex')
+    ok('007 纯函数段在 usage-stats.js 里存在且可定位', rangeStart > 0 && rangeEnd > rangeStart)
+    const rangeRegion = rangeStart > 0 ? strip007(usageSrc.slice(rangeStart, rangeEnd)) : ''
+    ok('007 纯函数段：不出现百分比与 Credits', rangeRegion !== '' && !/%/.test(rangeRegion) && !/credit/i.test(rangeRegion))
+    ok('007 纯函数段：不联网、不读凭据', rangeRegion !== '' && !/fetch\(|https?:\/\//.test(rangeRegion) && !/credential|apiKey|cookie/i.test(rangeRegion))
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

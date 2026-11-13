@@ -35,7 +35,7 @@ const {
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
   toToolJson, buildQuotaTool,
-  emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange,
+  emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange, resolveCustomRange,
   loadUsageIndex, saveUsageIndex, trimUsageIndex, syncUsageIndex,
   buildUsageSnapshot, runUsageSync,
 } = __internals
@@ -2154,6 +2154,173 @@ function recursiveKeys(value, out = []) {
   check('no-sessions：emptyReason', noSessions.emptyReason, 'no-sessions')
   ok('no-sessions：hint 说明还没有会话记录', typeof noSessions.hint === 'string' && noSessions.hint.includes('会话记录'))
   check('no-sessions：source 仍是 session-index（不是降级）', noSessions.source.kind, 'session-index')
+}
+
+// ⑫ 007 自定义起止日期：纯函数校验 / 自定义日桶与周桶铺满 / 路由与工具接线
+{
+  // a) resolveCustomRange：合法区间、夹紧、以及非法输入（007 §1.1）
+  check('007 resolve：单日', resolveCustomRange({ now: USAGE_NOW, from: '2026-11-12', to: '2026-11-12' }),
+    { from: '2026-11-12', to: '2026-11-12', days: 1 })
+  check('007 resolve：整月含首尾', resolveCustomRange({ now: USAGE_NOW, from: '2026-10-01', to: '2026-10-31' }).days, 31)
+  check('007 resolve：跨年按日历天', resolveCustomRange({ now: USAGE_NOW, from: '2025-12-01', to: '2026-01-15' }).days, 46)
+  check('007 resolve：to 晚于今天 → 夹到今天', resolveCustomRange({ now: USAGE_NOW, from: '2026-11-01', to: '2026-12-31' }),
+    { from: '2026-11-01', to: '2026-11-12', days: 12 })
+  check('007 resolve：from 在未来 → bad', resolveCustomRange({ now: USAGE_NOW, from: '2026-11-13', to: '2026-11-13' }),
+    { error: 'usage-bad-range' })
+  check('007 resolve：from > to → bad', resolveCustomRange({ now: USAGE_NOW, from: '2026-11-12', to: '2026-11-10' }),
+    { error: 'usage-bad-range' })
+  check('007 resolve：2026-02-30 不是真实日历日 → bad', resolveCustomRange({ now: USAGE_NOW, from: '2026-02-30', to: '2026-03-02' }),
+    { error: 'usage-bad-range' })
+  check('007 resolve：13 月 → bad', resolveCustomRange({ now: USAGE_NOW, from: '2026-13-01', to: '2026-13-02' }),
+    { error: 'usage-bad-range' })
+  check('007 resolve：未零填充的月份 → bad', resolveCustomRange({ now: USAGE_NOW, from: '2026-9-1', to: '2026-9-2' }),
+    { error: 'usage-bad-range' })
+  check('007 resolve：跨度超 usageBackfillDays → 带 maxDays', resolveCustomRange({ now: USAGE_NOW, from: '2025-01-01', to: '2026-11-12' }),
+    { error: 'usage-range-too-long', maxDays: 365 })
+  check('007 resolve：恰好 365 天放行', resolveCustomRange({ now: USAGE_NOW, from: '2025-11-13', to: '2026-11-12' }).days, 365)
+  check('007 resolve：maxDays 可配', resolveCustomRange({ now: USAGE_NOW, from: '2026-11-01', to: '2026-11-12', maxDays: 10 }),
+    { error: 'usage-range-too-long', maxDays: 10 })
+  check('007 resolve：闰日 2024-02-29 合法', resolveCustomRange({ now: USAGE_NOW, from: '2024-02-29', to: '2024-02-29' }).days, 1)
+  check('007 resolve：2025-02-29 非法', resolveCustomRange({ now: USAGE_NOW, from: '2025-02-29', to: '2025-03-01' }),
+    { error: 'usage-bad-range' })
+
+  // b) 自定义日桶：缺记录的日子出 0 桶、桶从区间起点连续铺到终点
+  const rangeIndex = emptyUsageIndex()
+  rangeIndex.days['2026-09-01'] = {
+    input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1,
+    models: { 'p/m1': { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1 } },
+  }
+  rangeIndex.days['2026-09-03'] = {
+    input: 20, output: 2, cacheRead: 5, cacheWrite: 0, calls: 2,
+    models: {
+      'p/m1': { input: 12, output: 1, cacheRead: 5, cacheWrite: 0, calls: 1 },
+      'p/m2': { input: 8, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1 },
+    },
+  }
+  const dayRange = aggregateUsageRange(rangeIndex, { now: USAGE_NOW, from: '2026-09-01', to: '2026-09-05' })
+  check('007 日桶：range 标 custom 且 days 由区间现算（忽略传入 days）',
+    aggregateUsageRange(rangeIndex, { now: USAGE_NOW, days: 7, from: '2026-09-01', to: '2026-09-05' }).range,
+    { kind: 'custom', days: 5, from: '2026-09-01', to: '2026-09-05' })
+  check('007 日桶：granularity=day', dayRange.granularity, 'day')
+  check('007 日桶：每桶一天、首桶从区间起点起、末桶止于区间终点', dayRange.buckets.map(bucket => bucket.from + '~' + bucket.to), [
+    '2026-09-01~2026-09-01', '2026-09-02~2026-09-02', '2026-09-03~2026-09-03',
+    '2026-09-04~2026-09-04', '2026-09-05~2026-09-05',
+  ])
+  check('007 日桶：label 是 MM-DD', dayRange.buckets.map(bucket => bucket.label), ['09-01', '09-02', '09-03', '09-04', '09-05'])
+  check('007 日桶：无记录日补 0 桶', dayRange.buckets.map(bucket => bucket.totals.calls), [1, 0, 2, 0, 0])
+  check('007 日桶：区间 totals', dayRange.totals, { input: 30, output: 3, cacheRead: 5, cacheWrite: 0, calls: 3, steps: 3, tokens: 38 })
+  assertTotalsIdentity('007 日桶', dayRange)
+  check('007 日桶：模型归属与调用数', dayRange.models.map(item => [item.id, item.totals.calls]), [['p/m1', 2], ['p/m2', 1]])
+
+  // c) 自定义周桶：>62 天切周；首桶从 from 起到本周日、其余从周一起，连续无空隙
+  const weekRange = aggregateUsageRange(rangeIndex, { now: USAGE_NOW, from: '2026-09-03', to: '2026-11-12' })
+  check('007 周桶：days>62 用周粒度', [weekRange.range.kind, weekRange.range.days, weekRange.granularity], ['custom', 71, 'week'])
+  check('007 周桶：11 个桶', weekRange.buckets.length, 11)
+  check('007 周桶：首桶从区间起点起、止于本周日',
+    [weekRange.buckets[0].from, weekRange.buckets[0].to], ['2026-09-03', '2026-09-06'])
+  check('007 周桶：末桶止于区间终点',
+    [weekRange.buckets[10].from, weekRange.buckets[10].to], ['2026-11-09', '2026-11-12'])
+  ok('007 周桶：桶之间连续无空隙',
+    weekRange.buckets.every((bucket, index) => index === 0 || nextLocalDayKey(weekRange.buckets[index - 1].to) === bucket.from))
+  const isLocalMonday = key => new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10))).getDay() === 1
+  ok('007 周桶：除首桶外都从本地周一起', weekRange.buckets.slice(1).every(bucket => isLocalMonday(bucket.from)))
+  check('007 周桶：首桶累计区间内的日桶', weekRange.buckets[0].totals.calls, 2)
+  check('007 周桶：区间外（09-01）不计入', weekRange.totals,
+    { input: 20, output: 2, cacheRead: 5, cacheWrite: 0, calls: 2, steps: 2, tokens: 27 })
+  assertTotalsIdentity('007 周桶', weekRange)
+  const weekFrom63 = aggregateUsageRange(rangeIndex, { now: USAGE_NOW, from: '2026-09-11', to: '2026-11-12' })
+  check('007 周桶：63 天 → 周粒度 10 桶', [weekFrom63.granularity, weekFrom63.buckets.length], ['week', 10])
+  const dayFrom62 = aggregateUsageRange(rangeIndex, { now: USAGE_NOW, from: '2026-09-12', to: '2026-11-12' })
+  check('007 日桶：62 天 → 日粒度 62 桶', [dayFrom62.granularity, dayFrom62.buckets.length], ['day', 62])
+
+  // d) 路由与工具：from/to 优先、400 固定码、夹紧回真值、与 ?days=30 逐桶一致（SC-001/002/003）
+  resetInstanceState()
+  const rangePersistence = makeFakePersistence({
+    'sess-range': {
+      revision: 'r-range',
+      events: [
+        headerEvent(1, new Date(2026, 9, 14, 12, 0, 0).getTime()),
+        usageEvent(2, new Date(2026, 9, 14, 12, 0, 1).getTime(), { inputTokens: 5, outputTokens: 0 }),
+        headerEvent(3, new Date(2026, 10, 10, 12, 0, 0).getTime()),
+        usageEvent(4, new Date(2026, 10, 10, 12, 0, 1).getTime(), { inputTokens: 10, outputTokens: 0 }),
+        usageEvent(5, new Date(2026, 10, 12, 12, 0, 0).getTime(), { inputTokens: 20, outputTokens: 0 }),
+      ],
+    },
+  })
+  const rangeRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-index-custom-range.json') }
+  const rangeRouteCtx = makeRouteCtx(rangePersistence)
+  resetInstanceState()
+  apply(rangeRouteCtx.ctx, rangeRow)
+  const rangeRoute = rangeRouteCtx.registered.find(item => item.path === '/token-plan-quota')
+  // 固定 now：路由里的今天就是 USAGE_DAY，夹紧断言才可复现（否则真跑当天一变就红）。
+  const realDateNow = Date.now
+  try {
+    Date.now = () => USAGE_NOW
+    await runUsageSync(rangeRouteCtx.ctx, effectiveConfig(rangeRow, rangeRouteCtx.ctx))
+    const thirty = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?days=30')
+    const custom = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-10-14&to=2026-11-12')
+    check('007 路由：自定义区间 200', custom.status, 200)
+    check('007 路由：range 标 custom', custom.json.range,
+      { kind: 'custom', days: 30, from: '2026-10-14', to: '2026-11-12' })
+    check('007 路由：与 ?days=30 同区间逐桶相等（SC-001）', custom.json.buckets, thirty.json.buckets)
+    check('007 路由：与 ?days=30 同区间 totals 相等', custom.json.totals, thirty.json.totals)
+    check('007 路由：30 个日桶与区间 totals', [custom.json.buckets.length, custom.json.totals],
+      [30, { input: 35, output: 0, cacheRead: 0, cacheWrite: 0, calls: 3, steps: 3, tokens: 35 }])
+    check('007 路由：无记录日补 0 桶', custom.json.buckets.filter(bucket => bucket.totals.calls === 0).length, 27)
+    const priority = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?range=today&days=7&from=2026-10-14&to=2026-11-12')
+    check('007 路由：from/to 优先于 range/days', [priority.json.range.kind, priority.json.range.days], ['custom', 30])
+    const clampedCustom = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-11-01&to=2026-12-31')
+    check('007 路由：to 夹到今天并回写真值', clampedCustom.json.range,
+      { kind: 'custom', days: 12, from: '2026-11-01', to: '2026-11-12' })
+    check('007 路由：夹紧后 12 个桶', clampedCustom.json.buckets.length, 12)
+    const oneDay = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-11-12&to=2026-11-12')
+    check('007 路由：单日区间仍是 custom 而非 today',
+      [oneDay.json.range, oneDay.json.buckets.length, oneDay.json.granularity],
+      [{ kind: 'custom', days: 1, from: '2026-11-12', to: '2026-11-12' }, 1, 'day'])
+    const onlyFrom = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-10-14')
+    check('007 路由：只有 from → 400 usage-bad-range', [onlyFrom.status, onlyFrom.json], [400, { error: 'usage-bad-range' }])
+    const onlyTo = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?to=2026-11-12')
+    check('007 路由：只有 to → 400 usage-bad-range', [onlyTo.status, onlyTo.json], [400, { error: 'usage-bad-range' }])
+    const halfEmpty = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=&to=2026-11-12')
+    check('007 路由：一端空一端有 → 400', [halfEmpty.status, halfEmpty.json], [400, { error: 'usage-bad-range' }])
+    const fakeDay = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-02-30&to=2026-03-02')
+    check('007 路由：2026-02-30 → 400', [fakeDay.status, fakeDay.json], [400, { error: 'usage-bad-range' }])
+    const reversed = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-11-12&to=2026-11-10')
+    check('007 路由：from > to → 400', [reversed.status, reversed.json], [400, { error: 'usage-bad-range' }])
+    const futureFrom = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-11-13&to=2026-11-13')
+    check('007 路由：from 在未来 → 400', [futureFrom.status, futureFrom.json], [400, { error: 'usage-bad-range' }])
+    const tooLong = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2025-01-01&to=2026-11-12')
+    check('007 路由：跨度超限 → 400 且带 maxDays', [tooLong.status, tooLong.json],
+      [400, { error: 'usage-range-too-long', maxDays: 365 }])
+    const emptyPair = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=&to=')
+    check('007 路由：两端都空 → 回到 006 分支',
+      [emptyPair.status, emptyPair.json.range.kind, emptyPair.json.range.days], [200, '7d', 7])
+    const postCustom = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-10-14&to=2026-11-12', 'POST')
+    check('007 路由：POST → 405', postCustom.status, 405)
+    const zeroRange = await callUsageRoute(rangeRoute, '/token-plan-quota/usage?from=2026-10-01&to=2026-10-05')
+    check('007 路由：0 记录区间仍是 5 个 0 桶',
+      [zeroRange.status, zeroRange.json.buckets.length, zeroRange.json.totals.calls], [200, 5, 0])
+    check('007 路由：0 记录的 emptyReason', zeroRange.json.emptyReason, 'no-usage-in-range')
+    ok('007 路由：响应没有百分号', !custom.raw.includes('%'))
+    ok('007 路由：响应没有消息文本 / 表头字段',
+      !recursiveKeys(custom.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+    ok('007 路由：400 响应同样只有固定码', !recursiveKeys(tooLong.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+
+    const rangeTool = buildQuotaTool(() => effectiveConfig(rangeRow, rangeRouteCtx.ctx), rangeRouteCtx.ctx)
+    const toolUsage = await rangeTool.execute({ action: 'usage', from: '2026-10-14', to: '2026-11-12' })
+    check('007 工具：action=usage 传 from/to', [toolUsage.ok, toolUsage.usage.range],
+      [true, { kind: 'custom', days: 30, from: '2026-10-14', to: '2026-11-12' }])
+    ok('007 工具：文本含起止日期', toolUsage.text.includes('2026-10-14') && toolUsage.text.includes('2026-11-12'))
+    const toolBad = await rangeTool.execute({ action: 'usage', from: '2026-10-14' })
+    check('007 工具：只有一端 → ok=false + 固定码', [toolBad.ok, toolBad.error], [false, 'usage-bad-range'])
+    ok('007 工具：错误文本不回显宿主原文', typeof toolBad.text === 'string' && toolBad.text.length > 0)
+    const toolLong = await rangeTool.execute({ action: 'usage', from: '2025-01-01', to: '2026-11-12' })
+    check('007 工具：超限 → ok=false + maxDays', [toolLong.ok, toolLong.error, toolLong.maxDays],
+      [false, 'usage-range-too-long', 365])
+    ok('007 工具：超限文本带天数上界', toolLong.text.includes('365'))
+  } finally {
+    Date.now = realDateNow
+  }
 }
 
 // 收尾：临时目录随进程走，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。

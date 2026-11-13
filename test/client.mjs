@@ -1626,7 +1626,8 @@ function findChip(node) {
   const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zh = keysOf(zhBlock?.[1] ?? '')
   const en = keysOf(enBlock?.[1] ?? '')
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [109, 109])
+  // 007 增了 9 个自定义区间键（INTERFACE §3.3 的 8 个 + 多天标题模板），109 → 118。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [118, 118])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1966,8 +1967,15 @@ async function mountUsage(options = {}) {
 {
   const bundle = await mountUsage()
   const internals = bundle.api.__internals
-  check('__internals 导出 §4 要求的五个纯函数',
-    Object.keys(internals).sort(), ['barRatio', 'clampDays', 'formatTokens', 'parseDaysInput', 'projectBar3D'])
+  // 006 的五个是契约，007 只允许在它们之后追加（顺序无关，但一个都不能少）。
+  const internalKeys = Object.keys(internals)
+  ok('__internals 保留 §4 要求的五个纯函数',
+    ['barRatio', 'clampDays', 'formatTokens', 'parseDaysInput', 'projectBar3D'].every(key => internalKeys.includes(key)),
+    internalKeys.join(','))
+  ok('__internals 追加 007 的区间校验纯函数',
+    ['validateUsageRange', 'usageRangeDays', 'usageShiftDay', 'usageTodayKey', 'usageRangeText',
+      'usageSnapshotMatchesQuery', 'usageDefaultCustomRange'].every(key => typeof internals[key] === 'function'),
+    internalKeys.join(','))
   check('barRatio 线性：一半就是一半', internals.barRatio(500, 1000), 0.5)
   check('barRatio 峰值为 0 不除零', internals.barRatio(5, 0), 0)
   check('barRatio 有值但不足一格时抬到 1/PLOT_H（不然看不见）', internals.barRatio(1, 1000000), 1 / 120)
@@ -2548,5 +2556,305 @@ async function mountUsage(options = {}) {
   check('C11 client 把 slots / sessions / modelDirectories / layout 声明成 fiber 依赖', bundle.api.inject,
     ['slots', 'sessions', 'modelDirectories', 'layout'])
 }
+
+/* ============================================================ 自定义起止日期（spec 007，INTERFACE §3）
+ * 契约要点：查询状态存进既存 singleton store（rangeMode/from/to）、预设之后多一个「自定义」
+ * chip、日期行本地校验不通过就零请求、请求走 ?from=&to=（不带 days/range）、
+ * 标题全部取自 snapshot.range、400 两个错误码各有本地文案。
+ * 假 React 每次渲染都会重跑 effect（所以每帧都会重发当前查询），因此「零请求」的断言
+ * 一律在**触发点击后立刻**取计数，并且另外按 URL 过滤，不被下一帧的正常重发干扰。
+ */
+
+/** 自定义区间的假路由：from/to 回一份 range.kind="custom" 的快照（形状照 INTERFACE §2）。 */
+function usageCustomFetch(options = {}) {
+  return async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    const from = parsed.searchParams.get('from')
+    const to = parsed.searchParams.get('to')
+    if (options.handler) {
+      const handled = options.handler({ from, to, parsed })
+      if (handled !== undefined) return handled
+    }
+    const days = Number(parsed.searchParams.get('days')) || 7
+    if (from === null || to === null) {
+      return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+    }
+    const span = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86_400_000) + 1
+    const safe = Number.isFinite(span) && span > 0 ? span : 1
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        const snap = makeUsageSnapshot(Math.min(safe, 365))
+        snap.range = { kind: 'custom', days: safe, from, to }
+        return snap
+      },
+    }
+  }
+}
+
+/** 取「自定义」chip（预设之后那一个）。 */
+function customChipOf(tree) {
+  return findNodes(tree, 'tpq-usage-day').find((node) => node.props?.['data-usage-preset'] === 'custom')
+}
+
+/** 取某一侧的日期输入（data-usage-from / data-usage-to）。 */
+function dateInputOf(tree, field) {
+  return findNodes(tree, 'tpq-usage-date').find((node) => node.props?.['data-usage-' + field] === '1')
+}
+
+function applyButtonOf(tree) {
+  return findNodes(tree, 'tpq-usage-apply')[0]
+}
+
+function rangeErrorTextOf(tree) {
+  const node = findNodes(tree, 'tpq-usage-range-error')[0]
+  return node === undefined ? null : collectText(node).join('')
+}
+
+/** 打开自定义行并让预填进入 state（一次渲染足够：onClick 里直接 set 了 draft/range）。 */
+function openCustom(bundle) {
+  const chip = customChipOf(bundle.renderUsage())
+  ok('自定义 chip 存在且文案取自 COPY', chip !== undefined && collectText(chip).join('') === '自定义')
+  chip.props.onClick()
+  return bundle.renderUsage()
+}
+
+/* T004：静态门禁——钩子、i18n、无百分比 / Credits（与 test/guards.mjs 的客户端矩阵同口径）。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const hooks = [
+    '"data-usage-preset": "custom"',
+    '"data-usage-custom": "1"',
+    '"data-usage-from": field === "from" ? "1" : undefined',
+    '"data-usage-to": field === "to" ? "1" : undefined',
+    '"data-usage-apply": "1"',
+    '"data-usage-range-error": "1"',
+    'role: "alert"',
+  ]
+  for (const hook of hooks) ok('T004 源码带钩子 ' + hook, code.includes(hook))
+
+  const zhBlock = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(code)
+  const enBlock = /\n      en: \{([\s\S]*?)\n      \},/.exec(code)
+  const keysOf = (text) => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map((match) => match[1])
+  const zhKeys = keysOf(zhBlock?.[1] ?? '')
+  const enKeys = keysOf(enBlock?.[1] ?? '')
+  const rangeKeys = ['usageRangeCustom', 'usageRangeFrom', 'usageRangeTo', 'usageRangeApply',
+    'usageRangeBad', 'usageRangeTooLong', 'usageRangeDayOne', 'usageRangeLocalOnly']
+  ok('T004 zh 有 §3.3 的八个键', rangeKeys.every((key) => zhKeys.includes(key)), zhKeys.join(','))
+  ok('T004 en 有 §3.3 的八个键', rangeKeys.every((key) => enKeys.includes(key)), enKeys.join(','))
+  check('T004 zh / en 键集合完全一致', zhKeys.length, enKeys.length)
+
+  const screenStart = code.indexOf('function UsageScreen')
+  ok('T004 能定位到 UsageScreen 区域', screenStart > 0)
+  const region = code.slice(screenStart)
+  ok('T004 客户端用量面不出现百分比', region.includes('%') === false,
+    (region.match(/.{0,20}%.{0,20}/g) ?? []).join(' | '))
+  const creditLines = region.split('\n').filter((line) => /credit/i.test(line))
+  ok('T004 Credits 只出现在白名单脚注行（脚注只说「不折算 Credits」）',
+    creditLines.every((line) => line.includes('usageNoteNoCredits')), creditLines.join(' | '))
+}
+
+/* T005 ①：chip → 日期行展开、预填当前快照区间、按 from/to 请求（不带 days）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageCustomFetch() })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T005 默认不展开日期行', findNodes(tree, 'tpq-usage-custom').length, 0)
+  const snapshot = makeUsageSnapshot(7)
+
+  tree = openCustom(bundle)
+  check('T005 点自定义展开一行日期控件', findNodes(tree, 'tpq-usage-custom').length, 1)
+  check('T005 预填快照的 from', dateInputOf(tree, 'from').props.value, snapshot.range.from)
+  check('T005 预填快照的 to', dateInputOf(tree, 'to').props.value, snapshot.range.to)
+  check('T005 chip 进入按下态', customChipOf(tree).props['data-active'], '1')
+  check('T005 切自定义立刻按预填区间请求',
+    usageRequests().at(-1)?.url, '/token-plan-quota/usage?from=' + snapshot.range.from + '&to=' + snapshot.range.to)
+  ok('T005 自定义请求不带 days / range 参数',
+    !String(usageRequests().at(-1)?.url ?? '').includes('days=') && !String(usageRequests().at(-1)?.url ?? '').includes('range='))
+  ok('T005 自定义快照：脚注点明只统计本机',
+    collectText(await settle(bundle.renderUsage, 2)).join(' ').includes('仅统计本机 DSH 发出的调用'))
+
+  const preset7 = findNodes(tree, 'tpq-usage-day').find((node) => node.props?.['data-usage-preset'] !== 'custom'
+    && collectText(node).join('') === '今日')
+  ok('T005 有「今日」预设可回退', preset7 !== undefined)
+  preset7.props.onClick()
+  tree = await settle(bundle.renderUsage, 2)
+  check('T005 点预设收回日期行', findNodes(tree, 'tpq-usage-custom').length, 0)
+  check('T005 点预设回到天数模式', customChipOf(tree).props['data-active'], '0')
+  check('T005 点预设后按天数请求', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=1')
+}
+
+/* T005 ②：本地校验不通过 → 零请求 + 行内提示（SC-004）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageCustomFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openCustom(bundle)
+  const today = bundle.api.__internals.usageTodayKey()
+  const shift = bundle.api.__internals.usageShiftDay
+  const cases = [
+    ['空值', '', '', '起止日期不合法'],
+    ['格式不合法', '2026-9-1', '2026-09-10', '起止日期不合法'],
+    ['起止颠倒', '2026-09-10', '2026-09-01', '起止日期不合法'],
+    ['开始日期在未来', shift(today, 1), shift(today, 2), '起止日期不合法'],
+    ['跨度超上限', shift(today, -400), today, '最多查 365 天'],
+  ]
+  for (const [name, from, to, expected] of cases) {
+    tree = bundle.renderUsage()
+    dateInputOf(tree, 'from').props.onChange({ target: { value: from } })
+    dateInputOf(tree, 'to').props.onChange({ target: { value: to } })
+    // 让 onChange 进入 state（闭包拿到新草稿），同时这一帧会重发「当前查询」——所以计数紧贴点击取。
+    tree = bundle.renderUsage()
+    const before = usageRequests().length
+    applyButtonOf(tree).props.onClick()
+    check('T005 非法输入（' + name + '）点击查询零请求', usageRequests().length, before)
+    tree = bundle.renderUsage()
+    check('T005 非法输入（' + name + '）行内提示', rangeErrorTextOf(tree), expected)
+  }
+  tree = bundle.renderUsage()
+  ok('T005 行内提示挂在 role=alert 上（读屏可达）',
+    findNodes(tree, 'tpq-usage-range-error')[0].props.role === 'alert')
+}
+
+/* T005 ③：合法区间 → 请求带 from/to；标题按 snapshot.range 出单日 / 多天文案。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageCustomFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openCustom(bundle)
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-01' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-30' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T005 合法区间按 from/to 请求', usageRequests().at(-1)?.url, '/token-plan-quota/usage?from=2026-09-01&to=2026-09-30')
+  ok('T005 多天自定义标题', collectText(tree).join(' ').includes('2026-09-01 至 2026-09-30 · 30 天'),
+    collectText(tree).join(' ').slice(0, 160))
+  check('T005 数据与查询一致时不标 stale',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+
+  // 单日：from===to
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-15' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-15' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  ok('T005 单日自定义标题', collectText(tree).join(' ').includes('2026-09-15 当天'), collectText(tree).join(' ').slice(0, 160))
+  check('T005 单日请求 end=start', usageRequests().at(-1)?.url, '/token-plan-quota/usage?from=2026-09-15&to=2026-09-15')
+}
+
+/* T005 ④：stale 条件含 from/to——换了区间但新数据还没到时，三张卡降级。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageCustomFetch() })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = openCustom(bundle)
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-01' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-30' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T005 stale 前：数据已经对齐当前区间',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+
+  // 只改查询、不等回包：这一帧的快照仍是旧区间，卡片必须降级。
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-05' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-10' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = bundle.renderUsage()
+  check('T005 换了区间、数据没到时标 stale',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['1', '1', '1'])
+  tree = await settle(bundle.renderUsage, 4)
+  check('T005 新数据到了之后 stale 落回 0',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+}
+
+/* T005 ⑤：宿主 400 的两种错误码 → 本地文案 + 重试（不回显宿主原文）。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageCustomFetch({
+      handler: ({ from }) => (from === null ? undefined
+        : { ok: false, status: 400, json: async () => ({ error: 'usage-bad-range', message: 'from must be <= to' }) }),
+    }),
+  })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openCustom(bundle)
+  tree = await settle(bundle.renderUsage, 3)
+  const text = collectText(tree).join(' ')
+  ok('T005 400 usage-bad-range 用本地文案', text.includes('起止日期不合法') && !text.includes('from must be'), text.slice(0, 240))
+  ok('T005 400 错误态带重试按钮', findNodes(tree, 'tpq-usage-retry').length === 1)
+}
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageCustomFetch({
+      handler: ({ from }) => (from === null ? undefined
+        : { ok: false, status: 400, json: async () => ({ error: 'usage-range-too-long', maxDays: 30 }) }),
+    }),
+  })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openCustom(bundle)
+  tree = await settle(bundle.renderUsage, 3)
+  const text = collectText(tree).join(' ')
+  ok('T005 400 usage-range-too-long 报到宿主真上限（30）', text.includes('最多查 30 天'), text.slice(0, 240))
+  const before = usageRequests().length
+  findNodes(tree, 'tpq-usage-retry')[0].props.onClick()
+  ok('T005 错误态重试会重发同一条自定义查询', usageRequests().length > before)
+}
+
+/* T005 ⑥：英文界面走英文文案，不混中文（i18n 8 键的 en 侧真的被用上）。 */
+{
+  const bundle = await mountUsage({ lang: 'en-US', fetchImpl: usageCustomFetch() })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  const chip = customChipOf(tree)
+  check('T005 en：自定义 chip 文案', collectText(chip).join(''), 'Custom')
+  chip.props.onClick()
+  tree = bundle.renderUsage()
+  ok('T005 en：日期行标签是英文', collectText(findNodes(tree, 'tpq-usage-custom')[0]).join(' ').includes('From'))
+  check('T005 en：查询按钮文案', collectText(applyButtonOf(tree)).join(''), 'Apply')
+
+  dateInputOf(tree, 'from').props.onChange({ target: { value: '2026-09-01' } })
+  dateInputOf(tree, 'to').props.onChange({ target: { value: '2026-09-30' } })
+  tree = bundle.renderUsage()
+  applyButtonOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  const text = collectText(tree).join(' ')
+  ok('T005 en：多天标题是英文', text.includes('2026-09-01 to 2026-09-30 · 30 days'), text.slice(0, 240))
+  ok('T005 en：整屏不混中文', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 240))
+  ok('T005 en：脚注点明只统计本机',
+    text.includes('Only calls made by this DSH instance are counted'), text.slice(0, 300))
+}
+
+/* T005 ⑦：来源不是本机会话索引时，不许冒充「只统计本机」（脚注跟随来源）。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, source: { ...snap.source, kind: 'in-process' } })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 4)).join(' ')
+  ok('T005 source=in-process 时不出现「仅统计本机」',
+    !text.includes('仅统计本机 DSH 发出的调用'), text.slice(0, 240))
+}
+
+/* T005 ⑧：store 记住查询模式（重开屏恢复），且与 006 的 2D/3D 视图字段互不覆盖。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageCustomFetch() })
+  const store = bundle.handle
+  store.setRange({ rangeMode: 'custom', from: '2026-09-01', to: '2026-09-30' })
+  check('T005 store 记住查询模式与起止',
+    [store.create().getSnapshot().rangeMode, store.create().getSnapshot().from, store.create().getSnapshot().to],
+    ['custom', '2026-09-01', '2026-09-30'])
+  store.setMode('3d')
+  check('T005 切 3D 不会污染查询模式', store.create().getSnapshot().rangeMode, 'custom')
+  store.setRange({ rangeMode: 'days', from: '', to: '' })
+  check('T005 回天数模式时清空起止',
+    [store.create().getSnapshot().rangeMode, store.create().getSnapshot().from], ['days', ''])
+}
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed')
 process.exit(failed === 0 ? 0 : 1)

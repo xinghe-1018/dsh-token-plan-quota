@@ -401,6 +401,14 @@ function usageAddDays(key, delta) {
   return usageDayKey(date)
 }
 
+/** 闭区间 [from, to] 的天数（含首尾），与 lib/usage-stats.js 的 dayCount 同口径。 */
+function usageCountDays(from, to) {
+  const start = usageParseDay(from).getTime()
+  const end = usageParseDay(to).getTime()
+  // 用 round 而不是整除：夏令时地区会出现 23/25 小时的一天，宿主那边也只按本地日历日数。
+  return Math.round((end - start) / 86_400_000) + 1
+}
+
 /** 本地周一（(getDay()+6)%7，与 weekStartKey 同口径）。 */
 function usageMondayOf(key) {
   const date = usageParseDay(key)
@@ -502,9 +510,23 @@ function usageSplitByModel(counters) {
  */
 export function makeUsageSnapshot(options = {}) {
   const now = Number.isFinite(options.now) ? options.now : Date.now()
-  const days = clampUsageDays(options.days)
-  const to = usageDayKey(new Date(now))
-  const from = usageAddDays(to, -(days - 1))
+  const today = usageDayKey(new Date(now))
+  // 007：两端都给才走自定义区间（与宿主路由同一条判据）；to 晚于今天要夹到今天，abusrd 组合直接拒绝而不是造一张宿主发不出的图。
+  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
+  let from
+  let to
+  let days
+  if (custom) {
+    from = options.from
+    to = options.to > today ? today : options.to
+    if (from > to) throw new Error('makeUsageSnapshot：from 晚于 to（' + from + ' > ' + to + '），宿主会回 400')
+    days = usageCountDays(from, to)
+    if (days > 365) throw new Error('makeUsageSnapshot：区间 ' + days + ' 天超过 usageBackfillDays，宿主会回 400')
+  } else {
+    days = clampUsageDays(options.days)
+    to = today
+    from = usageAddDays(to, -(days - 1))
+  }
   const granularity = days > USAGE_WEEK_THRESHOLD_DAYS ? 'week' : 'day'
 
   // 逐日计数只覆盖区间内（与 aggregateUsageRange 一致：周桶跨到 from 之前的周一，但不累计 from 之前的天）。
@@ -519,13 +541,19 @@ export function makeUsageSnapshot(options = {}) {
   if (granularity === 'day') {
     for (const key of perDay.keys()) specs.push({ from: key, to: key })
   } else {
+    /*
+     * 006 的周桶以本地周一为界，首桶可以跨到 from 之前的周一；
+     * 007 自定义区间不同：**首桶从 from 开始**（不往前补到周一），末桶到 to 为止 —— 桶必须恰好铺满 [from, to]。
+     */
     let cursor = from
+    let first = true
     while (cursor <= to) {
-      const startKey = usageMondayOf(cursor)
-      const weekEnd = usageAddDays(startKey, 6)
+      const startKey = custom && first ? from : usageMondayOf(cursor)
+      const weekEnd = usageAddDays(usageMondayOf(startKey), 6)
       const endKey = weekEnd > to ? to : weekEnd
       specs.push({ from: startKey, to: endKey })
       cursor = usageAddDays(endKey, 1)
+      first = false
     }
   }
 
@@ -572,7 +600,7 @@ export function makeUsageSnapshot(options = {}) {
   return {
     generatedAt: now,
     enabled: true,
-    range: { kind: days === 1 ? 'today' : days + 'd', days, from, to },
+    range: custom ? { kind: 'custom', days, from, to } : { kind: days === 1 ? 'today' : days + 'd', days, from, to },
     granularity,
     totals: usageTotals(rangeCounters),
     buckets,
@@ -599,7 +627,20 @@ export function assertUsageFixture(usage, options = {}) {
     if (!cond) throw new Error('usage fixture 自检失败：' + label)
     checks.push(label)
   }
-  const days = clampUsageDays(options.days)
+  const today = usageDayKey(new Date(Number.isFinite(options.now) ? options.now : Date.now()))
+  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
+  let days
+  let expectFrom
+  let expectTo
+  if (custom) {
+    expectFrom = options.from
+    expectTo = options.to > today ? today : options.to
+    days = usageCountDays(expectFrom, expectTo)
+  } else {
+    days = clampUsageDays(options.days)
+    expectTo = today
+    expectFrom = usageAddDays(expectTo, -(days - 1))
+  }
   const allowed = new Set(USAGE_TOP_KEYS)
   for (const key of Object.keys(usage)) need('顶层键 ' + key + ' ⊆ /usage 白名单', allowed.has(key))
 
@@ -614,10 +655,17 @@ export function assertUsageFixture(usage, options = {}) {
   need('range 键集正确',
     JSON.stringify(Object.keys(usage.range).sort()) === JSON.stringify([...USAGE_RANGE_KEYS].sort()))
   need('range.days 与请求一致', usage.range.days === days)
-  need('range.kind 与天数一致', usage.range.kind === (days === 1 ? 'today' : days + 'd'))
   need('range.from 是日期', usageIsDayKey(usage.range.from))
   need('range.to 是日期', usageIsDayKey(usage.range.to))
-  need('range.from = to - (days-1)', usageAddDays(usage.range.to, -(days - 1)) === usage.range.from)
+  if (custom) {
+    // 007：kind=custom，且 from/to 是**夹紧后**的真值（to 晚于今天会被夹到今天）——客户端标题以它为准。
+    need('range.kind 是 custom', usage.range.kind === 'custom')
+    need('range.from = 请求的 from', usage.range.from === expectFrom)
+    need('range.to = 请求的 to（夹到今天后）', usage.range.to === expectTo)
+  } else {
+    need('range.kind 与天数一致', usage.range.kind === (days === 1 ? 'today' : days + 'd'))
+    need('range.from = to - (days-1)', usageAddDays(usage.range.to, -(days - 1)) === usage.range.from)
+  }
   const expectGranularity = days > USAGE_WEEK_THRESHOLD_DAYS ? 'week' : 'day'
   need('granularity 为 ' + expectGranularity, usage.granularity === expectGranularity)
 
@@ -653,11 +701,13 @@ export function assertUsageFixture(usage, options = {}) {
       const expectFrom = index === 0 ? usage.range.from : usageAddDays(usage.buckets[index - 1].to, 1)
       need(label + ' 与前一桶日连续', bucket.from === expectFrom)
     } else {
-      need(label + ' 起点是周一', usageParseDay(bucket.from).getDay() === 1)
+      // 007 自定义区间的首桶从 from 开始（可能不是周一）；其余桶与 006 一样以周一为界。
+      if (!(custom && index === 0)) need(label + ' 起点是周一', usageParseDay(bucket.from).getDay() === 1)
       need(label + ' 终点不早于起点', bucket.to >= bucket.from)
-      need(label + ' 终点不超过周日', usageAddDays(bucket.from, 6) >= bucket.to)
+      need(label + ' 终点不超过周日', usageAddDays(usageMondayOf(bucket.from), 6) >= bucket.to)
       if (index === 0) {
         need(label + ' 覆盖区间起点', bucket.from <= usage.range.from && bucket.to >= usage.range.from)
+        if (custom) need(label + ' 起点 = 区间起点', bucket.from === usage.range.from)
       } else {
         need(label + ' 与前一桶周连续', bucket.from === usageAddDays(usage.buckets[index - 1].to, 1))
       }

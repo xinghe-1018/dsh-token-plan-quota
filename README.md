@@ -271,7 +271,9 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   有公开忙时单价的模型（qwen3.8-flash、deepseek-v4.1-flash-1017、deepseek-v4.1-flash）主数字用 022 的
   「按官方价目估算」，卡片标签同步写成「按官方价目估算 tokens」（响应里的 `ratio.priceBasis` 标明口径、取价日
   与单位）；没有价目时回落 019 的占比折算 `capacity`，两套口径共用同一张卡、不混算。卡片与数字之外不再挂
-  小字说明：口径写在本文与规格里，模块内只有 chips 与结果卡。旧宿主没有 `capacity`、没有可算模型、或
+  小字说明：口径写在本文与规格里。025 起模块内除 chips 与结果卡外，只保留一行夜间折扣说明
+   `p.tpq-usage-single-model-note`（「按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。」），
+   仅走 022 `estimate` 口径时渲染。旧宿主没有 `capacity`、没有可算模型、或
   credits 未就绪时整块不渲染，不拿 0 顶替。
 - **按官方价目估算（022）**：有公开忙时单价的模型（qwen3.8-flash、deepseek-v4.1-flash-1017、deepseek-v4.1-flash）主数字改用「把本账期全部 Credits 都花在该模型上」的估算 tokens：先按官方单价算该行价目成本，再除以本账号实测的每 Credit 价目成本（响应里的 `ratio.priceBasis` 标明口径、取价日与单位）。未计 22:00–08:00 夜间折扣与没有公开单价的模型；无估算时逐字段回落 019，`capacity` 仍保留，两套口径并存——估算是参考，不是官方读数。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
@@ -546,15 +548,15 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 ```bash
 npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 1073 项，离线
-node test/client.mjs               # 1391 项，假 React/DOM/fetch
-node test/guards.mjs               # 631 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/client.mjs               # 1393 项，假 React/DOM/fetch
+node test/guards.mjs               # 637 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 26 个键、配置表 27 行、8 个数据源、声明 8 个出站主机、测试 1073/1391 项 + guards 631 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 26 个键、配置表 27 行、8 个数据源、声明 8 个出站主机、测试 1073/1393 项 + guards 637 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

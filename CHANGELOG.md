@@ -52,6 +52,12 @@ All notable changes to this project are documented here. The format follows
   整页脚注块改为「有内容才建」，现在只剩来源行 / 本机实测提示 / 补扫说明。该改动按用户要求取代 012 的
   「公式必须上屏」与 006 的官方四项细分行；数据口径、路由、配置键、出站主机与依赖全部不变。
   测试：宿主 1073 不变、客户端 1394 → 1391、guards 624 → 631（新增第 24 节静态矩阵）。方案见 `specs/024-drop-explanatory-notes/`。
+- **单模型估算补一句夜间折扣说明（025）**：「如果只用单个模型」模块内加一行
+   `p.tpq-usage-single-model-note`，逐字「按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。」
+   （en "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."）。
+   只在走 022 `estimate` 口径时渲染，回落 019 `capacity` 时不出现；COPY 152 → 153，新增 `usageSingleModelNightNote` 中英各一。
+   这条是 024「屏上不留说明」的单句例外（用户点名要求）；数据口径、路由、配置键、出站主机与依赖全部不变。
+   测试：宿主 1073 不变、客户端 1391 → 1393、guards 631 → 637（新增第 25 节静态矩阵）。方案见 `specs/025-single-model-night-note/`。
 - **每 Credit 三格卡片与按日折算基准（017）**：016 的「每 Credit 分项」一行改成**三格卡片**
   （`section.tpq-usage-credits-classes`、`data-usage-credits-classes="1"`）：标题 zh「1 Credit 折合」/ en
   「One credit is worth」，三格固定顺序 **缓存命中 / 未命中输入 / 输出**，每格 = 标签 + **20px** 数值 + 单位

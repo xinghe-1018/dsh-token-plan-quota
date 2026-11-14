@@ -4642,8 +4642,15 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   ok('T102 滚动条 thumb 圆角 + 主题色变量',
     /\.tpq-usage-viewport::-webkit-scrollbar-thumb\{[^}]*border-radius:4px[^}]*background:var\(--dsw-alias-border-l2/.test(code))
   ok('T102 滚动条宽度 8px', /\.tpq-usage-viewport::-webkit-scrollbar\{width:8px\}/.test(code))
-  ok('T102 视口焦点环 2px 品牌色、内偏移（不顶开内容）',
-    /\.tpq-usage-viewport:focus-visible\{[^}]*outline:2px solid var\(--dsw-alias-brand-primary[^}]*outline-offset:-2px/.test(code))
+  /* 018：整页焦点环在深色主题下是白边，改成只压视觉环、保留可聚焦（键盘仍能滚）。 */
+  ok('T102 视口不画整页焦点环（018），但仍是可聚焦滚动区',
+    /\.tpq-usage-viewport:focus-visible\{[^}]*outline:none/.test(code)
+      && !/\.tpq-usage-viewport:focus-visible\{[^}]*outline:2px solid/.test(code)
+      && /"data-usage-scroll": "1",\s*tabIndex: 0,/.test(code))
+  ok('T104 柱子两种焦点态都不画 UA 轮廓（018：鼠标点柱不再出框）',
+    /\.tpq-usage-bar2d:focus,\.tpq-usage-bar3d:focus\{outline:none\}/.test(code)
+      && /\.tpq-usage-bar2d:focus-visible \.tpq-usage-rect\{stroke:/.test(code)
+      && /\.tpq-usage-bar3d:focus-visible \.tpq-usage-face-front\{stroke:/.test(code))
 }
 
 /* T103 两种 return 态都在假 DOM 里渲染出 .tpq-usage-viewport > .tpq-usage。 */

@@ -1292,10 +1292,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('013 滚动：视口 CSS 含 ' + declaration, viewportRule.includes(declaration))
   }
   ok('013 滚动：视口不写 scrollbar-gutter（920px 居中列不位移）', !viewportRule.includes('scrollbar-gutter'))
-  ok('013 滚动：聚焦环与细滚动条（focus-visible outline + 8px thumb + 主题变量）',
-    /\.tpq-usage-viewport:focus-visible\{[^}]*outline/.test(src)
-      && src.includes('.tpq-usage-viewport::-webkit-scrollbar{width:8px}')
+  ok('013 滚动：细滚动条（8px thumb + 主题变量）',
+    src.includes('.tpq-usage-viewport::-webkit-scrollbar{width:8px}')
       && /\.tpq-usage-viewport::-webkit-scrollbar-thumb\{[^}]*--dsw-alias-border-l2/.test(src))
+  // 018：视口不再画整页焦点环（深色主题下是一圈白边），但可聚焦与 role 都保留。
+  ok('013/018 滚动：视口不画整页焦点环、仍可聚焦',
+    /\.tpq-usage-viewport:focus-visible\{outline:none\}/.test(src)
+      && !/\.tpq-usage-viewport:focus-visible\{[^}]*outline:2px solid/.test(src)
+      && /"data-usage-scroll": "1",\s*tabIndex: 0,/.test(src))
   ok('013 滚动：模型排行卡内滚动仍在（252px + thin + contain），两层互不吃掉',
     src.includes('max-height:252px') && /\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(src))
 
@@ -1869,5 +1873,39 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
         .every(name => existsSync(join(ROOT, 'specs', '017-credit-class-card', name))))
   }
 }
+/* ── 第 18 节：焦点噪音修复（spec 018）────────────────────────────────────────
+   1) 视口不再画整页焦点环——深色主题下它是一圈白边；可聚焦与 region 语义保留。
+   2) 柱子补普通 :focus 抑制——鼠标点 SVG <g> 会拿到 Chromium UA 的 outline:auto 5px。 */
+{
+  const src18 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+
+  ok('018 视口：焦点环改为 outline:none，旧的 2px 品牌色环已删',
+    /\.tpq-usage-viewport:focus-visible\{outline:none\}/.test(src18)
+      && !/\.tpq-usage-viewport:focus-visible\{outline:2px solid/.test(src18))
+  ok('018 视口：可聚焦与滚动语义没被顺手删（tabIndex 0 + data-usage-scroll + role=region）',
+    /"data-usage-scroll": "1",\s*tabIndex: 0,\s*role: "region"/.test(src18)
+      && src18.includes('copy.usageTitle'))
+
+  ok('018 柱子：2D / 3D 都补了普通 :focus 抑制（鼠标点击不再出 UA 框）',
+    /\.tpq-usage-bar2d:focus,\.tpq-usage-bar3d:focus\{outline:none\}/.test(src18)
+      && !/\.tpq-usage-bar2d:focus-visible,\.tpq-usage-bar3d:focus-visible\{outline:none\}/.test(src18))
+  ok('018 柱子：键盘态的 stroke 表达保留（不是把焦点反馈一起删掉）',
+    /\.tpq-usage-bar2d:focus-visible \.tpq-usage-rect\{stroke:var\(--dsw-alias-brand-primary/.test(src18)
+      && /\.tpq-usage-bar3d:focus-visible \.tpq-usage-face-front\{stroke:var\(--dsw-alias-brand-primary/.test(src18))
+  ok('018 柱子：仍逐柱可聚焦且读屏有名字（tabIndex 0 + role=img + usageBucketTitle）',
+    /tabIndex: 0,\s*role: "img",\s*"aria-label": usageBucketTitle\(bucket, copy\)/.test(src18))
+
+  ok('018 注释写清了原因（深色白边 / UA auto 轮廓），不是静默删样式',
+    src18.includes('整整一圈白边') && src18.includes('outline:auto 5px'))
+
+  const changelog018 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('018 CHANGELOG：Unreleased/Fixed 记了焦点噪音修复',
+    /## \[Unreleased\]/.test(changelog018) && changelog018.includes('018')
+      && changelog018.includes('白边') && changelog018.includes('焦点'))
+  ok('018 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '018-focus-noise', name))))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

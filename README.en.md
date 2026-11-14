@@ -239,11 +239,18 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Hover tooltip: any bar reports that day's or week's token detail](docs/images/en/usage-tooltip-2d.png)
 
+![Usage composition: Chinese labels, per-bucket shares and cache hit rate, with the model list scrolling inside its card](docs/images/en/usage-composition-2d.png)
+
 ![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
 
-- **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
+- **Absolute tokens only**: the range total, the four buckets (input / output / cache hit / cache write), the
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
-  so there is no percentage and no Credits.
+  so there is no quota percentage and no Credits.
+- **Composition at a glance**: besides the four absolute values, the total card shows each bucket's **share of the
+  range total** and the **cache hit rate** (cache hit ÷ (input + cache hit + cache write), one decimal; `—` when
+  the denominator is 0). Every model row carries the same four shares plus its hit rate. These describe usage
+  composition, not remaining quota and certainly not a quota ratio; the footnote spells out both formulas and
+  says so.
 - The data comes from the **host's own session events** (`sessionPersistence`), folded offline into a
   per-local-day index: the first run walks the existing sessions (measured here: 217 session directories, ~200 MB of
   logs, ~20 s to decode and fold), after which it syncs incrementally every 5 minutes, so the numbers are at most
@@ -283,6 +290,9 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   total tokens, then the four buckets and the call count. Works in both 2D and 3D; touch tap and keyboard
   `Tab` focus open it too (`Esc`, clicking elsewhere or scrolling close it). The tooltip reports absolute
   tokens only - no derived percentages, no Credits.
+- **The model ranking scrolls inside its card**: the list is capped at about four rows and a thin scrollbar
+  reveals the rest; the container itself is `Tab`-focusable so keyboard and screen-reader users can scroll it.
+  No amount of models can push the official comparison or the footnote off screen.
 - When the data is not available it says so: no `sessionPersistence` → falls back to "since this process started"
   (resets on restart); backfill still running → a thin progress bar and "backfilling (N/M sessions)"; statistics
   turned off → the screen states that, instead of pretending "cannot measure" means zero.
@@ -577,8 +587,8 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 855 assertions, offline
-node test/client.mjs                # 793 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 330 assertions: behaviour matrices of the gates themselves
+node test/client.mjs                # 856 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 360 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -586,7 +596,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 855/793 tests plus 330 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 855/856 tests plus 360 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

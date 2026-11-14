@@ -203,10 +203,16 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![悬停提示：任意一根柱上显示该日/该周的 tokens 明细](docs/images/usage-tooltip-2d.png)
 
+![用量构成：中文分项标签、四类占比与缓存命中率，模型列表在卡内滚动](docs/images/usage-composition-2d.png)
+
 ![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
 
-- **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
-  这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有百分比，也没有 Credits。
+- **只报绝对 token**：区间总量、四类拆分（输入 / 输出 / 缓存命中 / 缓存写入）、调用次数、按模型排行。
+  这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有配额百分比，也没有 Credits。
+- **看得懂构成**：总量卡除四个绝对值外，还给出每一项**占区间总量的比例**，以及
+  **缓存命中率**（缓存命中 ÷（输入 + 缓存命中 + 缓存写入），保留一位小数；分母为 0 时显示 `—`）。
+  模型排行每行同样带四类占比与命中率。这些都是**用量构成**，不是剩余额度，也更不是配额比例；
+  脚注里写明两个公式并直说「不是配额比例」。
 - 数据来自**宿主自己的会话事件**（`sessionPersistence`），离线折叠成按本地日的索引：首轮要扫一遍历史会话
   （本机实测：215 个会话、211 MB，解码加折叠 20 秒量级），之后每 5 分钟增量同步，数字最多晚 5 分钟。
   它和明细里的「本实例实测用量」不是一套：那一块是**窗口**（默认 7 天，从第一次调用起算），这一屏是**按日/按周的历史**。
@@ -233,6 +239,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 - **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
   下面四类拆分与调用次数。2D / 3D 都支持；触屏点按、键盘 `Tab` 聚焦同样会弹出（`Esc`、点别处、
   滚动都会收起）。浮层只报绝对 token，不派生百分比，也不折算 Credits。
+- **模型排行在卡内滚动**：列表高度封顶（约 4 行），更多模型用细滚动条翻；容器本身可 `Tab` 聚焦，
+  键盘与读屏都能滚。这样模型再多也不会把官方对照和脚注挤出屏幕。
 - 统计不到的时候会明说：宿主没有 `sessionPersistence` → 退回「本进程启动以来」（重启归零）；历史还没回填完 →
   顶部细进度条与「正在回填（N/M 会话）」；关掉统计 → 屏内直接写已关闭，不把「统计不到」伪装成 0。
 - **重启后不用先聊一句**：索引在第一次查询时就同步从磁盘读回来（以前要等启动 20 秒后的首轮同步，
@@ -493,15 +501,15 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 ```bash
 npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 855 项，离线
-node test/client.mjs               # 793 项，假 React/DOM/fetch
-node test/guards.mjs               # 330 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/client.mjs               # 856 项，假 React/DOM/fetch
+node test/guards.mjs               # 360 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 855/793 项 + guards 330 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 855/856 项 + guards 360 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

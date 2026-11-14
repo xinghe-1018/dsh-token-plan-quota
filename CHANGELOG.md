@@ -10,6 +10,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **用量构成：分项中文标签、占比与缓存命中率，模型列表卡内滚动（012）**：统计屏的总量卡不再只报四个绝对值——
+  标签改成中文「输入 / 输出 / 缓存命中 / 缓存写入」（英文 input / output / cache hit / cache write），
+  每一格多一行**占区间总量的比例**（分母是该区间的 `totals.tokens`），并新增**缓存命中率**格
+  （缓存命中 ÷（输入 + 缓存命中 + 缓存写入），保留一位小数；分母为 0 时显示 `—`，绝不写成 0%）。
+  模型排行每行同样带四类数值、各自占比与该模型的命中率。占比与命中率都走客户端同一组纯函数
+  （`usagePercentText` / `usageShareText` / `usageHitRateText`），0 < x < 0.1% 写 `<0.1%`，整数不带小数点。
+  这一屏仍然只解释**用量构成**：不出现剩余额度百分比，也不折算 Credits；脚注写明两个公式并直说「不是配额比例」。
+  模型列表改为**卡内滚动**（`max-height: 252px`、细滚动条、`data-usage-models-scroll="1"`、容器可 `Tab` 聚焦、
+  `role="group"` + `aria-label`），模型再多也不会把官方对照与脚注挤出屏幕。
+  宿主侧零改动（响应字段一个未加，全部由既有 `totals` 派生）。测试：宿主 855 条不变，客户端 793→856（第 12 节新增 63 条：
+  六格文本、模型行逐字、比例纯函数 20 组边界、0 分母 `—`、滚动容器、脚注公式、白名单段外 0 个 `%`），
+  guards 静态矩阵 330→360（第 12 节 30 条：白名单段切片、渲染代码 0 个百分比字面量、中文标签逐键、
+  COPY 键数 zh/en 各 138、滚动容器四件、公式脚注、006 收窄指向、文档/截图清单、配置键仍 25、出站主机仍 8）。
+  截图 ⑮ 落 `docs/images/usage-composition-2d.png` 与 `docs/images/en/usage-composition-2d.png`
+  （7 天预设、8 条模型、首条 61.5% / 30.8% / 7.7%、命中率 11.1%）。方案见 `specs/012-usage-composition/`，
+  接口契约见该目录的 `INTERFACE.md`。
+
 - **柱子悬停看用量明细（011）**：统计屏的每根柱子现在是一个可命中的 `<g>`（2D 的 rect、3D 的三面 polygon 都在里面），
   鼠标移上去（`pointerenter` / `pointermove`）就在旁边浮出一张提示：首行是该桶日期（日桶 `2026-10-22`，
   周桶 `2026-09-01 – 2026-09-07`）与 `formatTokens` 后的 tokens 总量，下面逐行是 input / output /

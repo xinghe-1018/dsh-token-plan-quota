@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -23,12 +23,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -744,8 +744,8 @@ async function main() {
   }
 
   /* ---------------------------- ⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫⑬⑭ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停）')
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬⑭⑮ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -990,10 +990,13 @@ async function main() {
             throw new Error('官方说明段缺「' + needle + '」（实际：' + cells.note + '），不拍')
           }
         }
-        /* 口径：整屏不许出现百分比；「Credits」只允许出现在脚注（006 起脚注原文就有"不折算 Credits"）。 */
-        const banned = await page.evaluate('(() => { const root = document.querySelector(".tpq-usage"); if (root === null) return null; const notes = root.querySelector(".tpq-usage-notes"); const notesText = notes === null ? "" : (notes.innerText || ""); const body = (root.innerText || "").replace(notesText, ""); return { percent: body.indexOf("%") >= 0, credits: body.indexOf("Credits") >= 0 } })()')
+        /*
+         * 口径：012 起屏上允许出现百分比 —— 只有构成比与命中率走白名单段，且它们的值由 ⑮ 逐格复算；
+         * 这里不再整屏禁 %（旧的一刀切会把合法的「占 57%」判成错图）。「Credits」仍只允许出现在脚注
+         * （006 起脚注原文就有"不折算 Credits"），所以只扫 Credits。
+         */
+        const banned = await page.evaluate('(() => { const root = document.querySelector(".tpq-usage"); if (root === null) return null; const notes = root.querySelector(".tpq-usage-notes"); const notesText = notes === null ? "" : (notes.innerText || ""); const body = (root.innerText || "").replace(notesText, ""); return { credits: body.indexOf("Credits") >= 0 } })()')
         if (banned === null) throw new Error('量不到用量统计屏，不拍')
-        if (banned.percent === true) throw new Error('官方对照屏出现百分比（%），不拍')
         if (banned.credits === true) throw new Error('官方对照屏（脚注以外）出现 Credits，不拍')
         await frameUsage('官方对照块')
         save('usage-official-2d.png', await page.shot({}))
@@ -1093,10 +1096,9 @@ async function main() {
       if (headOk !== true) throw new Error('标题/区间副标题没有回显 ' + month + '（期望含 ' + JSON.stringify(titleNeedles) + '，实际：' + monthHeadAll + '），不拍')
       const monthChip = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"month\"]'); return b !== null && b.getAttribute('data-active') === '1' && b.getAttribute('aria-pressed') === 'true' })()")
       if (monthChip !== true) throw new Error('「月份」chip 没有处于选中态（data-active/aria-pressed 不对），不拍')
-      /* 口径同 ⑪：整屏不许出现百分比；「Credits」只允许出现在脚注里（006 起脚注原文就有"不折算 Credits"）。 */
-      const monthBanned = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; const notes = root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = (root.innerText || '').split(notesText).join(''); return { percent: body.indexOf('%') >= 0, credits: body.indexOf('Credits') >= 0 } })()")
+      /* 口径同 ⑪：012 起构成比与命中率允许出现 %（值由 ⑮ 复算），这里只查脚注以外的 Credits。 */
+      const monthBanned = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; const notes = root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = (root.innerText || '').split(notesText).join(''); return { credits: body.indexOf('Credits') >= 0 } })()")
       if (monthBanned === null) throw new Error('量不到用量统计屏，不拍')
-      if (monthBanned.percent === true) throw new Error('按月屏出现百分比（%），不拍')
       if (monthBanned.credits === true) throw new Error('按月屏（脚注以外）出现 Credits，不拍')
       await officialReady('按月 ' + month)
 
@@ -1138,7 +1140,7 @@ async function main() {
      *    同一张 docs 图每次重拍的字节才可复现；
      *  - 浮层总量按 formatTokens 的紧凑量纲（zh 140.3万 / en 1.40M）比对，
      *    INTERFACE §2.2 规定它印的就是这个串，不是原始整数；
-     *  - 位置、条数、禁用词（%/Credits）逐项断言，最后才拍整视口。
+     *  - 位置、条数、禁用词（Credits；012 起 % 只允许来自构成比白名单）、四边夹紧逐项断言，最后才拍整视口。
      * 任一条不成立就抛错：拍一张"浮层首行是别的日期"的图，等于把悬停的证据换成一张普通柱图。
      */
     if (args.shots.includes(14)) {
@@ -1230,7 +1232,7 @@ async function main() {
       await sleep(300)
       const tip = await page.evaluate("(() => { const tips = document.querySelectorAll('[data-usage-tip]'); const tip = tips.length > 0 ? tips[0] : null; const txt = sel => { const n = tip === null ? null : tip.querySelector(sel); return n === null ? null : (n.textContent || '').trim() }; const r = tip === null ? null : tip.getBoundingClientRect(); const root = document.querySelector('.tpq-usage'); const notes = root === null ? null : root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = root === null ? '' : (root.innerText || '').split(notesText).join(''); return { count: tips.length, notesLen: notesText.trim().length, index: tip === null ? null : tip.getAttribute('data-usage-tip-index'), role: tip === null ? null : tip.getAttribute('role'), range: txt('[data-usage-tip-range]'), tokens: txt('[data-usage-tip-tokens]'), input: txt('[data-usage-tip-input]'), output: txt('[data-usage-tip-output]'), cacheRead: txt('[data-usage-tip-cache-read]'), cacheWrite: txt('[data-usage-tip-cache-write]'), calls: txt('[data-usage-tip-calls]'), rect: r === null ? null : { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width), height: Math.round(r.height) }, vw: innerWidth, vh: innerHeight, percent: body.indexOf('%') >= 0, credits: body.indexOf('Credits') >= 0 } })()")
       if (tip === null || tip.rect === null) throw new Error('⑭ 悬停后量不到浮层，不拍')
-      if (!(tip.notesLen > 0)) throw new Error('⑭ 浮层探针量不到脚注文本（.tpq-usage-notes 为空），%/Credits 的剔除口径不成立，不拍')
+      if (!(tip.notesLen > 0)) throw new Error('⑭ 浮层探针量不到脚注文本（.tpq-usage-notes 为空），Credits 的剔除口径不成立，不拍')
       if (tip.count !== 1) throw new Error('⑭ 同时存在 ' + tip.count + ' 个浮层（INTERFACE §2.2：最多一个），不拍')
       if (tip.role !== 'tooltip') throw new Error('⑭ 浮层 role 不是 tooltip（' + tip.role + '），不拍')
       if (tip.index !== String(expectedIndex)) throw new Error('⑭ 浮层 data-usage-tip-index 是 ' + tip.index + '，期望 ' + expectedIndex + '，不拍')
@@ -1245,7 +1247,7 @@ async function main() {
       if (tip.rect.left < 8 || tip.rect.top < 8 || tip.rect.right > tip.vw - 8 || tip.rect.bottom > tip.vh - 8) {
         throw new Error('⑭ 浮层没有完整落在视口内（' + JSON.stringify(tip.rect) + ' / 视口 ' + tip.vw + '×' + tip.vh + '），不拍')
       }
-      if (tip.percent === true) throw new Error('⑭ 浮层所在屏出现百分比（%），不拍')
+      // 012 起整屏允许构成比/命中率的 %（白名单段），不再按「屏上有 %」判错，只查 Credits。
       if (tip.credits === true) throw new Error('⑭ 浮层所在屏（脚注以外）出现 Credits，不拍')
       if (langKey === 'en' && /\p{Script=Han}/u.test((tip.range || '') + (tip.tokens || ''))) throw new Error('⑭ 英文套浮层里混了中文（' + tip.range + ' / ' + tip.tokens + '），不拍')
 
@@ -1254,6 +1256,124 @@ async function main() {
       // 移开指针：后面的步骤别带着浮层走，也别让"浮层没关掉"被当成关闭通路坏了。
       await page.moveMouse(0, 0)
       await page.waitFor("document.querySelector('[data-usage-tip]') === null", { timeoutMs: 5_000, label: '⑭ 移开后浮层消失' })
+    }
+
+
+    /*
+     * ⑮ 用量构成（012）：一屏同时证明四件事 —— 中文分项标签、四类占比、缓存命中率、
+     * 模型列表的内滚动。取景因此不再是页顶：把「按模型用量」卡滚进可视区上半部，
+     * 图里能完整看到卡头、四行模型与那条细滚动条；官方对照与脚注仍在折叠线下，
+     * 各自由 officialReady / 脚注断言兜底。
+     * 数字口径：首条模型的 61.5% / 30.8% / 7.7% / 0 与命中率 11.1% 由 fixture 的权重算死；
+     * 总量卡的命中率用 usageCacheHitRatePercent(week.totals) 复算，不从 DOM 反抄一遍。
+     */
+    if (args.shots.includes(15)) {
+      const week = builtUsage({ days: 7 }).usage
+      const expectedBars15 = week.buckets.length
+      if (expectedBars15 !== 7) throw new Error('⑮ fixture 的 7 天响应不是 7 个桶（' + expectedBars15 + '），不拍')
+      const first15 = week.models[0]
+      if (first15 === undefined || first15.id !== USAGE_COMPOSITION_FIRST_MODEL_ID) throw new Error('⑮ fixture 首条模型不是 ' + USAGE_COMPOSITION_FIRST_MODEL_ID + '，不拍')
+      const percentText = value => value === null || value === undefined ? '—' : (Number.isInteger(value) ? String(value) : value.toFixed(1)) + '%'
+      const label15 = langKey === 'zh'
+        ? { input: '输入', output: '输出', cacheRead: '缓存命中', cacheWrite: '缓存写入', hitRate: '缓存命中率', calls: '调用次数' }
+        : { input: 'input', output: 'output', cacheRead: 'cache hit', cacheWrite: 'cache write', hitRate: 'cache hit rate', calls: 'requests' }
+      const share15 = value => {
+        const pct = percentText(usageModelSharePercent(value, week.totals.tokens))
+        return langKey === 'zh' ? '占 ' + pct : pct + ' of total'
+      }
+
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+      // 回页顶再点 7 天：⑬/⑭ 可能把视图留在月份，那一排预设按钮只在页顶露出来。
+      const top15 = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; let sc = root; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; box.scrollTop = 0; return Math.round(box.scrollTop) })()")
+      if (top15 === null) throw new Error('⑮ 量不到用量统计屏的滚动容器，不拍')
+      await sleep(200)
+      const picked7 = await page.evaluate("(() => { const b = [...document.querySelectorAll('.tpq-usage-day')].find(n => (n.textContent || '').trim() === '7'); if (!b) return false; b.click(); return true })()")
+      if (picked7 !== true) throw new Error('⑮ 找不到「7 天」预设按钮（.tpq-usage-day），不拍')
+      const wait15 = "(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return false; const bars = root.querySelectorAll('rect.tpq-usage-rect').length; const big = root.querySelector('.tpq-usage-big'); return bars === " + expectedBars15 + " && big !== null && (big.textContent || '').trim().length > 0 })()"
+      await page.waitFor(wait15, { timeoutMs: 25_000, label: '⑮ 7 天数据（' + expectedBars15 + ' 根柱）' })
+      await sleep(500)
+
+      let head15 = ''
+      let headOk15 = false
+      for (let attempt = 0; attempt < 40 && headOk15 !== true; attempt += 1) {
+        const h = await headText()
+        head15 = ((h.title || '') + ' ' + (h.range || '')).trim()
+        headOk15 = head15.indexOf(week.range.from) >= 0 && head15.indexOf(week.range.to) >= 0
+        if (headOk15 !== true) await sleep(200)
+      }
+      if (headOk15 !== true) throw new Error('⑮ 标题/区间副标题没有回显 7 天区间 ' + week.range.from + ' → ' + week.range.to + '（实际：' + head15 + '），不拍')
+      const dayActive15 = await page.evaluate("(() => { const b = [...document.querySelectorAll('.tpq-usage-day')].find(n => (n.textContent || '').trim() === '7'); return b === null ? null : b.getAttribute('data-active') })()")
+      if (dayActive15 !== '1') throw new Error('⑮「7 天」按钮不是选中态（data-active=' + dayActive15 + '），不拍')
+
+      // 前置同 ⑬/⑭：官方对照块先就绪（它在折叠线下，不进图，但少这道断言就分不清"没露到"和"没取到"）。
+      await officialReady('用量构成 7 天')
+
+      // ① 总量卡六格：标签、数值、占比子行、命中率。标签与顺序都钉死 —— 少一格或退回英文都算不合格。
+      const splitProbe = await page.evaluate("(() => { const box = document.querySelector('.tpq-usage .tpq-usage-splits'); if (box === null) return null; const pick = function (n, sel) { const el = n.querySelector(sel); return el === null ? null : (el.textContent || '').trim() }; const cells = [...box.querySelectorAll('.tpq-usage-split')].map(function (c) { return { label: pick(c, '.tpq-usage-split-label'), value: pick(c, '.tpq-usage-split-value'), share: pick(c, '.tpq-usage-split-share') } }); const root = document.querySelector('.tpq-usage'); const notes = root === null ? null : root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = root === null ? '' : (root.innerText || '').split(notesText).join(''); return { cells: cells, text: (box.innerText || ''), notesText: notesText, bodyCredits: body.indexOf('Credits') >= 0 } })()")
+      if (splitProbe === null) throw new Error('⑮ 找不到总量卡的拆分格（.tpq-usage-splits），12 客户端未落盘，不拍')
+      const expectLabels15 = [label15.input, label15.output, label15.cacheRead, label15.cacheWrite, label15.hitRate, label15.calls]
+      const actualLabels15 = splitProbe.cells.map(c => c.label)
+      if (actualLabels15.length !== 6) throw new Error('⑮ 总量卡不是 6 格（实际 ' + actualLabels15.length + ' 格：' + JSON.stringify(actualLabels15) + '），不拍')
+      for (let i = 0; i < 6; i += 1) {
+        if (actualLabels15[i] !== expectLabels15[i]) throw new Error('⑮ 总量卡第 ' + (i + 1) + ' 格标签是「' + actualLabels15[i] + '」，期望「' + expectLabels15[i] + '」，不拍')
+      }
+      if (langKey === 'zh' && /\b(input|output|cacheRead|cacheWrite)\b/.test(splitProbe.text)) throw new Error('⑮ 中文界面总量卡混了英文分项名（' + splitProbe.text + '），不拍')
+      const splitValues15 = [week.totals.input, week.totals.output, week.totals.cacheRead, week.totals.cacheWrite]
+      for (let i = 0; i < 4; i += 1) {
+        const want = compactTokens(splitValues15[i], langKey)
+        if ((splitProbe.cells[i].value || '') !== want) throw new Error('⑮ 总量卡「' + expectLabels15[i] + '」值是 ' + splitProbe.cells[i].value + '，期望 ' + want + '，不拍')
+        const wantShare = share15(splitValues15[i])
+        if ((splitProbe.cells[i].share || '') !== wantShare) throw new Error('⑮ 总量卡「' + expectLabels15[i] + '」占比子行是 ' + splitProbe.cells[i].share + '，期望 ' + wantShare + '，不拍')
+      }
+      const wantHit15 = percentText(usageCacheHitRatePercent(week.totals))
+      if ((splitProbe.cells[4].value || '') !== wantHit15) throw new Error('⑮ 总量卡命中率是 ' + splitProbe.cells[4].value + '，期望 ' + wantHit15 + '，不拍')
+      const wantCalls15 = compactTokens(week.totals.calls, langKey)
+      if ((splitProbe.cells[5].value || '') !== wantCalls15) throw new Error('⑮ 总量卡调用次数是 ' + splitProbe.cells[5].value + '，期望 ' + wantCalls15 + '，不拍')
+
+      // ② 模型列表：8 条、内滚动生效、键盘可达；首条的占比与命中率逐项对上 fixture。
+      const modelProbe = await page.evaluate("(() => { const box = document.querySelector('[data-usage-models-scroll=\"1\"]'); if (box === null) return null; const pick = function (n, sel) { const el = n.querySelector(sel); return el === null ? null : (el.textContent || '').trim() }; const rows = [...box.querySelectorAll('.tpq-usage-model')].map(function (r) { return { id: pick(r, '.tpq-usage-model-id'), tokens: pick(r, '.tpq-usage-model-tokens'), splits: pick(r, '.tpq-usage-model-splits') } }); const cs = getComputedStyle(box); return { count: rows.length, rows: rows, scrollHeight: box.scrollHeight, clientHeight: box.clientHeight, overflowY: cs.overflowY, maxHeight: cs.maxHeight, tabIndex: box.getAttribute('tabindex'), role: box.getAttribute('role'), aria: box.getAttribute('aria-label'), text: (box.innerText || '') } })()")
+      if (modelProbe === null) throw new Error('⑮ 找不到模型列表容器（[data-usage-models-scroll="1"]），12 客户端未落盘，不拍')
+      if (modelProbe.count !== USAGE_COMPOSITION_MODEL_COUNT) throw new Error('⑮ 模型列表有 ' + modelProbe.count + ' 条，fixture 是 ' + USAGE_COMPOSITION_MODEL_COUNT + ' 条，不拍')
+      if (!(modelProbe.scrollHeight > modelProbe.clientHeight + 20)) throw new Error('⑮ 模型列表没有内滚动（scrollHeight ' + modelProbe.scrollHeight + ' / clientHeight ' + modelProbe.clientHeight + '），不拍')
+      if (modelProbe.overflowY !== 'auto' && modelProbe.overflowY !== 'scroll') throw new Error('⑮ 模型列表 computed overflow-y 是 ' + modelProbe.overflowY + '，不是 auto/scroll，不拍')
+      if (modelProbe.tabIndex !== '0') throw new Error('⑮ 模型列表 tabindex 是 ' + modelProbe.tabIndex + '，键盘不可达，不拍')
+      if (modelProbe.role !== 'group') throw new Error('⑮ 模型列表 role 是 ' + modelProbe.role + '，不是 group，不拍')
+      if (typeof modelProbe.aria !== 'string' || modelProbe.aria.trim() === '') throw new Error('⑮ 模型列表没有 aria-label，不拍')
+      if (/undefined|NaN/.test(modelProbe.text)) throw new Error('⑮ 模型列表出现 undefined/NaN（' + modelProbe.text + '），不拍')
+      const firstRow = modelProbe.rows[0]
+      if (firstRow.id !== USAGE_COMPOSITION_FIRST_MODEL_ID) throw new Error('⑮ 模型列表首条是 ' + firstRow.id + '，期望 ' + USAGE_COMPOSITION_FIRST_MODEL_ID + '，不拍')
+      if (firstRow.tokens !== compactTokens(first15.totals.tokens, langKey)) throw new Error('⑮ 首条模型 tokens 是 ' + firstRow.tokens + '，期望 ' + compactTokens(first15.totals.tokens, langKey) + '，不拍')
+      const rowNeedles15 = [label15.input + ' ', label15.output + ' ', label15.cacheRead + ' ', label15.cacheWrite + ' ', '(' + percentText(USAGE_COMPOSITION_FIRST_MODEL_SHARES.input) + ')', '(' + percentText(USAGE_COMPOSITION_FIRST_MODEL_SHARES.output) + ')', '(' + percentText(USAGE_COMPOSITION_FIRST_MODEL_SHARES.cacheRead) + ')', (langKey === 'zh' ? '命中率 ' : 'hit rate ') + percentText(USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE)]
+      for (const needle of rowNeedles15) {
+        if (firstRow.splits.indexOf(needle) < 0) throw new Error('⑮ 首条模型的分项行缺「' + needle + '」（实际：' + firstRow.splits + '），不拍')
+      }
+      if (firstRow.splits.indexOf('(0%)') >= 0) throw new Error('⑮ 首条模型的缓存写入为 0 却印了 (0%)（' + firstRow.splits + '），不拍')
+      if (langKey === 'zh' && /\b(input|output|cacheRead|cacheWrite)\b/.test(modelProbe.text)) throw new Error('⑮ 中文界面模型行混了英文分项名（' + modelProbe.text + '），不拍')
+      if (langKey === 'en' && /\p{Script=Han}/u.test(modelProbe.text + splitProbe.text)) throw new Error('⑮ 英文界面模型行/总量卡混了中文，不拍')
+
+      // ③ 脚注：两条公式与「不是配额比例」必须在（脚注在折叠线下，只断言、不进图）。
+      const notesNeedle15 = langKey === 'zh' ? '不是配额比例' : 'not quota'
+      const formulaNeedle15 = langKey === 'zh' ? '缓存命中率 = 缓存命中' : 'cache hit rate = cache hit'
+      if (splitProbe.notesText.trim() === '') throw new Error('⑮ 屏上没有脚注文本（.tpq-usage-notes 为空），不拍')
+      if (splitProbe.notesText.indexOf(notesNeedle15) < 0) throw new Error('⑮ 脚注缺「' + notesNeedle15 + '」（实际：' + splitProbe.notesText + '），不拍')
+      if (splitProbe.notesText.indexOf(formulaNeedle15) < 0) throw new Error('⑮ 脚注缺命中率公式「' + formulaNeedle15 + '」（实际：' + splitProbe.notesText + '），不拍')
+      // 006 的来源脚注本身含「不折算 Credits」，所以按脚注剔除后再查：图里别处仍不许出现 Credits。
+      if (splitProbe.bodyCredits === true) throw new Error('⑮ 除脚注外整屏出现 Credits，不拍')
+
+      /*
+       * 取景：模型卡滚到可视区上半部（卡头 + 四行可见行 + 细滚动条同框）。
+       * 等一帧再量，避免平滑滚动还没停下就拍；卡必须完整落在视口内，否则滚动条会被裁掉。
+       */
+      const framed15 = await page.evaluate("(() => { const list = document.querySelector('[data-usage-models-scroll=\"1\"]'); if (list === null) return null; const section = list.closest('section'); if (section === null) return null; section.scrollIntoView({ block: 'center' }); let sc = section.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const before = section.getBoundingClientRect(); box.scrollTop = Math.max(0, box.scrollTop + Math.round(before.top - 120)); list.scrollTop = 0; return { top: Math.round(section.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
+      if (framed15 === null) throw new Error('⑮ 量不到「按模型用量」卡片的位置，不拍')
+      await sleep(350)
+      const frameState15 = await page.evaluate("(() => { const list = document.querySelector('[data-usage-models-scroll=\"1\"]'); if (list === null) return null; const section = list.closest('section'); if (section === null) return null; const r = section.getBoundingClientRect(); const lr = list.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), listTop: Math.round(lr.top), listBottom: Math.round(lr.bottom), listScrollTop: Math.round(list.scrollTop), vw: innerWidth, vh: innerHeight } })()")
+      if (frameState15 === null) throw new Error('⑮ 取景后找不到「按模型用量」卡片，不拍')
+      if (frameState15.top < 8 || frameState15.bottom > frameState15.vh - 8) throw new Error('⑮「按模型用量」卡片没有完整落在视口内（' + JSON.stringify(frameState15) + '），滚动条会被裁掉，不拍')
+      if (frameState15.listBottom - frameState15.listTop < 100) throw new Error('⑮ 模型列表在取景里只剩 ' + (frameState15.listBottom - frameState15.listTop) + 'px，滚动条证据不明显，不拍')
+
+      console.log('  ⑮ 7 天：' + modelProbe.count + ' 条模型；首条 ' + firstRow.id + ' 占比 ' + JSON.stringify(USAGE_COMPOSITION_FIRST_MODEL_SHARES) + ' / 命中率 ' + USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE + '%；总量卡命中率 ' + wantHit15 + '；列表 ' + modelProbe.scrollHeight + '/' + modelProbe.clientHeight + 'px（' + modelProbe.overflowY + '）；取景 ' + JSON.stringify(frameState15))
+      save('usage-composition-2d.png', await page.shot({}))
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

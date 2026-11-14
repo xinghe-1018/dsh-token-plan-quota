@@ -1375,11 +1375,85 @@ export const USAGE_CREDITS_CAPACITY_TOKENS = Math.round(USAGE_CREDITS_TOKENS_PER
 export const USAGE_CREDITS_SOURCE_LABEL = '官方 Credits × 官方 tokens（本账期实测）'
 export const USAGE_CREDITS_SOURCE_LABEL_EN = 'Official credits × official tokens (measured this cycle)'
 
+/* 015: ratio gains classes / modelsBasis / models (INTERFACE §2).
+ *
+ * The three class token counts MUST add up exactly to official tokens: that identity is the only
+ * self-check the screenshot can run that the breakdown was neither truncated nor double counted, so
+ * the numbers are written once here and re-derived by assertUsageCreditsFixture. tokens are back-
+ * solved from the per-Credit targets that reproduce INTERFACE §3.2 examples (zh 5.5万 / 1,977 / 274;
+ * en 55K / 2.0K / 274), cacheRead takes the remainder; perCredit stays tokens ÷ used, never truncated.
+ */
+export const USAGE_CREDITS_CLASS_OUTPUT_TOKENS = 10_191_945
+export const USAGE_CREDITS_CLASS_UNCACHED_TOKENS = 73_538_232
+export const USAGE_CREDITS_CLASS_CACHE_READ_TOKENS =
+  USAGE_CREDITS_OFFICIAL_TOKENS - USAGE_CREDITS_CLASS_OUTPUT_TOKENS - USAGE_CREDITS_CLASS_UNCACHED_TOKENS
+export const USAGE_CREDITS_MODELS_BASIS = 'local'
+
+/** perCredit = tokens ÷ used Credits (raw float; INTERFACE §2). */
+const creditsPerCredit = tokens => tokens / USAGE_CREDITS_USED
+
+export const USAGE_CREDITS_CLASSES = Object.freeze({
+  cacheRead: Object.freeze({
+    tokens: USAGE_CREDITS_CLASS_CACHE_READ_TOKENS,
+    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_CACHE_READ_TOKENS),
+  }),
+  uncachedInput: Object.freeze({
+    tokens: USAGE_CREDITS_CLASS_UNCACHED_TOKENS,
+    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_UNCACHED_TOKENS),
+  }),
+  output: Object.freeze({
+    tokens: USAGE_CREDITS_CLASS_OUTPUT_TOKENS,
+    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_OUTPUT_TOKENS),
+  }),
+})
+
+/**
+ * 015 §3.3 model rows (ratio.models): numerators come from the fixture own per-model data over
+ * 2026-11-01 .. 11-14 (the elapsed part of the cycle), scaled proportionally to the local total
+ * USAGE_CREDITS_LOCAL_TOKENS with the largest-remainder method (integer rows, exact sum).
+ *
+ * Why scale: the model block footnote says the rows add up to roughly the local total, while the
+ * fixture per-day model tokens are only millions and the local total is 2.08 billion - copying them
+ * raw would make the same block contradict itself. The shares come from the fixture own
+ * USAGE_MODEL_MIX, not from an invented distribution; calls scale by the same factor.
+ * tokensPerCredit = tokens ÷ used (same formula as classes; the host does not round).
+ */
+function buildUsageCreditsModels() {
+  const usage = makeUsageSnapshot({
+    now: Date.UTC(2026, 10, 14, 4, 0, 0),
+    from: USAGE_CREDITS_WINDOW.from,
+    to: USAGE_CREDITS_WINDOW.to,
+  })
+  const raw = usage.models.map(one => one.totals.tokens)
+  const sum = raw.reduce((total, value) => total + value, 0)
+  if (!(sum > 0)) throw new Error("no per-model data in the cycle window")
+  const exact = raw.map(value => (value / sum) * USAGE_CREDITS_LOCAL_TOKENS)
+  const tokens = exact.map(Math.floor)
+  const remainder = USAGE_CREDITS_LOCAL_TOKENS - tokens.reduce((total, value) => total + value, 0)
+  const byFraction = exact
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction)
+  for (let at = 0; at < remainder; at += 1) tokens[byFraction[at % tokens.length].index] += 1
+  const callsScale = USAGE_CREDITS_LOCAL_TOKENS / sum
+  return usage.models
+    .map((one, index) => ({
+      id: one.id,
+      provider: one.provider,
+      model: one.model,
+      tokens: tokens[index],
+      calls: Math.max(1, Math.round(one.totals.calls * callsScale)),
+      tokensPerCredit: creditsPerCredit(tokens[index]),
+    }))
+    .sort((a, b) => (b.tokens - a.tokens) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+export const USAGE_CREDITS_MODELS = Object.freeze(buildUsageCreditsModels())
+
 const USAGE_CREDITS_TOP_KEYS = ['generatedAt', 'available', 'window', 'credits', 'tokens', 'ratio', 'scope', 'source']
 const USAGE_CREDITS_WINDOW_KEYS = ['key', 'label', 'labelEn', 'from', 'to', 'resetAt', 'resetDay', 'cycleDays', 'elapsedDays']
 const USAGE_CREDITS_CREDITS_KEYS = ['unit', 'total', 'used', 'usedPercent']
 const USAGE_CREDITS_TOKENS_KEYS = ['official', 'local']
-const USAGE_CREDITS_RATIO_KEYS = ['tokensPerCredit', 'capacityTokens']
+const USAGE_CREDITS_RATIO_KEYS = ['tokensPerCredit', 'capacityTokens', 'classes', 'modelsBasis', 'models']
 const USAGE_CREDITS_SCOPE_KEYS = ['officialFrom', 'officialTo', 'officialDays', 'cached', 'clampedFrom']
 const USAGE_CREDITS_SOURCE_KEYS = ['kind', 'veracity', 'label', 'labelEn']
 
@@ -1404,6 +1478,13 @@ export function builtCredits(options = {}) {
     ratio: {
       tokensPerCredit: USAGE_CREDITS_TOKENS_PER_CREDIT,
       capacityTokens: USAGE_CREDITS_CAPACITY_TOKENS,
+      classes: {
+        cacheRead: { ...USAGE_CREDITS_CLASSES.cacheRead },
+        uncachedInput: { ...USAGE_CREDITS_CLASSES.uncachedInput },
+        output: { ...USAGE_CREDITS_CLASSES.output },
+      },
+      modelsBasis: USAGE_CREDITS_MODELS_BASIS,
+      models: USAGE_CREDITS_MODELS.map(one => ({ ...one })),
     },
     scope: {
       officialFrom: USAGE_CREDITS_WINDOW.from,
@@ -1474,6 +1555,32 @@ export function assertUsageCreditsFixture(credits, options = {}) {
   need('tokensPerCredit 是正有限数', Number.isFinite(ratio.tokensPerCredit) && ratio.tokensPerCredit > 0)
   need('capacityTokens = round(tokensPerCredit × total)', ratio.capacityTokens === Math.round(ratio.tokensPerCredit * cr.total))
   need('capacityTokens 是正有限整数', Number.isInteger(ratio.capacityTokens) && ratio.capacityTokens > 0)
+
+  const classes = ratio.classes
+  need("ratio 键集 = tokensPerCredit/capacityTokens/classes/modelsBasis/models", sameKeys(ratio, USAGE_CREDITS_RATIO_KEYS))
+  need("classes 键集 = cacheRead/uncachedInput/output", sameKeys(classes, ["cacheRead", "uncachedInput", "output"]))
+  for (const key of ["cacheRead", "uncachedInput", "output"]) {
+    const cell = classes[key]
+    need("classes." + key + " 键集 = tokens/perCredit", sameKeys(cell, ["tokens", "perCredit"]))
+    need("classes." + key + ".tokens 是非负整数", Number.isInteger(cell.tokens) && cell.tokens >= 0)
+    need("classes." + key + ".perCredit = tokens ÷ used（现算，不写截断值）", cell.perCredit === cell.tokens / cr.used)
+  }
+  need("classes 三类 tokens 相加 = 官方 tokens（没有截断也没有算重）", classes.cacheRead.tokens + classes.uncachedInput.tokens + classes.output.tokens === tk.official)
+  need("ratio.modelsBasis = local", ratio.modelsBasis === USAGE_CREDITS_MODELS_BASIS)
+
+  const modelRows = ratio.models
+  need("ratio.models 是非空数组", Array.isArray(modelRows) && modelRows.length > 0)
+  need("ratio.models 行数 = fixture 的按模型条数", modelRows.length === USAGE_CREDITS_MODELS.length)
+  modelRows.forEach((row, index) => {
+    need("models[" + index + "] 键集 = id/provider/model/tokens/calls/tokensPerCredit", sameKeys(row, ["id", "provider", "model", "tokens", "calls", "tokensPerCredit"]))
+    need("models[" + index + "].id = provider/model", row.id === row.provider + "/" + row.model)
+    need("models[" + index + "].tokens 是正有限整数", Number.isInteger(row.tokens) && row.tokens > 0)
+    need("models[" + index + "].calls 是非负整数", Number.isInteger(row.calls) && row.calls >= 0)
+    need("models[" + index + "].tokensPerCredit = tokens ÷ used（现算）", row.tokensPerCredit === row.tokens / cr.used)
+    if (index > 0) need("models 按 tokens 降序（第 " + index + " 行）", modelRows[index - 1].tokens >= row.tokens)
+  })
+  need("models 各行 tokens 相加 = tokens.local", modelRows.reduce((total, row) => total + row.tokens, 0) === tk.local)
+  need("models 与 fixture 常量逐行一致（展示串与断言同一个来源）", JSON.stringify(modelRows) === JSON.stringify(USAGE_CREDITS_MODELS))
 
   const scope = credits.scope
   need('scope 键集 = 5 个', sameKeys(scope, USAGE_CREDITS_SCOPE_KEYS))

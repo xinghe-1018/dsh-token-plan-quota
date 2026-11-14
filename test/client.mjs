@@ -1691,7 +1691,8 @@ function findChip(node) {
   // 010 增了 5 个月份键（Preset/Label/Apply/Bad/MonthTitle），129 → 134。
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [147, 147])
+  // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [151, 151])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -4874,7 +4875,7 @@ async function mountCreditsScreen(options = {}) {
     '按本账期实测比值，80000 Credits 约合 45.66亿 tokens（折算参考，非官方口径）')
   check('T014 口径脚注逐字（比值定义 + 混合口径均值）',
     collectText(findNodes(section, 'tpq-usage-credits-note')[0]).join(''),
-    '比值 = 官方账号 tokens ÷ 已用 Credits；已用 Credits = 官方额度 × 官方已用比例。它是本账期的混合口径均值，随模型与缓存命中率变化，不是固定兑换率。')
+    '比值 = 官方账号 tokens ÷ 已用 Credits；已用 Credits = 官方额度 × 官方已用比例。分项按官方口径拆成缓存命中 / 未命中输入 / 输出（官方 input 含缓存命中，这里相减后单列），三者相加等于官方 tokens。它是本账期的混合口径均值，随模型与缓存命中率变化，不是固定兑换率。')
   check('T014 就绪态不给重试按钮', nodesWithProp(section, 'data-usage-credits-retry').length, 0)
   ok('T014 就绪态不带 unavailable / error 钩子',
     nodesWithProp(section, 'data-usage-credits-unavailable').length === 0
@@ -5065,6 +5066,186 @@ async function mountCreditsScreen(options = {}) {
   resetHooks()
   const tree = await settle(bundle.renderUsage, 5)
   check('T014 本机数据错误态不渲染换算块（错误态独占整屏）', creditsSectionOf(tree), undefined)
+}
+
+/* ===== 015 分项比值 + 按模型比值（INTERFACE §3.1-§3.4）=====
+ * 数据形状照契约 §2：ratio.classes 三类官方口径、ratio.models 本机口径（已按 tokens 降序）。
+ * 这里不重复 014 的五行业务断言，只在「新旧同屏」时确认五行没被挤掉。 */
+function makeCreditsBreakdownSnapshot(overrides = {}) {
+  const ratio = {
+    tokensPerCredit: 57072.3,
+    capacityTokens: 4565784000,
+    classes: {
+      uncachedInput: { tokens: 73542478, perCredit: 1977.11 },
+      cacheRead: { tokens: 2039167232, perCredit: 54820.92 },
+      output: { tokens: 10209160, perCredit: 274.46 },
+    },
+    modelsBasis: 'local',
+    models: [
+      { id: 'qwen3-max-2026-09-01', provider: 'qwen', model: 'qwen3-max', tokens: 1313000000, calls: 1200, tokensPerCredit: 35305.2 },
+      { id: 'deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', tokens: 350000000, calls: 800, tokensPerCredit: 9411.9 },
+      { id: 'qwen3-coder', provider: 'qwen', model: 'qwen3-coder', tokens: 12000000, calls: 40, tokensPerCredit: 322.6 },
+    ],
+  }
+  return makeCreditsSnapshot({ ratio: { ...ratio, ...(overrides.ratio ?? {}) } })
+}
+
+async function mountBreakdown(credits, options = {}) {
+  return mountCreditsScreen({ ...options, credits: { body: credits } })
+}
+
+/* ① 静态契约：钩子、__internals、CSS 五件、渲染段无百分比字面量。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T015 __internals 暴露分项行与模型块纯函数',
+    typeof internals.usageCreditsClassesLine === 'function'
+    && typeof internals.usageCreditsModelsBlock === 'function')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T015 三个 data 钩子与 data-model 落地',
+    source.includes('"data-usage-credits-classes": "1"')
+    && source.includes('"data-usage-credits-models": "1"')
+    && source.includes('"data-usage-credits-model": "1"')
+    && source.includes('"data-model": id'))
+  ok('T015 COPY 四个新键 + 改写脚注都带分项口径',
+    source.includes('usageCreditsClasses: "每 Credit 的分项（tokens）："')
+    && source.includes('usageCreditsClassUncached: "未命中输入"')
+    && source.includes('usageCreditsModelsTitle: "每个模型各自的比值"')
+    && source.includes('usageCreditsModelsNote: "模型行 = 本机该模型 tokens')
+    && source.includes('分项按官方口径拆成缓存命中 / 未命中输入 / 输出'))
+  const cssStart = source.indexOf('.tpq-usage-credits-classes{')
+  const cssEnd = source.indexOf('@media (max-width:520px)', cssStart)
+  const creditsCss = cssStart >= 0 && cssEnd > cssStart ? source.slice(cssStart, cssEnd) : ''
+  ok('T015 CSS 分项行 12px 弱化色',
+    /\.tpq-usage-credits-classes\{[^}]*font-size:12px;[\s\S]{0,160}label-secondary/.test(creditsCss))
+  ok('T015 CSS 模型块定高内滚（252px / auto / contain / thin / scrollbar-color）',
+    /\.tpq-usage-credits-models\{[^}]*max-height:252px;[\s\S]{0,120}overflow-y:auto;[\s\S]{0,160}overscroll-behavior:contain;[\s\S]{0,160}scrollbar-width:thin;[\s\S]{0,200}scrollbar-color:var\(--dsw-alias-border-l2/.test(creditsCss))
+  ok('T015 CSS 细滚动条 8px + thumb 圆角 + 焦点环',
+    creditsCss.includes('.tpq-usage-credits-models::-webkit-scrollbar{width:8px}')
+    && /\.tpq-usage-credits-models::-webkit-scrollbar-thumb\{[^}]*border-radius:4px/.test(creditsCss)
+    && /\.tpq-usage-credits-models:focus-visible\{[^}]*outline:2px solid/.test(creditsCss))
+  ok('T015 CSS 标题 12.5px / 行 flex gap 8px / name 省略 / 数字 nowrap+tabular / 脚注 10.5px',
+    /\.tpq-usage-credits-models-title\{[^}]*margin:0 0 4px;[^}]*font-size:12.5px/.test(creditsCss)
+    && /\.tpq-usage-credits-model\{[^}]*display:flex;gap:8px;align-items:baseline/.test(creditsCss)
+    && /\.tpq-usage-credits-model-name\{[^}]*overflow:hidden;text-overflow:ellipsis;[\s\S]{0,80}white-space:nowrap/.test(creditsCss)
+    && /\.tpq-usage-credits-model-tokens,\.tpq-usage-credits-model-ratio\{[^}]*white-space:nowrap;[\s\S]{0,120}tabular-nums/.test(creditsCss)
+    && /\.tpq-usage-credits-models-note\{[^}]*font-size:10.5px/.test(creditsCss))
+  const fnStart = source.indexOf('function usageCreditsClassesLine')
+  const fnEnd = source.indexOf('function usageCreditsSection')
+  const fnRegion = fnStart >= 0 && fnEnd > fnStart ? source.slice(fnStart, fnEnd) : ''
+  const codeOnly = fnRegion.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  ok('T015 两个渲染函数里没有百分比字面量', codeOnly !== '' && !codeOnly.includes('%'), codeOnly.slice(0, 200))
+}
+
+/* ② 中文就绪态：分项行逐字、模型块结构/顺序/三 span、与 014 五行同屏。 */
+{
+  const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot())
+  const section = creditsSectionOf(tree)
+  const classesLine = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  ok('T015 zh 分项行存在且 class 正确',
+    classesLine !== undefined && String(classesLine.props.className).includes('tpq-usage-credits-classes'))
+  check('T015 zh 分项行逐字（formatTokens 口径：5.5万 / 1,977 / 274.46）',
+    collectText(classesLine).join(''),
+    '每 Credit 的分项（tokens）：缓存命中 5.5万 · 未命中输入 1,977 · 输出 274.46')
+  ok('T015 zh 分项行不出现百分比', !collectText(classesLine).join('').includes('%'))
+  const modelsBlock = nodesWithProp(section, 'data-usage-credits-models')[0]
+  ok('T015 zh 模型块存在', modelsBlock !== undefined)
+  check('T015 模型块 tabIndex / role / aria-label',
+    [modelsBlock.props.tabIndex, modelsBlock.props.role, modelsBlock.props['aria-label']],
+    [0, 'group', '每个模型各自的比值'])
+  check('T015 模型块标题逐字', collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-title')[0]).join(''), '每个模型各自的比值')
+  check('T015 模型块脚注逐字',
+    collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-note')[0]).join(''),
+    '模型行 = 本机该模型 tokens ÷ 本账期已用 Credits（官方不按模型拆分，这是贡献值）；各行相加约等于本机总量，与账号级官方总量有少量差额。')
+  const rows = findNodes(modelsBlock, 'tpq-usage-credits-model')
+  check('T015 模型行数不截断（三条入参 → 三行）', rows.length, 3)
+  check('T015 模型行顺序严格照宿主（降序，不重排）',
+    rows.map((row) => row.props['data-model']),
+    ['qwen3-max-2026-09-01', 'deepseek-v4.1', 'qwen3-coder'])
+  ok('T015 模型行不带 role', rows.every((row) => row.props.role === undefined))
+  const firstRow = rows[0]
+  check('T015 首行三 span 文本（name / tokens / ratio）',
+    [collectText(findNodes(firstRow, 'tpq-usage-credits-model-name')[0]).join(''),
+      collectText(findNodes(firstRow, 'tpq-usage-credits-model-tokens')[0]).join(''),
+      collectText(findNodes(firstRow, 'tpq-usage-credits-model-ratio')[0]).join('')],
+    ['qwen3-max-2026-09-01', '13.13亿 tokens', '1 Credit ≈ 3.5万 tokens'])
+  check('T015 name span 的 title 是 id 全名',
+    findNodes(firstRow, 'tpq-usage-credits-model-name')[0].props.title, 'qwen3-max-2026-09-01')
+  check('T015 第二行 tokens / ratio（3.50亿 / 9,412）',
+    [collectText(findNodes(rows[1], 'tpq-usage-credits-model-tokens')[0]).join(''),
+      collectText(findNodes(rows[1], 'tpq-usage-credits-model-ratio')[0]).join('')],
+    ['3.50亿 tokens', '1 Credit ≈ 9,412 tokens'])
+  check('T015 第三行 tokens / ratio（1200.0万 / 322.6）',
+    [collectText(findNodes(rows[2], 'tpq-usage-credits-model-tokens')[0]).join(''),
+      collectText(findNodes(rows[2], 'tpq-usage-credits-model-ratio')[0]).join('')],
+    ['1200.0万 tokens', '1 Credit ≈ 322.6 tokens'])
+  const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
+  check('T015 块内顺序：detail → classes → estimate → models → note',
+    seq,
+    ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
+      'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
+      'tpq-usage-credits-models', 'tpq-usage-credits-note'])
+  check('T015 014 总量比值行未变', collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+  ok('T015 014 五行仍在（ratio/window/detail/estimate/note）',
+    ['data-usage-credits-ratio', 'data-usage-credits-window', 'data-usage-credits-detail',
+      'data-usage-credits-estimate'].every((attr) => nodesWithProp(section, attr).length === 1)
+    && findNodes(section, 'tpq-usage-credits-note').length === 1)
+}
+
+/* ③ 英文就绪态：逐字、无汉字/万/亿。 */
+{
+  const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot(), { lang: 'en-US' })
+  const section = creditsSectionOf(tree)
+  check('T015 en 分项行逐字（55K / 2.0K / 274.46）',
+    collectText(nodesWithProp(section, 'data-usage-credits-classes')[0]).join(''),
+    'Per credit by class (tokens): cache hit 55K · uncached input 2.0K · output 274.46')
+  const modelsBlock = nodesWithProp(section, 'data-usage-credits-models')[0]
+  check('T015 en 模型块 aria-label 用英文标题',
+    [modelsBlock.props['aria-label'], collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-title')[0]).join('')],
+    ['Ratio per model', 'Ratio per model'])
+  const rows = findNodes(modelsBlock, 'tpq-usage-credits-model')
+  check('T015 en 首行 tokens / ratio',
+    [collectText(findNodes(rows[0], 'tpq-usage-credits-model-tokens')[0]).join(''),
+      collectText(findNodes(rows[0], 'tpq-usage-credits-model-ratio')[0]).join('')],
+    ['1.31B tokens', '1 credit ≈ 35K tokens'])
+  ok('T015 en 模型块没有汉字与万/亿',
+    !/[\u3400-\u9fff]|万|亿/.test(collectText(modelsBlock).join('')), collectText(modelsBlock).join(''))
+  ok('T015 en 脚注写清 official 不按模型拆分', /not split by model/.test(collectText(modelsBlock).join('')))
+}
+
+/* ④ 降级矩阵：缺字段/空数组/非有限一律整块不渲染，且不抛错。 */
+{
+  const cases = [
+    ['014 旧形状无 classes/models', makeCreditsSnapshot(), 0, 0],
+    ['classes 非对象', makeCreditsBreakdownSnapshot({ ratio: { classes: 'nope' } }), 0, 1],
+    ['classes 缺 output', makeCreditsBreakdownSnapshot({ ratio: { classes: { cacheRead: { perCredit: 1 }, uncachedInput: { perCredit: 2 } } } }), 0, 1],
+    ['classes 的 perCredit 非有限', makeCreditsBreakdownSnapshot({ ratio: { classes: { cacheRead: { perCredit: 1 }, uncachedInput: { perCredit: 2 }, output: { perCredit: NaN } } } }), 0, 1],
+    ['models 空数组', makeCreditsBreakdownSnapshot({ ratio: { models: [] } }), 1, 0],
+    ['models 非数组', makeCreditsBreakdownSnapshot({ ratio: { models: 'nope' } }), 1, 0],
+    ['models 全无有限 perCredit', makeCreditsBreakdownSnapshot({ ratio: { models: [{ id: 'a', tokens: 10, tokensPerCredit: NaN }] } }), 1, 0],
+    ['classes 与 models 都没有（但 ratio 还在）', makeCreditsBreakdownSnapshot({ ratio: { classes: undefined, models: undefined } }), 0, 0],
+  ]
+  for (const [label, credits, expectedClasses, expectedModels] of cases) {
+    const { tree } = await mountBreakdown(credits)
+    const section = creditsSectionOf(tree)
+    check('T015 降级 ' + label + '：分项行数量', nodesWithProp(section, 'data-usage-credits-classes').length, expectedClasses)
+    check('T015 降级 ' + label + '：模型块数量', nodesWithProp(section, 'data-usage-credits-models').length, expectedModels)
+    check('T015 降级 ' + label + '：014 比值行仍在', nodesWithProp(section, 'data-usage-credits-ratio').length, 1)
+  }
+}
+
+/* ⑤ 模型行只收能算的：混合入参下跳过非有限行，顺序仍是宿主顺序。 */
+{
+  const models = [
+    { id: 'small-first', tokens: 100, tokensPerCredit: 2.5 },
+    { id: 'broken', tokens: 900, tokensPerCredit: undefined },
+    { id: 'big-second', tokens: 10000, tokensPerCredit: 250 },
+  ]
+  const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot({ ratio: { models } }))
+  const rows = findNodes(creditsSectionOf(tree), 'tpq-usage-credits-model')
+  check('T015 混合入参：跳过非有限行且保持宿主顺序',
+    rows.map((row) => row.props['data-model']), ['small-first', 'big-second'])
+  check('T015 混合入参：行数', rows.length, 2)
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

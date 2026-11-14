@@ -1029,9 +1029,10 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf011 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
-  // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 147；011 本身不加键）',
-    zhKeys011.length === 147 && enKeys011.length === 147)
+  // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
+  // 015 再补 4 个分项/按模型键（→ 151）。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 151；011 本身不加键）',
+    zhKeys011.length === 151 && enKeys011.length === 151)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
@@ -1102,9 +1103,10 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf012 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
-  // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147。
-  ok('012 i18n：COPY 现在 zh / en 各 147 键（012 的 4 键 + 014 的 9 键都在里面）',
-    zhKeys012.length === 147 && enKeys012.length === 147)
+  // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
+  // 015 再补 4 个分项/按模型键 → 151。
+  ok('012 i18n：COPY 现在 zh / en 各 151 键（012/014/015 的新键都在里面）',
+    zhKeys012.length === 151 && enKeys012.length === 151)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1420,13 +1422,15 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf014 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys014 = keysOf014(zhBlock014?.[1] ?? '')
   const enKeys014 = keysOf014(enBlock014?.[1] ?? '')
-  ok('014 i18n：COPY 键数升到 zh / en 各 147（138 + 9）',
-    zhKeys014.length === 147 && enKeys014.length === 147)
+  ok('014 i18n：COPY 键数不小于 zh / en 各 147（138 + 9；015 起实际 151）',
+    zhKeys014.length >= 147 && enKeys014.length >= 147)
   const creditsKeys = ['usageCreditsTitle', 'usageCreditsRatio', 'usageCreditsWindow', 'usageCreditsDetail',
     'usageCreditsEstimate', 'usageCreditsNote', 'usageCreditsLoading', 'usageCreditsUnavailable', 'usageCreditsRetry']
   ok('014 i18n：9 个换算键中英都在', creditsKeys.every(key => zhKeys014.includes(key) && enKeys014.includes(key)))
-  const zhLines014 = (zhBlock014?.[1] ?? '').split('\n').filter(line => /^ {8}usageCredits/.test(line))
-  const enLines014 = (enBlock014?.[1] ?? '').split('\n').filter(line => /^ {8}usageCredits/.test(line))
+  // 只取 014 自己的 9 个键：015 又加了 4 个 usageCredits* 键，正则前缀会把它们一起捞进来。
+  const isCreditsKey014 = line => creditsKeys.some(key => line.startsWith('        ' + key + ':'))
+  const zhLines014 = (zhBlock014?.[1] ?? '').split('\n').filter(isCreditsKey014)
+  const enLines014 = (enBlock014?.[1] ?? '').split('\n').filter(isCreditsKey014)
   // 比值那行的中文字面量按契约就是 "1 Credit ≈ {tokens} tokens"（量纲只写英文），其余 8 行必须有汉字。
   const zhRatioLine014 = zhLines014.filter(line => /^ {8}usageCreditsRatio:/.test(line))
   const zhOtherLines014 = zhLines014.filter(line => !/^ {8}usageCreditsRatio:/.test(line))
@@ -1467,6 +1471,125 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('014 截图清单：中英换算图都在',
     shotsManifest014.includes('docs/images/usage-credits-2d.png')
       && shotsManifest014.includes('docs/images/en/usage-credits-2d.png'))
+}
+/* Credits 换算细分（specs/015）：两条最容易「假精确」的路——
+ * 拿本机 tokens 当分母去拆每个模型的 Credits（每行比值恒等于总比值，假精确），
+ * 把官方 input（含缓存命中）当未命中输入（分项相加会超过官方 tokens）。
+ * 这里把「分项只取官方三类、模型行是贡献口径、缺数据整块不渲染」钉住。 */
+{
+  const src = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const indexSrc015 = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+
+  // 1) 宿主：两个纯函数必须可直接调，且分项按官方口径相减。
+  for (const name of ['creditsClassRatios', 'creditsModelRatios']) {
+    ok('015 宿主：__internals 暴露 ' + name, typeof __internals[name] === 'function')
+  }
+  const classStart = indexSrc015.indexOf('function creditsClassRatios')
+  const classEnd = indexSrc015.indexOf('function creditsModelRatios')
+  ok('015 宿主：creditsClassRatios 可定位', classStart > 0 && classEnd > classStart)
+  const classRegion = classStart > 0 && classEnd > classStart ? indexSrc015.slice(classStart, classEnd) : ''
+  ok('015 宿主：未命中输入 = 官方 input - 官方 cacheRead 并夹 0',
+    classRegion.includes('const uncachedInput = Math.max(0, input - cacheRead)'))
+  ok('015 宿主：三个分项比值都不取整（round / floor / ceil / toFixed 全无）',
+    classRegion !== '' && !classRegion.includes('Math.round') && !classRegion.includes('Math.floor')
+      && !classRegion.includes('Math.ceil') && !classRegion.includes('toFixed('))
+  ok('015 宿主：used 无效时返回 null（不拿全 0 对象冒充读数）',
+    classRegion.includes('if (u === undefined || u <= 0) return null'))
+  const modelStart = indexSrc015.indexOf('function creditsModelRatios')
+  const modelEnd = indexSrc015.indexOf('const CREDITS_UNAVAILABLE_HINTS')
+  ok('015 宿主：creditsModelRatios 可定位', modelStart > 0 && modelEnd > modelStart)
+  const modelRegion = modelStart > 0 && modelEnd > modelStart ? indexSrc015.slice(modelStart, modelEnd) : ''
+  ok('015 宿主：模型行只收 tokens > 0 的模型（0 token 行不占位）',
+    modelRegion.includes('tokens <= 0') && modelRegion.includes('continue'))
+  ok('015 宿主：模型行保持 aggregate 顺序且不取整',
+    modelRegion !== '' && !modelRegion.includes('.sort(') && !modelRegion.includes('.reverse(')
+      && !modelRegion.includes('Math.round') && !modelRegion.includes('toFixed('))
+  ok('015 宿主：classes 取官方 totals、models 取本机 models，并标 modelsBasis local',
+    indexSrc015.includes('classes: creditsClassRatios(official.totals')
+      && indexSrc015.includes('models: creditsModelRatios(localTotals?.models')
+      && indexSrc015.includes("modelsBasis: 'local'"))
+  ok('015 宿主：官方明细没有模型维度时 modelsBasis 仍是 local（不伪装成官方拆分）',
+    indexSrc015.includes('官方不按模型拆'))
+
+  // 2) 客户端：两块渲染的闸门是纯函数，降级矩阵能直接打，不必起真实取数。
+  ok('015 客户端：两块渲染函数都是纯函数并进 __internals',
+    src.includes('function usageCreditsClassesLine(') && src.includes('function usageCreditsModelsBlock(')
+      && src.includes('usageCreditsClassesLine, usageCreditsModelsBlock,'))
+  for (const hook of ['"data-usage-credits-classes": "1"', '"data-usage-credits-models": "1"',
+    '"data-usage-credits-model": "1"', '"data-model": id', 'role: "group"',
+    '"aria-label": copy.usageCreditsModelsTitle']) {
+    ok('015 客户端：钩子 ' + hook + ' 存在', src.includes(hook))
+  }
+  const blocksStart = src.indexOf('function usageCreditsClassesLine')
+  const blocksEnd = src.indexOf('function usageCreditsSection')
+  ok('015 客户端：分项行与模型块可定位', blocksStart > 0 && blocksEnd > blocksStart)
+  const blocksRegion = blocksStart > 0 && blocksEnd > blocksStart ? src.slice(blocksStart, blocksEnd) : ''
+  const stripComments015 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  const blocksCode = blocksRegion !== '' ? stripComments015(blocksRegion) : ''
+  ok('015 客户端：两块渲染里没有 % 字面量（百分比仍只由 usagePercentText 产出）',
+    blocksCode !== '' && !blocksCode.includes('"%"') && !blocksCode.includes("'%'"))
+  ok('015 客户端：分项三缺一就整行不渲染（半个分项比整行更误导）',
+    blocksCode.includes('cacheRead === null || uncachedInput === null || output === null'))
+  ok('015 客户端：模型行复用总比值的模板（同一口径文案，不另写一句）',
+    blocksCode.includes('copy.usageCreditsRatio.replace("{tokens}"'))
+  ok('015 客户端：模型行按宿主顺序渲染（不 sort / reverse）',
+    blocksCode !== '' && !blocksCode.includes('.sort(') && !blocksCode.includes('.reverse('))
+
+  // 3) i18n：4 个新键 + 脚注改写，中英都要说清白「这是个贡献口径」。
+  const zhBlock015 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src)
+  const enBlock015 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src)
+  const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
+  const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
+  ok('015 i18n：COPY 键数升到 zh / en 各 151（147 + 4）',
+    zhKeys015.length === 151 && enKeys015.length === 151)
+  const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
+    'usageCreditsModelsNote']
+  ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
+  const zhLines015 = (zhBlock015?.[1] ?? '').split('\n')
+    .filter(line => classKeys015.some(key => line.startsWith('        ' + key + ':')))
+  const enLines015 = (enBlock015?.[1] ?? '').split('\n')
+    .filter(line => classKeys015.some(key => line.startsWith('        ' + key + ':')))
+  ok('015 i18n：中文 4 行都有汉字', zhLines015.length === 4 && zhLines015.every(line => /[\u3400-\u9fff]/u.test(line)))
+  ok('015 i18n：英文 4 行都没有汉字', enLines015.length === 4 && enLines015.every(line => !/[\u3400-\u9fff]/u.test(line)))
+  ok('015 i18n：脚注写明官方 input 含缓存命中、三者相加等于官方 tokens',
+    src.includes('官方 input 含缓存命中') && src.includes('三者相加等于官方 tokens'))
+  ok('015 i18n：模型脚注写明官方不按模型拆分（贡献口径）',
+    src.includes('官方不按模型拆分') && /not split by model/i.test(src))
+
+  // 4) CSS：模型块定高内滚 + 焦点环 + 细滚动条，与 012 的模型卡同一套变量。
+  ok('015 CSS：模型块 252px 内滚（thin + contain）',
+    /\.tpq-usage-credits-models\{[^}]*max-height:252px[^}]*overflow-y:auto/.test(src)
+      && /\.tpq-usage-credits-models\{[^}]*scrollbar-width:thin/.test(src)
+      && /\.tpq-usage-credits-models\{[^}]*overscroll-behavior:contain/.test(src))
+  ok('015 CSS：焦点环与 8px 细滚动条都在（键盘也能滚这块）',
+    /\.tpq-usage-credits-models:focus-visible\{[^}]*outline/.test(src)
+      && /\.tpq-usage-credits-models::-webkit-scrollbar\{[^}]*width:8px/.test(src))
+  ok('015 CSS：分项行与模型脚注挂既有文字色变量（不自造颜色）',
+    /\.tpq-usage-credits-classes\{[^}]*--dsw-alias-label-secondary/.test(src)
+      && /\.tpq-usage-credits-models-note\{[^}]*--dsw-alias-label-tertiary/.test(src))
+
+  // 5) 越界面：015 不加配置键、不加出站主机。
+  ok('015 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('015 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8
+      && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+  // 6) 文档与规格：口径必须写进对外描述，否则下一个人会把「贡献值」读成官方单价。
+  const readme015 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn015 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('015 文档：中文 README 写了分项比值与按模型比值',
+    readme015.includes('每个模型各自的比值') && readme015.includes('未命中输入')
+      && readme015.includes('usage-credits'))
+  ok('015 文档：英文 README 写了按模型比值与未命中输入',
+    readmeEn015.includes('Per-model ratio') && readmeEn015.includes('uncached input'))
+  const changelog015 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('015 CHANGELOG：Unreleased 段记了 015 与分项/按模型比值',
+    /## \[Unreleased\]/.test(changelog015) && changelog015.includes('015')
+      && changelog015.includes('每个模型') && changelog015.includes('分项'))
+  ok('015 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '015-credits-ratio-breakdown', name))))
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

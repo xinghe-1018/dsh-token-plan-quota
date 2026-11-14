@@ -42,7 +42,8 @@ const {
   decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature,
   ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
   buildUsageSnapshot, runUsageSync,
-  buildOfficialUsageSnapshot, buildCreditsTokenSnapshot, creditsCycleOf, creditsTokenRatioOf, composeCreditsToken,
+  buildOfficialUsageSnapshot, buildCreditsTokenSnapshot, creditsCycleOf, creditsTokenRatioOf,
+  creditsClassRatios, creditsModelRatios, composeCreditsToken,
   resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
   sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
   officialChunkRequest, officialEarliestDayKey, officialErrorHint, DECLARED_HOSTS,
@@ -3527,6 +3528,152 @@ function recursiveKeys(value, out = []) {
       notFound.status === 404 && notFound.json.routes.includes('usage-credits'), true)
     ok('014 __internals：buildCreditsTokenSnapshot 可调', typeof buildCreditsTokenSnapshot === 'function')
   }
+}
+
+// ---------------------------------------------------------------------------
+// 015：Credits 比值的官方分项 + 本机按模型贡献。纯函数断言；不联网、不读真实 ~/.dsh。
+// ---------------------------------------------------------------------------
+{
+  const NOW = new Date(2026, 10, 14, 12, 0, 0).getTime()
+  const USED = 37196.8802
+  const OFFICIAL_TOTALS = {
+    tokens: 2122918870,
+    input: 2112709710,
+    cacheRead: 2039167232,
+    output: 10209160,
+  }
+  const CARD = {
+    id: 'token-plan-console',
+    label: '千问控制台',
+    unit: 'Credits',
+    total: 80000,
+    used: USED,
+    usedPercent: 46.4961,
+    meters: [{
+      key: 'monthly', label: '本月', labelEn: 'Monthly', unit: 'Credits',
+      total: 80000, used: USED, usedPercent: 46.4961,
+      resetAt: new Date(2026, 11, 1, 0, 0, 0).getTime(),
+    }],
+  }
+  const officialFull = {
+    generatedAt: NOW,
+    range: { kind: 'custom', days: 14, from: '2026-11-01', to: '2026-11-14' },
+    granularity: 'day',
+    totals: OFFICIAL_TOTALS,
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+  }
+
+  // 官方 input 含 cacheRead：未命中输入 = input - cacheRead，三类相加必须精确回到官方总量。
+  const classes = creditsClassRatios(OFFICIAL_TOTALS, USED)
+  check('015 creditsClassRatios：三类 tokens（未命中已减缓存命中）',
+    [classes.uncachedInput.tokens, classes.cacheRead.tokens, classes.output.tokens],
+    [73542478, 2039167232, 10209160])
+  ok('015 creditsClassRatios：三类 perCredit 实测值',
+    Math.abs(classes.uncachedInput.perCredit - 1977.11) < 0.01
+      && Math.abs(classes.cacheRead.perCredit - 54820.92) < 0.01
+      && Math.abs(classes.output.perCredit - 274.46) < 0.01)
+  check('015 creditsClassRatios：三类 tokens 之和等于官方 tokens',
+    classes.uncachedInput.tokens + classes.cacheRead.tokens + classes.output.tokens,
+    OFFICIAL_TOTALS.tokens)
+  ok('015 creditsClassRatios：perCredit 保留原始浮点（不取整）',
+    classes.cacheRead.perCredit % 1 !== 0 && classes.output.perCredit % 1 !== 0)
+
+  const clamped = creditsClassRatios({ input: 100, cacheRead: 300, output: 10 }, 10)
+  check('015 creditsClassRatios：cacheRead > input 时未命中夹到 0',
+    [clamped.uncachedInput.tokens, clamped.uncachedInput.perCredit,
+      clamped.cacheRead.tokens, clamped.cacheRead.perCredit,
+      clamped.output.tokens, clamped.output.perCredit],
+    [0, 0, 300, 30, 10, 1])
+
+  const missing = creditsClassRatios({ input: 1000 }, 10)
+  check('015 creditsClassRatios：缺 cacheRead / output 按 0',
+    [missing.uncachedInput.tokens, missing.cacheRead.tokens, missing.output.tokens,
+      missing.uncachedInput.perCredit, missing.cacheRead.perCredit, missing.output.perCredit],
+    [1000, 0, 0, 100, 0, 0])
+
+  const noTotals = creditsClassRatios(undefined, 10)
+  check('015 creditsClassRatios：官方 totals 缺失 → 全 0',
+    [noTotals.uncachedInput.tokens, noTotals.cacheRead.tokens, noTotals.output.tokens], [0, 0, 0])
+
+  check('015 creditsClassRatios：used<=0 / 非有限 → null',
+    [creditsClassRatios(OFFICIAL_TOTALS, 0), creditsClassRatios(OFFICIAL_TOTALS, -1),
+      creditsClassRatios(OFFICIAL_TOTALS, undefined), creditsClassRatios(OFFICIAL_TOTALS, NaN)],
+    [null, null, null, null])
+
+  // 模型行：分子本机、分母账号级 → 只保留 tokens>0，保持入参降序，不重排。
+  const localModels = [
+    { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { tokens: 1200, calls: 4 } },
+    { id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', totals: { tokens: 300, calls: 2 } },
+    { id: 'zero/model', provider: 'zero', model: 'model', totals: { tokens: 0, calls: 9 } },
+    { id: 'bad/model', provider: 'bad', model: 'model', totals: { tokens: NaN, calls: 1 } },
+    { id: 'no/totals', provider: 'no', model: 'totals' },
+  ]
+  const modelRatios = creditsModelRatios(localModels, 100)
+  check('015 creditsModelRatios：只收 tokens>0 且保持降序',
+    modelRatios.map(item => item.id), ['qwen/qwen3-max', 'deepseek/deepseek-v4.1'])
+  check('015 creditsModelRatios：行字段完整', modelRatios[0],
+    { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', tokens: 1200, calls: 4, tokensPerCredit: 12 })
+  check('015 creditsModelRatios：tokensPerCredit = tokens / used',
+    [modelRatios[1].tokens, modelRatios[1].calls, modelRatios[1].tokensPerCredit], [300, 2, 3])
+  check('015 creditsModelRatios：非数组 / 空数组 → []',
+    [creditsModelRatios(null, 100), creditsModelRatios({}, 100), creditsModelRatios([], 100)], [[], [], []])
+  check('015 creditsModelRatios：used<=0 → []',
+    [creditsModelRatios(localModels, 0), creditsModelRatios(localModels, -1), creditsModelRatios(localModels, undefined)],
+    [[], [], []])
+  check('015 creditsModelRatios：全 0 tokens → []',
+    creditsModelRatios([{ id: 'zero/model', provider: 'zero', model: 'model', totals: { tokens: 0, calls: 1 } }], 100), [])
+
+  // 组合：官方分项照给；模型行只在有本机读数时出现，缺了就 []（不是 null）。
+  const localFull = {
+    totals: { tokens: 2080883520 },
+    models: [
+      { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { tokens: 1000000, calls: 3 } },
+      { id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', totals: { tokens: 500000, calls: 2 } },
+    ],
+  }
+  const composed = composeCreditsToken({ card: CARD, official: officialFull, localTotals: localFull, now: NOW })
+  check('015 compose：ratio.classes 三类 tokens',
+    [composed.ratio.classes.uncachedInput.tokens, composed.ratio.classes.cacheRead.tokens,
+      composed.ratio.classes.output.tokens],
+    [73542478, 2039167232, 10209160])
+  ok('015 compose：ratio.classes 三类 perCredit 与纯函数一致',
+    Math.abs(composed.ratio.classes.uncachedInput.perCredit - classes.uncachedInput.perCredit) < 1e-9
+      && Math.abs(composed.ratio.classes.cacheRead.perCredit - classes.cacheRead.perCredit) < 1e-9
+      && Math.abs(composed.ratio.classes.output.perCredit - classes.output.perCredit) < 1e-9)
+  check('015 compose：ratio.modelsBasis 固定 local', composed.ratio.modelsBasis, 'local')
+  check('015 compose：ratio.models 本机两行且保序',
+    composed.ratio.models.map(item => [item.id, item.tokens, item.calls, item.tokensPerCredit]),
+    [['qwen/qwen3-max', 1000000, 3, 1000000 / USED], ['deepseek/deepseek-v4.1', 500000, 2, 500000 / USED]])
+  ok('015 compose：014 的 ratio 旧字段不回归',
+    Math.abs(composed.ratio.tokensPerCredit - 57072) < 1
+      && composed.ratio.capacityTokens === Math.round(composed.ratio.tokensPerCredit * 80000))
+  check('015 compose：014 的 tokens.local 仍为本机总量',
+    [composed.tokens.official, composed.tokens.local], [OFFICIAL_TOTALS.tokens, 2080883520])
+
+  const noLocal = composeCreditsToken({ card: CARD, official: officialFull, localTotals: null, now: NOW })
+  check('015 compose：本机读数缺失 → models: []', noLocal.ratio.models, [])
+  check('015 compose：本机读数缺失不影响 classes',
+    [noLocal.ratio.classes.uncachedInput.tokens, noLocal.ratio.classes.cacheRead.tokens, noLocal.ratio.classes.output.tokens],
+    [73542478, 2039167232, 10209160])
+  check('015 compose：本机读数缺失仍 tokens.local=null', noLocal.tokens.local, null)
+
+  const emptyLocal = composeCreditsToken({
+    card: CARD, official: officialFull, localTotals: { totals: { tokens: 0 }, models: [] }, now: NOW,
+  })
+  check('015 compose：本机模型为空数组 → models: []', emptyLocal.ratio.models, [])
+
+  const unavailable = composeCreditsToken({
+    card: CARD,
+    official: { error: 'official-unavailable', code: 'official-disabled', hint: '官方明细已关闭' },
+    localTotals: localFull,
+    now: NOW,
+  })
+  check('015 compose：不可用分支不新增 ratio 字段', 'ratio' in unavailable, false)
+
+  ok('015 __internals：两个纯函数可直接调',
+    typeof creditsClassRatios === 'function' && typeof creditsModelRatios === 'function')
 }
 
 // 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。

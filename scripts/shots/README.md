@@ -223,18 +223,23 @@ zh 断言「缓存命中 5.5万 · 未命中输入 1,977 · 输出 274」，en �
 ④ 模型块：`tabIndex=0` + `role=group` + `aria-label` 等于标题文案，行数 = `USAGE_CREDITS_MODELS.length`（8），
 逐行 `data-model` / 显示名 / `title` 与 fixture 顺序一致，tokens 文本（zh「4.21亿 tokens」/ en「421.06M tokens」）与
 比值文本（zh「1 Credit ≈ 1.1万 tokens」/ en「1 credit ≈ 11K tokens」）逐行等于 fixture 现算值，脚注含「本账期已用 Credits / credits used this cycle」，块内无 `%`；
+016 起每行再多一条第二行 `[data-usage-credits-model-classes="1"]`：模板逐字为 zh「每 Credit：输入 {input} · 缓存命中 {cacheRead} · 输出 {output}」/
+en「Per credit: input {input} · cache hit {cacheRead} · output {output}」，三段数值是该模型四类 tokens 各自 ÷ 同一个账号级已用 Credits
+（formatTokens 口径，**不是**三类 tokens 本身），逐行等于 fixture 的 `classes.*.perCredit`；`classes.cacheWrite.perCredit > 0` 才追加
+「· 缓存写入 {tokens} / · cache write {tokens}」，所以首行（cacheWrite=0）文案里不许出现这一截；第二行也不许出现 `%`；
 模型块的 `max-height` 必须是 `252px`、`overflow-y` 是 `auto`；
 ⑤ 口径护栏：无货币符号（¥ $ € £ / 元）、无「Credits 剩余」话术、无 `NaN`/`undefined`，
 英文套不混中文、中文套不混 `credits used` 这类英文句式；⑥ 插入位置：明细 → 分项 → 折算 → 模型 → 脚注，且整块在官方对照块之后。
 
-**模型块内滚的口径**：fixture 的 8 行（与 ⑮ 同一份本机按模型数据）实测 zh 229px / en 246px，都低于 252px 定高，
-所以截图断言的是「252px cap 在位、真实 8 行没有被裁切（scrollHeight = clientHeight）」，**不是** `scrollHeight > clientHeight`；
-真机上模型更多时内滚由同一条 CSS 生效。若要在这张图上硬证滚动，只能临时往 DOM 克隆行（截图前移除）或往 fixture 塞不存在的模型，
-两者都会让数据/画面失真，目前没有采用。
+**模型块内滚的口径（016 起已真实触发）**：015 时 8 行只有一行文本，实测 zh 229px / en 246px 都低于 252px 定高，
+当时断言的是「cap 在位、真实 8 行没被裁切」；016 每行多一条第二行后同一份 fixture 实测 **zh 396px / en 413px > 252px**，
+所以断言换成硬证据 `scrollHeight > clientHeight` 且 `scrollHeight > 252`（cap 同时仍在：`clientHeight ≤ 252`、computed `max-height: 252px`）。
+截图沿用全流水线既有 `--hide-scrollbars`，滚动条在图上不可见，所以「最后一行第二行被容器底边裁掉」就是内滚的视觉证据；
+DOM 里 8 行的第二行文本都是完整的（逐行逐字比对），裁切只发生在 252px 视口边缘，不是 CSS 截断。
 
-取景把这一块滚到视口上部并断言整块完整可见（zh 高 469px / en 504px）——
-它的证据是这几段文本，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。重拍产物：zh `docs/images/usage-credits-2d.png` 187,893 B、
-en `docs/images/en/usage-credits-2d.png` 155,053 B，均 1280×860（DPR 1）。
+取景把这一块滚到视口上部并断言整块完整可见（zh 高 492px / en 510px）——
+它的证据是这几段文本，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。重拍产物（016）：zh `docs/images/usage-credits-2d.png` 173,733 B、
+en `docs/images/en/usage-credits-2d.png` 157,305 B，均 1280×860（DPR 1）。
 
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的

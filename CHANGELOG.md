@@ -10,6 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **每个模型的分项比值（016）**：015 的模型行再拆一层——**该模型的输入 / 缓存命中 / 输出各自除以同一个账号级分母**
+  （本账期已用 Credits），直接回答「1 Credit 对应该模型多少输入、多少缓存命中、多少输出 tokens」。四类 tokens 直接取本机
+  该模型 `totals`，`perCredit = tokens ÷ credits.used` 不取整，行内恒等 `input + cacheRead + output + cacheWrite === tokens`；
+  `cacheWrite` 为 0 时不显示第四段。缺 `classes`（旧宿主）或某类非有限时只少渲染第二行、第一行保留，不拿 0 顶替、不写 —。
+  口径不变：分子是本机、分母是账号级已用 Credits（贡献值），官方不按模型拆分，也不请求不存在的模型维度。
+  客户端 COPY 151→153（`usageCreditsModelClasses` / `usageCreditsModelClassWrite`，脚注补分母说明），模型块两行制后
+  252px 定高真正触发内滚（细滚动条、`Tab` 可聚焦）。零新路由、零新配置键、零新出站主机、零第三方依赖。
+  测试：宿主 954→971、客户端 1080→1159、guards 497→526（第 16 节静态矩阵 29 条）。
+  方案见 `specs/016-per-model-classes/`，接口契约见该目录 `INTERFACE.md`。
 - **Credits 换算细化：分项比值与每个模型各自的比值（015）**：014 的换算块再往下拆两层。
   **分项**只取官方口径，把官方 tokens 拆成「缓存命中 / 未命中输入 / 输出」三类，各自给 tokens/Credit：
   官方 input 含缓存命中，所以 `uncachedInput = max(0, input − cacheRead)` 单列，三者相加仍等于官方 tokens；

@@ -1407,6 +1407,33 @@ export const USAGE_CREDITS_CLASSES = Object.freeze({
   }),
 })
 
+/** 016 §2: model row classes key order (host creditsModelRatios emits the same four). */
+export const USAGE_CREDITS_MODEL_CLASS_KEYS = Object.freeze(['input', 'cacheRead', 'output', 'cacheWrite'])
+
+/**
+ * Split one row's already-allocated token total into the four classes with the largest-remainder
+ * method, using the raw per-model class mix as the shares. The sum is exactly `total` - that
+ * identity is what host creditsModelRatios guarantees (`input + cacheRead + output + cacheWrite
+ * === tokens`), so the fixture must satisfy it too instead of rounding each class independently.
+ */
+function splitModelClasses(rawClasses, total) {
+  const rawSum = USAGE_CREDITS_MODEL_CLASS_KEYS.reduce((sum, key) => sum + rawClasses[key], 0)
+  const out = { input: 0, cacheRead: 0, output: 0, cacheWrite: 0 }
+  if (!(rawSum > 0)) return out
+  const exact = {}
+  for (const key of USAGE_CREDITS_MODEL_CLASS_KEYS) exact[key] = (rawClasses[key] / rawSum) * total
+  let used = 0
+  for (const key of USAGE_CREDITS_MODEL_CLASS_KEYS) {
+    out[key] = Math.floor(exact[key])
+    used += out[key]
+  }
+  const byFraction = USAGE_CREDITS_MODEL_CLASS_KEYS
+    .map((key, index) => ({ key, index, fraction: exact[key] - Math.floor(exact[key]) }))
+    .sort((a, b) => (b.fraction - a.fraction) || (a.index - b.index))
+  for (let at = 0; at < total - used; at += 1) out[byFraction[at % byFraction.length].key] += 1
+  return out
+}
+
 /**
  * 015 §3.3 model rows (ratio.models): numerators come from the fixture own per-model data over
  * 2026-11-01 .. 11-14 (the elapsed part of the cycle), scaled proportionally to the local total
@@ -1435,15 +1462,32 @@ function buildUsageCreditsModels() {
     .sort((a, b) => b.fraction - a.fraction)
   for (let at = 0; at < remainder; at += 1) tokens[byFraction[at % tokens.length].index] += 1
   const callsScale = USAGE_CREDITS_LOCAL_TOKENS / sum
+  // 016 §2: classes come from the same raw per-model totals and the same allocation, so each row's
+  // four class tokens add up to exactly its allocated `tokens` (never independently rounded).
+  const rawClasses = usage.models.map(one => ({
+    input: one.totals.input,
+    cacheRead: one.totals.cacheRead,
+    output: one.totals.output,
+    cacheWrite: one.totals.cacheWrite,
+  }))
   return usage.models
-    .map((one, index) => ({
-      id: one.id,
-      provider: one.provider,
-      model: one.model,
-      tokens: tokens[index],
-      calls: Math.max(1, Math.round(one.totals.calls * callsScale)),
-      tokensPerCredit: creditsPerCredit(tokens[index]),
-    }))
+    .map((one, index) => {
+      const classTokens = splitModelClasses(rawClasses[index], tokens[index])
+      return {
+        id: one.id,
+        provider: one.provider,
+        model: one.model,
+        tokens: tokens[index],
+        calls: Math.max(1, Math.round(one.totals.calls * callsScale)),
+        tokensPerCredit: creditsPerCredit(tokens[index]),
+        classes: {
+          input: { tokens: classTokens.input, perCredit: creditsPerCredit(classTokens.input) },
+          cacheRead: { tokens: classTokens.cacheRead, perCredit: creditsPerCredit(classTokens.cacheRead) },
+          output: { tokens: classTokens.output, perCredit: creditsPerCredit(classTokens.output) },
+          cacheWrite: { tokens: classTokens.cacheWrite, perCredit: creditsPerCredit(classTokens.cacheWrite) },
+        },
+      }
+    })
     .sort((a, b) => (b.tokens - a.tokens) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
@@ -1484,7 +1528,15 @@ export function builtCredits(options = {}) {
         output: { ...USAGE_CREDITS_CLASSES.output },
       },
       modelsBasis: USAGE_CREDITS_MODELS_BASIS,
-      models: USAGE_CREDITS_MODELS.map(one => ({ ...one })),
+      models: USAGE_CREDITS_MODELS.map(one => ({
+        ...one,
+        classes: {
+          input: { ...one.classes.input },
+          cacheRead: { ...one.classes.cacheRead },
+          output: { ...one.classes.output },
+          cacheWrite: { ...one.classes.cacheWrite },
+        },
+      })),
     },
     scope: {
       officialFrom: USAGE_CREDITS_WINDOW.from,
@@ -1572,11 +1624,23 @@ export function assertUsageCreditsFixture(credits, options = {}) {
   need("ratio.models 是非空数组", Array.isArray(modelRows) && modelRows.length > 0)
   need("ratio.models 行数 = fixture 的按模型条数", modelRows.length === USAGE_CREDITS_MODELS.length)
   modelRows.forEach((row, index) => {
-    need("models[" + index + "] 键集 = id/provider/model/tokens/calls/tokensPerCredit", sameKeys(row, ["id", "provider", "model", "tokens", "calls", "tokensPerCredit"]))
+    need("models[" + index + "] 键集 = id/provider/model/tokens/calls/tokensPerCredit/classes", sameKeys(row, ["id", "provider", "model", "tokens", "calls", "tokensPerCredit", "classes"]))
     need("models[" + index + "].id = provider/model", row.id === row.provider + "/" + row.model)
     need("models[" + index + "].tokens 是正有限整数", Number.isInteger(row.tokens) && row.tokens > 0)
     need("models[" + index + "].calls 是非负整数", Number.isInteger(row.calls) && row.calls >= 0)
     need("models[" + index + "].tokensPerCredit = tokens ÷ used（现算）", row.tokensPerCredit === row.tokens / cr.used)
+    // 016 §2: classes must be four keys, each an integer non-negative token count whose perCredit is
+    // recomputed from the account-level denominator, and the four must add up to this row's tokens.
+    need("models[" + index + "].classes 键集 = input/cacheRead/output/cacheWrite", sameKeys(row.classes, USAGE_CREDITS_MODEL_CLASS_KEYS))
+    let classTotal = 0
+    for (const classKey of USAGE_CREDITS_MODEL_CLASS_KEYS) {
+      const cell = row.classes[classKey]
+      need("models[" + index + "].classes." + classKey + " 键集 = tokens/perCredit", sameKeys(cell, ["tokens", "perCredit"]))
+      need("models[" + index + "].classes." + classKey + ".tokens 是非负整数", Number.isInteger(cell.tokens) && cell.tokens >= 0)
+      need("models[" + index + "].classes." + classKey + ".perCredit = tokens ÷ used（现算）", cell.perCredit === cell.tokens / cr.used)
+      classTotal += cell.tokens
+    }
+    need("models[" + index + "] 四类 tokens 相加 = 行 tokens（宿主恒等）", classTotal === row.tokens)
     if (index > 0) need("models 按 tokens 降序（第 " + index + " 行）", modelRows[index - 1].tokens >= row.tokens)
   })
   need("models 各行 tokens 相加 = tokens.local", modelRows.reduce((total, row) => total + row.tokens, 0) === tk.local)

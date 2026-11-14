@@ -248,7 +248,10 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   三者相加等于官方 tokens（直接拿官方 input 当未命中输入，三项相加会超过总量）。每个模型各自的比值 =
   **本机该模型 tokens ÷ 本账期已用 Credits**，这是**贡献口径**：官方不按模型拆分 Credits，也没有公开的模型单价，
   按 tokens 比例去分摊只会让每行都等于总比值（假精确）。脚注因此写明「官方不按模型拆分」与
-  「各行相加约等于本机总量，与账号级官方总量有少量差额」。分项或模型行缺失时只少渲染那一块，不写 0、也不写 `—`。
+  「各行相加约等于本机总量，与账号级官方总量有少量差额」。模型行再往下拆一层：**该模型的输入 / 缓存命中 /
+  输出各自除以同一个账号级分母**，直接回答「1 Credit 对应该模型多少输入、多少缓存命中、多少输出 tokens」，
+  三者相加等于该行总量；分母仍是本账期已用 Credits（账号级），不是该模型自己的额度。
+  分项或模型行缺失时只少渲染那一块，不写 0、也不写 `—`。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
@@ -519,16 +522,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 954 项，离线
-node test/client.mjs               # 1080 项，假 React/DOM/fetch
-node test/guards.mjs               # 497 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 971 项，离线
+node test/client.mjs               # 1159 项，假 React/DOM/fetch
+node test/guards.mjs               # 526 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 954/1080 项 + guards 497 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 971/1159 项 + guards 526 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

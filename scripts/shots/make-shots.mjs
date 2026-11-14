@@ -1402,8 +1402,10 @@ async function main() {
        * 已用 ÷ 总额 / 折算容量），这样客户端换量纲或换公式会在这里红，而不是拍出一张自相矛盾的图；
        * ③ 015 分项行：前缀 + 三类标签顺序 + 每类「每 Credit 多少 tokens」逐项等于 fixture 的 perCredit
        * （是 perCredit，不是三类 tokens 本身），且整行无 %；
-       * ④ 015 按模型块：tabIndex/role/aria、行数与宿主顺序、每行 tokens/比值文本、252px 定高内滚；
-       * ⑤ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
+       * ④ 015 按模型块：tabIndex/role/aria、行数与宿主顺序、每行 tokens/比值文本；
+       * ⑤ 016 两行制：每行第二行存在且四类 perCredit 逐字等于 fixture（cacheWrite>0 才追加第四段），
+       *    8 行两行制下 252px 定高被真正撑开（scrollHeight > clientHeight，不是 015 的「cap 在位但没触发」）；
+       * ⑥ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
        */
       const credits = creditsFixture.credits
       await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
@@ -1424,7 +1426,7 @@ async function main() {
 
       // 015 §3.2/§3.3：分项行与按模型块。块内位置的插入顺序（明细 → 分项 → 折算 → 模型 → 脚注）也一起钉住，
       // 因为图里看到的是最终排布，顺序错了读者会把「每 Credit 分项」当成折算参考的一部分。
-      const probe15 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const c = s.querySelector('[data-usage-credits-classes]'); const m = s.querySelector('[data-usage-credits-models]'); const detail = s.querySelector('[data-usage-credits-detail]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = c !== null && m !== null && detail !== null && estimate !== null && note !== null && (detail.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (c.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (m.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const rows = m === null ? [] : Array.from(m.querySelectorAll('[data-usage-credits-model]')).map(function (n) { const name = n.querySelector('.tpq-usage-credits-model-name'); const tk = n.querySelector('.tpq-usage-credits-model-tokens'); const ra = n.querySelector('.tpq-usage-credits-model-ratio'); return { id: n.getAttribute('data-model'), name: name === null ? null : (name.innerText || '').trim(), title: name === null ? null : name.getAttribute('title'), tokens: tk === null ? null : (tk.innerText || '').trim(), ratio: ra === null ? null : (ra.innerText || '').trim() } }); const ms = m === null ? null : getComputedStyle(m); const noteNode = m === null ? null : m.querySelector('.tpq-usage-credits-models-note'); return { classesNode: c !== null, classes: c === null ? null : (c.innerText || '').trim(), modelsNode: m !== null, modelsTabIndex: m === null ? null : m.tabIndex, modelsRole: m === null ? null : m.getAttribute('role'), modelsAria: m === null ? null : m.getAttribute('aria-label'), modelsMaxH: ms === null ? null : ms.maxHeight, modelsOverflowY: ms === null ? null : ms.overflowY, scrollH: m === null ? 0 : m.scrollHeight, clientH: m === null ? 0 : m.clientHeight, rows: rows, modelsNote: noteNode === null ? null : (noteNode.innerText || '').trim(), modelsText: m === null ? '' : (m.innerText || ''), order: order } })()")
+      const probe15 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const c = s.querySelector('[data-usage-credits-classes]'); const m = s.querySelector('[data-usage-credits-models]'); const detail = s.querySelector('[data-usage-credits-detail]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = c !== null && m !== null && detail !== null && estimate !== null && note !== null && (detail.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (c.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (m.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const rows = m === null ? [] : Array.from(m.querySelectorAll('[data-usage-credits-model]')).map(function (n) { const name = n.querySelector('.tpq-usage-credits-model-name'); const tk = n.querySelector('.tpq-usage-credits-model-tokens'); const ra = n.querySelector('.tpq-usage-credits-model-ratio'); const cl = n.querySelector('[data-usage-credits-model-classes]'); return { id: n.getAttribute('data-model'), name: name === null ? null : (name.innerText || '').trim(), title: name === null ? null : name.getAttribute('title'), tokens: tk === null ? null : (tk.innerText || '').trim(), ratio: ra === null ? null : (ra.innerText || '').trim(), classes: cl === null ? null : (cl.innerText || '').trim(), classesCount: n.querySelectorAll('[data-usage-credits-model-classes]').length, classesFlag: cl === null ? null : cl.getAttribute('data-usage-credits-model-classes') } }); const ms = m === null ? null : getComputedStyle(m); const noteNode = m === null ? null : m.querySelector('.tpq-usage-credits-models-note'); return { classesNode: c !== null, classes: c === null ? null : (c.innerText || '').trim(), modelsNode: m !== null, modelsTabIndex: m === null ? null : m.tabIndex, modelsRole: m === null ? null : m.getAttribute('role'), modelsAria: m === null ? null : m.getAttribute('aria-label'), modelsMaxH: ms === null ? null : ms.maxHeight, modelsOverflowY: ms === null ? null : ms.overflowY, scrollH: m === null ? 0 : m.scrollHeight, clientH: m === null ? 0 : m.clientHeight, rows: rows, modelsNote: noteNode === null ? null : (noteNode.innerText || '').trim(), modelsText: m === null ? '' : (m.innerText || ''), order: order } })()")
       if (probe15 === null) throw new Error("⑯ 量不到 Credits 换算块，分项/模型断言无从谈起，不拍")
       if (probe15.classesNode !== true) throw new Error("⑯ 缺分项行（[data-usage-credits-classes]）：015 客户端未落盘，或 ratio.classes 不完整被整行闸门丢弃，不拍")
       if (probe15.modelsNode !== true) throw new Error("⑯ 缺按模型块（[data-usage-credits-models]）：015 客户端未落盘，或 ratio.models 为空被整块闸门丢弃，不拍")
@@ -1493,16 +1495,33 @@ async function main() {
         if (row.ratio.indexOf(ratioNeedle15) < 0) throw new Error("⑯ 模型第 " + index + " 行比值「" + row.ratio + "」不含 " + ratioNeedle15 + "，不拍")
         if (!/credit/i.test(row.ratio)) throw new Error("⑯ 模型第 " + index + " 行比值没有 Credit 字样（" + row.ratio + "），不拍")
       })
+      // 016 §3.3：每行第二行（输入 / 缓存命中 / 输出 各自的 perCredit）必须逐行存在且与 fixture 现算值逐字相等；
+      // cacheWrite > 0 才追加第四段，所以首行（cacheWrite=0）的文案里不能出现「缓存写入 / cache write」。
+      const classesCopy16 = langKey === "zh"
+        ? { input: "每 Credit：输入 ", hit: " · 缓存命中 ", out: " · 输出 ", write: " · 缓存写入 " }
+        : { input: "Per credit: input ", hit: " · cache hit ", out: " · output ", write: " · cache write " }
+      probe15.rows.forEach(function (row, index) {
+        if (row === null || row === undefined) throw new Error("⑯ 模型块缺第 " + index + " 行，不拍")
+        if (row.classesCount !== 1) throw new Error("⑯ 模型第 " + index + " 行第二行数量=" + row.classesCount + "，应恰好 1 个 [data-usage-credits-model-classes]，不拍")
+        if (row.classesFlag !== "1") throw new Error("⑯ 模型第 " + index + " 行第二行 data-usage-credits-model-classes=" + row.classesFlag + "，应为 1，不拍")
+        const classes = USAGE_CREDITS_MODELS[index].classes
+        const expected16 = classesCopy16.input + compactTokens(classes.input.perCredit, langKey)
+          + classesCopy16.hit + compactTokens(classes.cacheRead.perCredit, langKey)
+          + classesCopy16.out + compactTokens(classes.output.perCredit, langKey)
+          + (classes.cacheWrite.perCredit > 0 ? classesCopy16.write + compactTokens(classes.cacheWrite.perCredit, langKey) : "")
+        if (row.classes !== expected16) throw new Error("⑯ 模型第 " + index + " 行第二行「" + row.classes + "」≠ 期望「" + expected16 + "」（四类 perCredit 与 fixture 不符），不拍")
+        if (row.classes.indexOf("%") >= 0) throw new Error("⑯ 模型第 " + index + " 行第二行出现百分比（每 Credit 的 tokens 不是比例）：" + row.classes)
+      })
       const modelsNoteNeedle15 = langKey === "zh" ? "本账期已用 Credits" : "credits used this cycle"
       if (probe15.modelsNote === null || probe15.modelsNote.indexOf(modelsNoteNeedle15) < 0) throw new Error("⑯ 模型块脚注缺「" + modelsNoteNeedle15 + "」（实际：" + probe15.modelsNote + "），贡献值口径没交代，不拍")
       if (probe15.modelsText.indexOf("%") >= 0) throw new Error("⑯ 模型块出现百分比（模型比值是每 Credit 的 tokens）：" + probe15.modelsText)
       if (probe15.modelsMaxH !== "252px") throw new Error("⑯ 模型块 max-height=" + probe15.modelsMaxH + "，INTERFACE §3.4 要求 252px，不拍")
       if (probe15.modelsOverflowY !== "auto") throw new Error("⑯ 模型块 overflow-y=" + probe15.modelsOverflowY + "，INTERFACE §3.4 要求 auto（定高内滚），不拍")
-      // 内滚的**硬证据**要求内容高于 252px；fixture 的 8 行（与 ⑮ 同一份本机按模型数据）实测 229px，
-      // 定高没被触发，所以这里断言的是「cap 在位且真实 8 行没被裁切」，而不是「scrollHeight > clientHeight」。
-      // 真要证明滚动，只能加临时克隆行（改 DOM）或往 fixture 塞不存在的模型，两者都会让截图/数据失真 —— 留给 lead 定。
+      // 016 §3.4：每行多出第二行后，8 行内容必然高于 252px 定高 —— 内滚在截图里是**真正被触发**的，
+      // 所以这里要的是硬证据 scrollHeight > clientHeight（不是 015 那句「cap 在位但没触发」）。
       if (!(probe15.clientH <= 252)) throw new Error("⑯ 模型块 clientHeight=" + probe15.clientH + " > 252px，max-height 没生效，不拍")
-      if (probe15.scrollH !== probe15.clientH) throw new Error("⑯ 模型块 8 行被定高裁切（scrollHeight=" + probe15.scrollH + " > clientHeight=" + probe15.clientH + "），图里会缺行，不拍")
+      if (!(probe15.scrollH > probe15.clientH)) throw new Error("⑯ 模型块 scrollHeight=" + probe15.scrollH + " 未超过 clientHeight=" + probe15.clientH + "，两行制没把定高撑开（016 §3.4 要求真实内滚），不拍")
+      if (!(probe15.scrollH > 252)) throw new Error("⑯ 模型块 scrollHeight=" + probe15.scrollH + " ≤ 252px，内容没超出定高，内滚断言没有证据，不拍")
 
       // ⑤ 口径护栏：这块是整个用量屏唯一合法出现 Credits 的地方，仍不许出现货币符号与「剩余」话术。
       if (/[¥$€£]|元/.test(probe16.text)) throw new Error('⑯ 换算块出现货币符号（' + probe16.text + '），不拍')
@@ -1527,7 +1546,7 @@ async function main() {
       if (frameModels16.top < 8 || frameModels16.bottom > frameModels16.vh - 8) throw new Error('⑯ 模型块没有完整落在视口内（' + JSON.stringify(frameModels16) + '），不拍')
       if (frameModels16.h > 253) throw new Error('⑯ 模型块渲染高度 ' + frameModels16.h + 'px > max-height 252px + 1px 容差，定高没生效，不拍')
 
-      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；分项「' + probe15.classes + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + '）；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
+      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；分项「' + probe15.classes + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + ' / 第二行「' + probe15.rows[0].classes + '」）；内滚 ' + probe15.scrollH + '/' + probe15.clientH + 'px；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
       save('usage-credits-2d.png', await page.shot({}))
     }
 

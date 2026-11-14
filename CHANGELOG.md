@@ -71,6 +71,9 @@ All notable changes to this project are documented here. The format follows
   接受为偏差（#6）：`usageTipInlineOffsetX` 在渲染期做两次同步布局读取——它只在内联回退路径（宿主没有
   react-dom portal）生效，开销与已有的浮层尺寸测量同量级；加缓存要引入 ref + effect，风险大于收益。
   测试：客户端 884→885、guards 384→385，宿主仍 855。第三轮记录见 `specs/012-usage-composition/INTERFACE.md` §13。
+  第四轮只审这次 fix（2 条 low）：1 条仍是过期（测试在下一提交才落地），1 条采纳——判空收成文件既有的
+  `x === null || typeof x !== "object"` 写法（`=== undefined` 在 typeof 判断下走不到），并先判 SVG 矩形
+  再读容器矩形，坏矩形时省掉一次强制布局读取；计数不变。
 
 - **用量构成复核第二轮（012 复核 2，对修复提交再跑一遍 OpenCodeReview）**：上一轮改完又审了一次，
   7 条结论全部处理，其中 1 条是真 bug、2 条是上一轮引入的新问题：

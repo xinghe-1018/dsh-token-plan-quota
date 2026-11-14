@@ -260,3 +260,9 @@ check-manifest / check-docs / check-refs / check-submission 全 OK。
 可失败性（都实跑过）：把 `usageTipInlineOffsetX` 里的两处 rect 判空删掉 → `test/client.mjs` 立刻以
 `TypeError: Cannot read properties of null (reading 'left')` 崩掉（正是要防的渲染期白屏），guards 同改法 384/1 红；
 把 ⑭ 的 `aria-hidden` 断言换回 `role` 硬门 → 该截图场景实跑直接抛错（改动后中英各跑一次才通过）。
+
+第四轮（同一命令换成 `--commit 771b9c2`，审的就是本次 fix）：2m28s / 175K tokens / 19 次工具调用、2 条，都是 low。
+一条**过期**（称新加的判空没有测试钉住——测试在下一提交才落地，当前已由 T013 与第 13 节钉住）；
+一条**采纳**：判空里的 `=== undefined` 在 `typeof x !== "object"` 下永远走不到，收成这个文件既有的
+`x === null || typeof x !== "object"` 写法，并且**先判 SVG 矩形再读容器矩形**——坏矩形时省掉第二次强制布局读取。
+计数不变（client 885 / guards 385）。

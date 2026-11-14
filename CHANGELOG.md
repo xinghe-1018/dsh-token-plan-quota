@@ -10,6 +10,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Credits 换算细化：分项比值与每个模型各自的比值（015）**：014 的换算块再往下拆两层。
+  **分项**只取官方口径，把官方 tokens 拆成「缓存命中 / 未命中输入 / 输出」三类，各自给 tokens/Credit：
+  官方 input 含缓存命中，所以 `uncachedInput = max(0, input − cacheRead)` 单列，三者相加仍等于官方 tokens；
+  不混本机口径（两边 input 边界不同，分项相加会对不上总量）。**每个模型各自的比值** = 本机该模型 tokens ÷
+  本账期已用 Credits，属**贡献口径**（`modelsBasis: "local"`）：官方不按模型拆分 Credits、也没有公开单价，
+  按 tokens 比例分摊只会让每行恒等于总比值（假精确），所以不做；脚注明写「官方不按模型拆分」
+  「各行相加约等于本机总量，与账号级官方总量有少量差额」。模型块定高 252px 内滚（细滚动条、`Tab` 可聚焦、
+  `role="group"`），行内复用总比值模板；分项三缺一或模型行缺失时只少渲染那一块，不写 0、不写 —。
+  宿主新增两个纯函数 `creditsClassRatios` / `creditsModelRatios`（都进 `__internals`），响应 `ratio` 增加
+  `classes` / `modelsBasis` / `models`；客户端新增 `usageCreditsClassesLine` / `usageCreditsModelsBlock` 与
+  4 个双语键（COPY 147→151）。零新路由、零新配置键、零新出站主机、零第三方依赖。
+  测试：宿主 928→954、客户端 1012→1080、guards 459→497（第 15 节静态矩阵 38 条）。
+  方案见 `specs/015-credits-ratio-breakdown/`，接口契约见该目录 `INTERFACE.md`。
+
 - **Credits 与 tokens 的换算（014）**：用量统计屏在官方对照条下面新增一块「Credits ↔ tokens 换算」。
   官方控制台只给「额度 × 已用比例」的 Credits，这一块把它和**同一账期的官方账号级 tokens**（`/usage-official`）
   相除，给出本账期实测比值（屏上写 `1 Credit ≈ N tokens`，同时并排列出官方 tokens、已用 Credits / 额度、

@@ -297,6 +297,15 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   tokens" line is marked as derived, not official. When the official detail is clamped to a later start, or the
   allowance, reset time or a monthly/weekly meter is missing, the block shows **no ratio** and says why; it never
   borrows a partial range or this instance's numbers.
+- **Per-class ratios and a per-model ratio**: two more layers inside the same block. Classes use the official caliber
+  only - the official tokens are split into cache hit / uncached input / output, each with its own tokens-per-credit
+  (official input **includes** cache hits, so they are subtracted and shown separately; the three add up to the official
+  tokens - treating official input as "uncached input" would overflow the total). The **Per-model ratio** =
+  local tokens for that model / credits used this cycle, which is a **contribution** figure: official data is not split
+  by model and no per-model price is published, and splitting credits by token share would make every row equal the
+  overall ratio (false precision). The footnote therefore states that official data is not split by model and that rows
+  sum to roughly the local total, which differs slightly from the official account total. When classes or model rows are
+  missing, only that part is skipped - never a 0, never a dash.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -606,9 +615,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 928 assertions, offline
-node test/client.mjs                # 1012 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 459 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 954 assertions, offline
+node test/client.mjs                # 1080 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 497 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -616,7 +625,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 928/1012 tests plus 459 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 954/1080 tests plus 497 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

@@ -100,7 +100,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 13 | `usage-month-2d.png` | 按月份查询：月份行可见、chip 停在「月份」、桶恰好是整月（如 31 天 31 根柱）、标题回显该月 |
 | 14 | `usage-tooltip-2d.png` | 柱子悬停：浮层报出该桶日期与 tokens 明细，位置夹在视口内 |
 | 15 | `usage-composition-2d.png` | 用量构成（012）：中文分项标签、四类占比、缓存命中率、模型列表内滚动 |
-| 16 | `usage-credits-2d.png` | Credits ↔ tokens 换算（014）：本账期比值、官方 tokens、已用 Credits、折算参考 |
+| 16 | `usage-credits-2d.png` | Credits ↔ tokens 换算（014）+ 每 Credit 分项与按模型比值（015）：本账期比值、官方 tokens、已用 Credits、折算参考 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -210,15 +210,31 @@ chip 必须停在「月份」，脚注以外无 `Credits`（012 起 `%` 只来�
 ⑯ 是 014 的 Credits ↔ tokens 换算块，固定拍 **2026-11-01 起的本账期**（fixture 常量
 `USAGE_CREDITS_WINDOW` / `USAGE_CREDITS_TOTAL` / `USAGE_CREDITS_USED` / `USAGE_CREDITS_OFFICIAL_TOKENS`）：
 这一块展示的是「1 Credit ≈ 5.7万 tokens」（原始比值 57072.5，按官方 tokens ÷ 已用 Credits 现算）这类混合口径均值，不是固定兑换率，也不是区间快照。
-断言四层：① `[data-usage-credits]` 恰 1 个、`data-stale="0"`、非 loading / 非不可用 / 无重试按钮，
+015 起这块多两段：**每 Credit 的分项**（分项行，`[data-usage-credits-classes]`）与**按模型比值**
+（`.tpq-usage-credits-models`，`[data-usage-credits-models]`，行数 8、宿主顺序原样保留）。
+断言六层：① `[data-usage-credits]` 恰 1 个、`data-stale="0"`、非 loading / 非不可用 / 无重试按钮，
 且 `[data-usage-credits-ratio]` / `-window` / `-detail` / `-estimate` 与 `.tpq-usage-credits-note` 全部非空；
 ② 比值行含 `Credit` 与 fixture 量纲串（zh「5.7万」/ en「57K」），明细含官方 tokens（zh「21.23亿」/ en「2.12B」）、
 已用 Credits `37197` / 总额 `80000` 与百分比 `46.5%`，账期行含 `2026-11-01` 与 `2026-11-30`，
 折算行含容量 tokens（zh「45.66亿」/ en「4.57B」）与「折算参考 / derived」；
-③ 口径护栏：无货币符号（¥ $ € £ / 元）、无「Credits 剩余」话术、无 `NaN`/`undefined`，
-英文套不混中文、中文套不混 `credits used` 这类英文句式；④ 换算块必须排在官方对照块之后。
-取景把这一块滚到视口上部并断言整块完整可见（≥120px）——
-它的证据是那四行文本，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。
+③ 分项行：前缀「每 Credit 的分项（tokens）：/ Per credit by class (tokens):」+ 三类标签顺序，
+每类数值是 **perCredit**（每 Credit 多少 tokens，走 formatTokens）而不是三类 tokens 本身 ——
+zh 断言「缓存命中 5.5万 · 未命中输入 1,977 · 输出 274」，en 断言「cache hit 55K · uncached input 2.0K · output 274」，整行无 `%`；
+④ 模型块：`tabIndex=0` + `role=group` + `aria-label` 等于标题文案，行数 = `USAGE_CREDITS_MODELS.length`（8），
+逐行 `data-model` / 显示名 / `title` 与 fixture 顺序一致，tokens 文本（zh「4.21亿 tokens」/ en「421.06M tokens」）与
+比值文本（zh「1 Credit ≈ 1.1万 tokens」/ en「1 credit ≈ 11K tokens」）逐行等于 fixture 现算值，脚注含「本账期已用 Credits / credits used this cycle」，块内无 `%`；
+模型块的 `max-height` 必须是 `252px`、`overflow-y` 是 `auto`；
+⑤ 口径护栏：无货币符号（¥ $ € £ / 元）、无「Credits 剩余」话术、无 `NaN`/`undefined`，
+英文套不混中文、中文套不混 `credits used` 这类英文句式；⑥ 插入位置：明细 → 分项 → 折算 → 模型 → 脚注，且整块在官方对照块之后。
+
+**模型块内滚的口径**：fixture 的 8 行（与 ⑮ 同一份本机按模型数据）实测 zh 229px / en 246px，都低于 252px 定高，
+所以截图断言的是「252px cap 在位、真实 8 行没有被裁切（scrollHeight = clientHeight）」，**不是** `scrollHeight > clientHeight`；
+真机上模型更多时内滚由同一条 CSS 生效。若要在这张图上硬证滚动，只能临时往 DOM 克隆行（截图前移除）或往 fixture 塞不存在的模型，
+两者都会让数据/画面失真，目前没有采用。
+
+取景把这一块滚到视口上部并断言整块完整可见（zh 高 469px / en 504px）——
+它的证据是这几段文本，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。重拍产物：zh `docs/images/usage-credits-2d.png` 187,893 B、
+en `docs/images/en/usage-credits-2d.png` 155,053 B，均 1280×860（DPR 1）。
 
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的

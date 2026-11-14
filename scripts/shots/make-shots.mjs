@@ -23,7 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture, USAGE_CREDITS_CLASSES, USAGE_CREDITS_MODELS } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
@@ -1398,9 +1398,12 @@ async function main() {
       /*
        * ⑯ Credits ↔ tokens 换算块（014）：唯一一个**本账期混合口径**的块 ——
        * 分母是官方 Credits 计量、分子是官方账号 tokens，所以它既不是本机实测也不是区间快照。
-       * 断言分三层：① 四个文本钩子都在且非空；② 展示串逐项等于 fixture 现值（比值 / 官方 tokens /
+       * 断言分五层：① 四个文本钩子都在且非空；② 展示串逐项等于 fixture 现值（比值 / 官方 tokens /
        * 已用 ÷ 总额 / 折算容量），这样客户端换量纲或换公式会在这里红，而不是拍出一张自相矛盾的图；
-       * ③ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
+       * ③ 015 分项行：前缀 + 三类标签顺序 + 每类「每 Credit 多少 tokens」逐项等于 fixture 的 perCredit
+       * （是 perCredit，不是三类 tokens 本身），且整行无 %；
+       * ④ 015 按模型块：tabIndex/role/aria、行数与宿主顺序、每行 tokens/比值文本、252px 定高内滚；
+       * ⑤ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
        */
       const credits = creditsFixture.credits
       await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
@@ -1418,6 +1421,15 @@ async function main() {
         if (probe16[key] === null || probe16[key] === '') throw new Error('⑯ Credits 换算块的 ' + key + ' 是空的，不拍')
       }
       if (probe16.afterOfficial !== true) throw new Error('⑯ Credits 换算块不在官方对照块之后（INTERFACE §3.2 插入位置），不拍')
+
+      // 015 §3.2/§3.3：分项行与按模型块。块内位置的插入顺序（明细 → 分项 → 折算 → 模型 → 脚注）也一起钉住，
+      // 因为图里看到的是最终排布，顺序错了读者会把「每 Credit 分项」当成折算参考的一部分。
+      const probe15 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const c = s.querySelector('[data-usage-credits-classes]'); const m = s.querySelector('[data-usage-credits-models]'); const detail = s.querySelector('[data-usage-credits-detail]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = c !== null && m !== null && detail !== null && estimate !== null && note !== null && (detail.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (c.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (m.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const rows = m === null ? [] : Array.from(m.querySelectorAll('[data-usage-credits-model]')).map(function (n) { const name = n.querySelector('.tpq-usage-credits-model-name'); const tk = n.querySelector('.tpq-usage-credits-model-tokens'); const ra = n.querySelector('.tpq-usage-credits-model-ratio'); return { id: n.getAttribute('data-model'), name: name === null ? null : (name.innerText || '').trim(), title: name === null ? null : name.getAttribute('title'), tokens: tk === null ? null : (tk.innerText || '').trim(), ratio: ra === null ? null : (ra.innerText || '').trim() } }); const ms = m === null ? null : getComputedStyle(m); const noteNode = m === null ? null : m.querySelector('.tpq-usage-credits-models-note'); return { classesNode: c !== null, classes: c === null ? null : (c.innerText || '').trim(), modelsNode: m !== null, modelsTabIndex: m === null ? null : m.tabIndex, modelsRole: m === null ? null : m.getAttribute('role'), modelsAria: m === null ? null : m.getAttribute('aria-label'), modelsMaxH: ms === null ? null : ms.maxHeight, modelsOverflowY: ms === null ? null : ms.overflowY, scrollH: m === null ? 0 : m.scrollHeight, clientH: m === null ? 0 : m.clientHeight, rows: rows, modelsNote: noteNode === null ? null : (noteNode.innerText || '').trim(), modelsText: m === null ? '' : (m.innerText || ''), order: order } })()")
+      if (probe15 === null) throw new Error("⑯ 量不到 Credits 换算块，分项/模型断言无从谈起，不拍")
+      if (probe15.classesNode !== true) throw new Error("⑯ 缺分项行（[data-usage-credits-classes]）：015 客户端未落盘，或 ratio.classes 不完整被整行闸门丢弃，不拍")
+      if (probe15.modelsNode !== true) throw new Error("⑯ 缺按模型块（[data-usage-credits-models]）：015 客户端未落盘，或 ratio.models 为空被整块闸门丢弃，不拍")
+      if (probe15.order !== true) throw new Error("⑯ 分项行/模型块插入位置不对（应 明细 → 分项 → 折算 → 模型 → 脚注），不拍")
+      console.log("  ⑯ 模型块：行数=" + probe15.rows.length + " scrollHeight=" + probe15.scrollH + " clientHeight=" + probe15.clientH + " maxHeight=" + probe15.modelsMaxH + " overflowY=" + probe15.modelsOverflowY)
 
       // ① 比值：唯一允许写「1 Credit ≈ … tokens」的地方，数值按 fixture 现值 + 客户端量纲。
       const ratioNeedle = compactTokens(credits.ratio.tokensPerCredit, langKey)
@@ -1444,6 +1456,54 @@ async function main() {
         if (probe16.estimate.indexOf(needle) < 0) throw new Error('⑯ 折算行缺「' + needle + '」（实际：' + probe16.estimate + '），不拍')
       }
 
+      // ⑥ 015 §3.2 分项行：文案前缀 + 三类标签顺序，数值是**每 Credit 的 tokens**（formatTokens 口径），
+      // 不是三类 tokens 本身 —— 图里读者看到的是「缓存命中 5.5万」，把它当成 tokens 就会差四个数量级。
+      const classesPrefix15 = langKey === "zh" ? "每 Credit 的分项（tokens）：" : "Per credit by class (tokens):"
+      const classLabels15 = langKey === "zh" ? ["缓存命中", "未命中输入", "输出"] : ["cache hit", "uncached input", "output"]
+      const classCells15 = [USAGE_CREDITS_CLASSES.cacheRead, USAGE_CREDITS_CLASSES.uncachedInput, USAGE_CREDITS_CLASSES.output]
+      if (probe15.classes === null || probe15.classes === "") throw new Error("⑯ 分项行是空的，不拍")
+      if (probe15.classes.indexOf(classesPrefix15) < 0) throw new Error("⑯ 分项行缺前缀「" + classesPrefix15 + "」（实际：" + probe15.classes + "），不拍")
+      let cursor15 = 0
+      for (let i = 0; i < 3; i += 1) {
+        const label15 = classLabels15[i]
+        const needle15 = compactTokens(classCells15[i].perCredit, langKey)
+        const labelAt15 = probe15.classes.indexOf(label15, cursor15)
+        if (labelAt15 < 0) throw new Error("⑯ 分项行缺「" + label15 + "」或顺序不对（实际：" + probe15.classes + "），不拍")
+        const valueAt15 = probe15.classes.indexOf(needle15, labelAt15 + label15.length)
+        if (valueAt15 < 0) throw new Error("⑯ 分项行「" + label15 + "」的每 Credit 值不是 " + needle15 + "（实际：" + probe15.classes + "），不拍")
+        cursor15 = valueAt15 + needle15.length
+      }
+      if (probe15.classes.indexOf("%") >= 0) throw new Error("⑯ 分项行出现百分比（分项是每 Credit 的 tokens，不是比例）：" + probe15.classes)
+
+      // ⑦ 015 §3.3 模型块：宿主顺序原样保留、每行 tokens/比值与 fixture 现算值相等、键盘可聚焦、252px 定高内滚。
+      if (probe15.modelsTabIndex !== 0) throw new Error("⑯ 模型块 tabIndex=" + probe15.modelsTabIndex + "，键盘滚不进这块定高列表，不拍")
+      if (probe15.modelsRole !== "group") throw new Error("⑯ 模型块 role=" + probe15.modelsRole + "，应为 group，不拍")
+      const modelsAria15 = langKey === "zh" ? "每个模型各自的比值" : "Ratio per model"
+      if (probe15.modelsAria !== modelsAria15) throw new Error("⑯ 模型块 aria-label 应为「" + modelsAria15 + "」（实际：" + probe15.modelsAria + "），不拍")
+      if (probe15.rows.length !== USAGE_CREDITS_MODELS.length) throw new Error("⑯ 模型行数 " + probe15.rows.length + " ≠ fixture " + USAGE_CREDITS_MODELS.length + " 行，不拍")
+      USAGE_CREDITS_MODELS.forEach(function (expected, index) {
+        const row = probe15.rows[index]
+        if (row === null || row === undefined) throw new Error("⑯ 模型块缺第 " + index + " 行，不拍")
+        if (row.id !== expected.id) throw new Error("⑯ 模型第 " + index + " 行 data-model=" + row.id + "，期望 " + expected.id + "（宿主顺序要原样保留），不拍")
+        if (row.title !== expected.id) throw new Error("⑯ 模型第 " + index + " 行 name 的 title 不是完整 id（" + row.title + "），悬停看不到全名，不拍")
+        if (row.name !== expected.id) throw new Error("⑯ 模型第 " + index + " 行显示名 ≠ id（" + row.name + "），不拍")
+        const tokensNeedle15 = compactTokens(expected.tokens, langKey) + " tokens"
+        if (row.tokens !== tokensNeedle15) throw new Error("⑯ 模型第 " + index + " 行 tokens 文本「" + row.tokens + "」≠「" + tokensNeedle15 + "」，不拍")
+        const ratioNeedle15 = compactTokens(expected.tokensPerCredit, langKey)
+        if (row.ratio.indexOf(ratioNeedle15) < 0) throw new Error("⑯ 模型第 " + index + " 行比值「" + row.ratio + "」不含 " + ratioNeedle15 + "，不拍")
+        if (!/credit/i.test(row.ratio)) throw new Error("⑯ 模型第 " + index + " 行比值没有 Credit 字样（" + row.ratio + "），不拍")
+      })
+      const modelsNoteNeedle15 = langKey === "zh" ? "本账期已用 Credits" : "credits used this cycle"
+      if (probe15.modelsNote === null || probe15.modelsNote.indexOf(modelsNoteNeedle15) < 0) throw new Error("⑯ 模型块脚注缺「" + modelsNoteNeedle15 + "」（实际：" + probe15.modelsNote + "），贡献值口径没交代，不拍")
+      if (probe15.modelsText.indexOf("%") >= 0) throw new Error("⑯ 模型块出现百分比（模型比值是每 Credit 的 tokens）：" + probe15.modelsText)
+      if (probe15.modelsMaxH !== "252px") throw new Error("⑯ 模型块 max-height=" + probe15.modelsMaxH + "，INTERFACE §3.4 要求 252px，不拍")
+      if (probe15.modelsOverflowY !== "auto") throw new Error("⑯ 模型块 overflow-y=" + probe15.modelsOverflowY + "，INTERFACE §3.4 要求 auto（定高内滚），不拍")
+      // 内滚的**硬证据**要求内容高于 252px；fixture 的 8 行（与 ⑮ 同一份本机按模型数据）实测 229px，
+      // 定高没被触发，所以这里断言的是「cap 在位且真实 8 行没被裁切」，而不是「scrollHeight > clientHeight」。
+      // 真要证明滚动，只能加临时克隆行（改 DOM）或往 fixture 塞不存在的模型，两者都会让截图/数据失真 —— 留给 lead 定。
+      if (!(probe15.clientH <= 252)) throw new Error("⑯ 模型块 clientHeight=" + probe15.clientH + " > 252px，max-height 没生效，不拍")
+      if (probe15.scrollH !== probe15.clientH) throw new Error("⑯ 模型块 8 行被定高裁切（scrollHeight=" + probe15.scrollH + " > clientHeight=" + probe15.clientH + "），图里会缺行，不拍")
+
       // ⑤ 口径护栏：这块是整个用量屏唯一合法出现 Credits 的地方，仍不许出现货币符号与「剩余」话术。
       if (/[¥$€£]|元/.test(probe16.text)) throw new Error('⑯ 换算块出现货币符号（' + probe16.text + '），不拍')
       if (/Credits\s*剩余/i.test(probe16.text)) throw new Error('⑯ 换算块出现「Credits 剩余」话术（Credits 只有已用口径），不拍')
@@ -1461,8 +1521,13 @@ async function main() {
       if (frameState16 === null) throw new Error('⑯ 取景后找不到 Credits 换算块，不拍')
       if (frameState16.top < 8 || frameState16.bottom > frameState16.vh - 8) throw new Error('⑯ 换算块没有完整落在视口内（' + JSON.stringify(frameState16) + '），不拍')
       if (frameState16.h < 120) throw new Error('⑯ 换算块在取景里只有 ' + frameState16.h + 'px 高，内容不像渲染完整，不拍')
+      // 模型块是 252px 定高内滚列表，整块必须落在视口里：截一半的图会把「内滚」截成「列表被切掉」。
+      const frameModels16 = await page.evaluate("(() => { const m = document.querySelector('[data-usage-credits-models]'); if (m === null) return null; const r = m.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
+      if (frameModels16 === null) throw new Error('⑯ 取景后找不到按模型块，不拍')
+      if (frameModels16.top < 8 || frameModels16.bottom > frameModels16.vh - 8) throw new Error('⑯ 模型块没有完整落在视口内（' + JSON.stringify(frameModels16) + '），不拍')
+      if (frameModels16.h > 253) throw new Error('⑯ 模型块渲染高度 ' + frameModels16.h + 'px > max-height 252px + 1px 容差，定高没生效，不拍')
 
-      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
+      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；分项「' + probe15.classes + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + '）；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
       save('usage-credits-2d.png', await page.shot({}))
     }
 

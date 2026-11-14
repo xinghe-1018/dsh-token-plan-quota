@@ -1031,9 +1031,10 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
   // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）；
-  // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 加 4 → 159；022 再加 2 个估算/占比键 → 161。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 161；011 本身不加键）',
-    zhKeys011.length === 161 && enKeys011.length === 161)
+  // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 加 4 → 159；022 再加 2 个估算键 → 161；
+  // 023 删 Hint/Share/Note 三键 → 158。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 158；011 本身不加键）',
+    zhKeys011.length === 158 && enKeys011.length === 158)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
@@ -1105,9 +1106,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161。
-  ok('012 i18n：COPY 现在 zh / en 各 161 键（012/014/015/016/017/019/022 的新键都在里面）',
-    zhKeys012.length === 161 && enKeys012.length === 161)
+  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161；023 删三键 → 158。
+  ok('012 i18n：COPY 现在 zh / en 各 158 键（012/014/015/016/017/019/022/023 的键都在里面）',
+    zhKeys012.length === 158 && enKeys012.length === 158)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1552,8 +1553,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数 zh / en 各 161（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2）',
-    zhKeys015.length === 161 && enKeys015.length === 161)
+  ok('015 i18n：COPY 键数 zh / en 各 158（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 删 3）',
+    zhKeys015.length === 158 && enKeys015.length === 158)
   const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
     'usageCreditsModelsNote']
   ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
@@ -1676,8 +1677,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
   const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
-  ok('016 i18n：COPY 现在 zh / en 各 161 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2）',
-    zhKeys016.length === 161 && enKeys016.length === 161)
+  ok('016 i18n：COPY 现在 zh / en 各 158 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 的 3）',
+    zhKeys016.length === 158 && enKeys016.length === 158)
   const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
   ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
   const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
@@ -1833,14 +1834,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('017 CSS：≤520px 折成两列（320/375 视口不横向溢出）',
       /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(clientSrc017))
 
-    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161；标题改成「1 Credit 折合」，新增单位与按日提示。
+    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161，023 删 3 → 158；标题改成「1 Credit 折合」，新增单位与按日提示。
     const zhBlock017 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const enBlock017 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const keysOf017 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
     const zhKeys017 = keysOf017(zhBlock017?.[1] ?? '')
     const enKeys017 = keysOf017(enBlock017?.[1] ?? '')
-    ok('017 i18n：COPY 现在 zh / en 各 161 键（017 的 155 + 019 的 4 + 022 的 2）',
-      zhKeys017.length === 161 && enKeys017.length === 161)
+    ok('017 i18n：COPY 现在 zh / en 各 158 键（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3）',
+      zhKeys017.length === 158 && enKeys017.length === 158)
     ok('017 i18n：标题/单位/按日提示三个键中英都在',
       ['usageCreditsClasses', 'usageCreditsClassesUnit', 'usageCreditsDaily']
         .every(key => zhKeys017.includes(key) && enKeys017.includes(key)))
@@ -1954,14 +1955,15 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       && src19.includes('cells.push(cellOf("cacheRead", copy.usageSplitCacheRead, classes.cacheRead))')
       && src19.includes('cells.push(cellOf("output", copy.usageSplitOutput, classes.output))')
       && src19.includes('if (Number.isFinite(classes.cacheWrite) && classes.cacheWrite > 0)'))
-  ok('019 客户端：容量块插在折算行/按日提示之后、模型明细之前，且先判可算项',
+  ok('019/023 客户端：单模型块已从换算块拆出，只有独立 section 渲染它',
     (function () {
       const estimate = src19.indexOf('children.push(React.createElement("p", {\n        key: "estimate"')
       const daily = src19.indexOf('if (dailyLine !== null) children.push(dailyLine)')
-      const pick = src19.indexOf('if (modelPick !== null) children.push(modelPick)')
       const models = src19.indexOf('if (modelsBlock !== null) children.push(modelsBlock)')
-      return src19.includes('usageModelPickUsable(ratio.models, modelPickTotal).length > 0')
-        && estimate > 0 && daily > estimate && pick > daily && models > pick
+      return src19.includes('function usageSingleModelSection(')
+        && src19.includes('usageModelPickUsable(ratio.models, total).length === 0')
+        && estimate > 0 && daily > estimate && models > daily
+        && src19.includes('if (modelPick !== null) children.push(modelPick)') === false
     })())
 
   ok('019 CSS：选中 chip 用 bg-layer-3 + label-primary，不用品牌色当底',
@@ -1994,26 +1996,25 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf19 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys19 = keysOf19(zhBlock19?.[1] ?? '')
   const enKeys19 = keysOf19(enBlock19?.[1] ?? '')
-  ok('019 i18n：COPY 键数 zh / en 各 161（017 的 155 + 019 的 4 + 022 的 2）',
-    zhKeys19.length === 161 && enKeys19.length === 161)
-  const pickKeys19 = ['usageCreditsModelPickTitle', 'usageCreditsModelPickHint',
-    'usageCreditsModelPickCard', 'usageCreditsModelPickNote']
-  ok('019 i18n：4 个新键中英都在',
+  ok('019 i18n：COPY 键数 zh / en 各 158（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3）',
+    zhKeys19.length === 158 && enKeys19.length === 158)
+  const pickKeys19 = ['usageCreditsModelPickTitle', 'usageCreditsModelPickCard']
+  ok('019 i18n：标题与卡片两个键中英都在（023 后收敛为三键）',
     pickKeys19.every(key => zhKeys19.includes(key) && enKeys19.includes(key)))
   const classKey19 = ['usageSplitInput', 'usageSplitCacheRead', 'usageSplitOutput', 'usageSplitCacheWrite']
   ok('019 i18n：分项标签复用既有四键，没有另起一套',
     classKey19.every(key => zhKeys19.includes(key)) && classKey19.every(key => enKeys19.includes(key)))
-  ok('019 i18n：提示里两个占位符都在，且用 usageCount 渲染总量（022 改写文案后仍成立）',
-    zhBlock19?.[1]?.includes('把本账期全部 {total} Credits 都花在 {model} 上') === true
-      && enBlock19?.[1]?.includes('{total} credits would buy if this cycle spent all of them on {model}') === true
-      && src19.includes('.replace("{total}", usageCount(total))')
-      && src19.includes('.replace("{model}", selectedLabel)'))
+  ok('019/023 i18n：标题固定不再拼占位符，小字三键已删',
+    zhBlock19?.[1]?.includes('usageCreditsModelPickTitle: "如果只用单个模型"') === true
+      && enBlock19?.[1]?.includes('usageCreditsModelPickTitle: "If you used a single model"') === true
+      && src19.includes('usageCreditsModelPickHint') === false
+      && src19.includes('{model}') === false)
 
   const readme19 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn19 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
   ok('019 README：中英都写了单模型容量测算法与截图',
-    readme19.includes('如果只用这一个模型') && readme19.includes('usage-credits-model.png')
-      && readmeEn19.includes('If you used only this model')
+    readme19.includes('如果只用单个模型') && readme19.includes('usage-credits-model.png')
+      && readmeEn19.includes('If you used a single model')
       && readmeEn19.includes('docs/images/en/usage-credits-model.png'))
   const changelog19 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
   ok('019 CHANGELOG：Unreleased 记了单模型容量测算',
@@ -2114,17 +2115,16 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     src22c.includes('function usageModelEstimateOf(')
       && src22c.includes('const estimate = usageModelEstimateOf(selected.item)')
       && /usageModelCapacityOf, usageModelPickLabel, usageModelEstimateOf,/.test(src22c))
-  ok('022 客户端 share 小字行：类名、CSS、{tokens} 替换都在',
-    src22c.includes('tpq-usage-credits-modelpick-share')
-      && /\.tpq-usage-credits-modelpick-share\{[^}]*font-size:10\.5px/.test(src22c)
-      && src22c.includes('copy.usageCreditsModelPickShare.replace("{tokens}"'))
-  ok('022 客户端 estimate 标签键存在且中英都有',
-    src22c.includes('usageCreditsModelPickEstimate:') && src22c.includes('usageCreditsModelPickShare:'))
+  ok('023 客户端：022 estimate 分支仍在（主数字与分项来源）',
+    src22c.includes('const estimate = usageModelEstimateOf(selected.item)')
+      && src22c.includes('estimate !== null ? estimate.classes : selected.capacity.classes'))
+  ok('023 客户端 estimate 标签键存在且中英都有',
+    src22c.includes('usageCreditsModelPickEstimate:') && src22c.includes('usageCreditsModelPickCard:'))
   const zhBlock22 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src22c)
   const enBlock22 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src22c)
   const keysOf22 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
-  ok('022 i18n：COPY 键数 zh / en 各 161',
-    keysOf22(zhBlock22?.[1] ?? '').length === 161 && keysOf22(enBlock22?.[1] ?? '').length === 161)
+  ok('022 i18n：COPY 键数 zh / en 各 158（023 删掉 hint / share / note）',
+    keysOf22(zhBlock22?.[1] ?? '').length === 158 && keysOf22(enBlock22?.[1] ?? '').length === 158)
 
   const readme22 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn22 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
@@ -2138,6 +2138,45 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('022 规格目录四件齐全',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '022-price-estimate', name))))
+}
+
+// 23) 023 单模型估算独立成模块：不新增路由 / 配置键 / 出站，只改呈现与文案。
+{
+  const src23 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('023 客户端：独立 section 有类名 / data 钩子 / 标题节点',
+    src23.includes('className: "tpq-usage-single-model"')
+      && src23.includes('"data-usage-single-model": "1"')
+      && src23.includes('className: "tpq-usage-single-model-title"'))
+  ok('023 客户端：模块只由 usageSingleModelSection 产出，换算卡不再 push modelPick',
+    src23.includes('function usageSingleModelSection(')
+      && src23.includes('if (modelPick !== null) children.push(modelPick)') === false)
+  ok('023 客户端：装配顺序 credits → 单模型块',
+    /blocks\.push\(usageCreditsSection\([\s\S]*?const singleModelBlock = usageSingleModelSection\(copy, credits, stale\)[\s\S]*?blocks\.push\(singleModelBlock\)/.test(src23))
+  ok('023 客户端：旧的小字三类节点与文案彻底删除',
+    src23.includes('usageCreditsModelPickHint') === false
+      && src23.includes('usageCreditsModelPickShare') === false
+      && src23.includes('usageCreditsModelPickNote') === false
+      && src23.includes('tpq-usage-credits-modelpick-share') === false)
+  ok('023 客户端：标题逐字（中英）',
+    src23.includes('usageCreditsModelPickTitle: "如果只用单个模型"')
+      && src23.includes('usageCreditsModelPickTitle: "If you used a single model"'))
+  ok('023 客户端：模块容器与标题 CSS 三条都在',
+    /\.tpq-usage-single-model\{[^}]*border:1px solid var\(--dsw-alias-border-l2,rgba\(128,128,128,\.22\)\);border-radius:12px;[\s\S]{0,200}display:flex;flex-direction:column;gap:8px/.test(src23)
+      && src23.includes('.tpq-usage-single-model[data-stale="1"]{opacity:.55}')
+      && /\.tpq-usage-single-model-title\{margin:0;font-size:14px;font-weight:600;line-height:1\.35\}/.test(src23))
+  ok('023 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '023-single-model-module', name))))
+  const readme23 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn23 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  const changelog23 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('023 README / CHANGELOG 记了独立模块',
+    readme23.includes('如果只用单个模型') && readmeEn23.includes('If you used a single model')
+      && /## \[Unreleased\]/.test(changelog23) && changelog23.includes('023'))
+  ok('023 没有新增配置键 / 出站主机 / 依赖',
+    Object.keys(__internals.DEFAULTS).length === 26
+      && __internals.DECLARED_HOSTS.length === 8
+      && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

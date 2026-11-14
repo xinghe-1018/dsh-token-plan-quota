@@ -1694,8 +1694,8 @@ function findChip(node) {
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
   // 019 增了 4 个容量测算键（ModelPickTitle/Hint/Card/Note），155 → 159；
    // 022 又增 2 个（ModelPickEstimate/Share），159 → 161；023 删 3 个（Hint/Share/Note），161 → 158。
-   // 024 删 6 个口径脚注键（CreditsNote/ModelsNote/RatioNote/NoteDelay/NoteCacheWrite/NoteNoCredits），158 → 152。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [152, 152])
+   // 024 删 6 个口径脚注键（CreditsNote/ModelsNote/RatioNote/NoteDelay/NoteCacheWrite/NoteNoCredits），158 → 152；025 加 1 个夜间折扣说明键（SingleModelNightNote），152 → 153。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [153, 153])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -5755,13 +5755,15 @@ function tokenTextNumber(text) {
     source.includes('"data-model": entry.id')
     && source.includes('"data-selected": isSelected ? "1" : "0"')
     && source.includes('"aria-pressed": isSelected ? "true" : "false"'))
-  ok('T023 COPY 三键逐字（标题 / 卡片 / 价目标签）',
+  ok('T023 / T025 COPY 四键逐字（标题 / 卡片 / 价目标签 / 夜间折扣说明）',
     source.includes('usageCreditsModelPickTitle: "如果只用单个模型"')
     && source.includes('usageCreditsModelPickCard: "折算可用 tokens"')
     && source.includes('usageCreditsModelPickEstimate: "按官方价目估算 tokens"')
     && source.includes('usageCreditsModelPickTitle: "If you used a single model"')
     && source.includes('usageCreditsModelPickCard: "Derived capacity"')
-    && source.includes('usageCreditsModelPickEstimate: "Estimated from list prices"'))
+    && source.includes('usageCreditsModelPickEstimate: "Estimated from list prices"')
+    && source.includes('usageSingleModelNightNote: "按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。"')
+    && source.includes('usageSingleModelNightNote: "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."'))
   ok('T023 COPY 旧的小字三键已删（hint / share / note）',
     source.includes('usageCreditsModelPickHint') === false
     && source.includes('usageCreditsModelPickShare') === false
@@ -6058,9 +6060,9 @@ const NOEST_MODEL = {
   ok('T023 022 的占比小字 / 口径脚注不再渲染',
     findNodes(pick, 'tpq-usage-credits-modelpick-share').length === 0
     && findNodes(pick, 'tpq-usage-credits-modelpick-note').length === 0)
-  check('T023 模块内只剩 chips 与结果卡',
+  check('T023 模块内只剩 chips、结果卡与一行夜间折扣说明（025）',
     (pick.children ?? []).map((child) => String(child?.props?.className ?? '')),
-    ['tpq-usage-credits-modelpick-chips', 'tpq-usage-credits-modelpick-card'])
+    ['tpq-usage-credits-modelpick-chips', 'tpq-usage-credits-modelpick-card', 'tpq-usage-single-model-note'])
   ok('T022 卡片子树仍不含 Credits / 百分比', !/Credits|%/.test(collectText(card).join('')), collectText(card).join('|'))
 
   /* ③ 切换 chip：第二项没有 estimate → 逐字段回落 019，share 行消失。 */
@@ -6071,9 +6073,10 @@ const NOEST_MODEL = {
     collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), '折算可用 tokens')
   check('T022 无 estimate 的行回落 capacity.tokens',
     collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-total')[0]).join(''), '7.53亿tokens')
-  ok('T022 无 estimate 时小字 share / 脚注都不出现',
+  ok('T022 无 estimate 时 share / 旧脚注 / 夜间折扣说明都不出现',
     findNodes(nextPick, 'tpq-usage-credits-modelpick-share').length === 0
-    && findNodes(nextPick, 'tpq-usage-credits-modelpick-note').length === 0)
+    && findNodes(nextPick, 'tpq-usage-credits-modelpick-note').length === 0
+    && findNodes(nextPick, 'tpq-usage-single-model-note').length === 0)
 }
 
 /* ④ 英文界面：标签与 share 行都切到 en，数字用 K/M 量纲。 */
@@ -6088,6 +6091,9 @@ const NOEST_MODEL = {
   check('T023 en 模块标题逐字',
     collectText(findNodes(singleModelSectionOf(tree), 'tpq-usage-single-model-title')[0]).join(''),
     'If you used a single model')
+  check('T025 en 夜间折扣说明逐字',
+    collectText(findNodes(pick, 'tpq-usage-single-model-note')[0]).join(''),
+    'Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher.')
   ok('T022 en 下无中文残留', !/[\u4e00-\u9fa5]/.test(collectText(pick).join('')), collectText(pick).join('|'))
 }
 
@@ -6123,9 +6129,12 @@ const NOEST_MODEL = {
   const section = singleModelSectionOf(tree)
   ok('T023 渲染：独立模块存在且换算卡内没有 modelpick',
     section !== undefined && modelPickOf(creditsSectionOf(tree)) === undefined)
-  ok('T023 渲染：模块没有 hint / share / note 三类小字',
+  ok('T023 渲染：模块没有 hint / share / 旧脚注三类小字',
     ['tpq-usage-credits-modelpick-hint', 'tpq-usage-credits-modelpick-share', 'tpq-usage-credits-modelpick-note']
       .every((name) => findNodes(section, name).length === 0))
+  check('T025 渲染：有价目模型带一行夜间折扣说明',
+    collectText(findNodes(section, 'tpq-usage-single-model-note')[0]).join(''),
+    '按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。')
   check('T023 渲染：有价目模型的主数字仍是 estimate',
     collectText(findNodes(modelPickCardOf(section), 'tpq-usage-credits-modelpick-total')[0]).join(''), '48.0万tokens')
   modelPickChips(section)[1].props.onClick()

@@ -1032,9 +1032,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
   // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）；
   // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 加 4 → 159；022 再加 2 个估算键 → 161；
-  // 023 删 Hint/Share/Note 三键 → 158；024 删六个口径脚注键 → 152。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 152；011 本身不加键）',
-    zhKeys011.length === 152 && enKeys011.length === 152)
+  // 023 删 Hint/Share/Note 三键 → 158；024 删六个口径脚注键 → 152；025 加夜间折扣说明键 → 153。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 153；011 本身不加键）',
+    zhKeys011.length === 153 && enKeys011.length === 153)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
@@ -1106,9 +1106,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161；023 删三键 → 158；024 删六键 → 152。
-  ok('012 i18n：COPY 现在 zh / en 各 152 键（012/014/015/016/017/019/022/023/024 的键都在里面）',
-    zhKeys012.length === 152 && enKeys012.length === 152)
+  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161；023 删三键 → 158；024 删六键 → 152；025 → 153。
+  ok('012 i18n：COPY 现在 zh / en 各 153 键（012/014/015/016/017/019/022/023/024/025 的键都在里面）',
+    zhKeys012.length === 153 && enKeys012.length === 153)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1553,8 +1553,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数 zh / en 各 152（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 删 3 - 024 删 6）',
-    zhKeys015.length === 152 && enKeys015.length === 152)
+  ok('015 i18n：COPY 键数 zh / en 各 153（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 删 3 - 024 删 6 + 025 加 1）',
+    zhKeys015.length === 153 && enKeys015.length === 153)
   const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle']
   ok('015 i18n：3 个新键中英都在（024 删掉 ModelsNote）', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
   const zhLines015 = (zhBlock015?.[1] ?? '').split('\n')
@@ -1674,8 +1674,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
   const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
-  ok('016 i18n：COPY 现在 zh / en 各 152 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
-    zhKeys016.length === 152 && enKeys016.length === 152)
+  ok('016 i18n：COPY 现在 zh / en 各 153 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6 + 025 的 1）',
+    zhKeys016.length === 153 && enKeys016.length === 153)
   const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
   ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
   const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
@@ -1831,14 +1831,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('017 CSS：≤520px 折成两列（320/375 视口不横向溢出）',
       /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(clientSrc017))
 
-    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161，023 删 3 → 158，024 删 6 → 152；标题改成「1 Credit 折合」，新增单位与按日提示。
+    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161，023 删 3 → 158，024 删 6 → 152，025 加 1 → 153；标题改成「1 Credit 折合」，新增单位与按日提示。
     const zhBlock017 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const enBlock017 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const keysOf017 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
     const zhKeys017 = keysOf017(zhBlock017?.[1] ?? '')
     const enKeys017 = keysOf017(enBlock017?.[1] ?? '')
-    ok('017 i18n：COPY 现在 zh / en 各 152 键（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
-      zhKeys017.length === 152 && enKeys017.length === 152)
+    ok('017 i18n：COPY 现在 zh / en 各 153 键（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6 + 025 的 1）',
+      zhKeys017.length === 153 && enKeys017.length === 153)
     ok('017 i18n：标题/单位/按日提示三个键中英都在',
       ['usageCreditsClasses', 'usageCreditsClassesUnit', 'usageCreditsDaily']
         .every(key => zhKeys017.includes(key) && enKeys017.includes(key)))
@@ -1993,8 +1993,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf19 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys19 = keysOf19(zhBlock19?.[1] ?? '')
   const enKeys19 = keysOf19(enBlock19?.[1] ?? '')
-  ok('019 i18n：COPY 键数 zh / en 各 152（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
-    zhKeys19.length === 152 && enKeys19.length === 152)
+  ok('019 i18n：COPY 键数 zh / en 各 153（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6 + 025 的 1）',
+    zhKeys19.length === 153 && enKeys19.length === 153)
   const pickKeys19 = ['usageCreditsModelPickTitle', 'usageCreditsModelPickCard']
   ok('019 i18n：标题与卡片两个键中英都在（023 后收敛为三键）',
     pickKeys19.every(key => zhKeys19.includes(key) && enKeys19.includes(key)))
@@ -2120,8 +2120,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhBlock22 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src22c)
   const enBlock22 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src22c)
   const keysOf22 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
-  ok('022 i18n：COPY 键数 zh / en 各 152（023 删 hint/share/note，024 删六个口径脚注键）',
-    keysOf22(zhBlock22?.[1] ?? '').length === 152 && keysOf22(enBlock22?.[1] ?? '').length === 152)
+  ok('022 i18n：COPY 键数 zh / en 各 153（023 删 hint/share/note，024 删六个口径脚注键，025 加夜间折扣说明）',
+    keysOf22(zhBlock22?.[1] ?? '').length === 153 && keysOf22(enBlock22?.[1] ?? '').length === 153)
 
   const readme22 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn22 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
@@ -2196,8 +2196,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhBlock24 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src24)
   const enBlock24 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src24)
   const keysOf24 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
-  ok('024 i18n：COPY 键数 zh / en 各 152（023 的 158 - 024 的 6）',
-    keysOf24(zhBlock24?.[1] ?? '').length === 152 && keysOf24(enBlock24?.[1] ?? '').length === 152)
+  ok('024 i18n：COPY 键数 zh / en 各 153（023 的 158 - 024 的 6 + 025 的 1）',
+    keysOf24(zhBlock24?.[1] ?? '').length === 153 && keysOf24(enBlock24?.[1] ?? '').length === 153)
   ok('024 规格目录四件齐全',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '024-drop-explanatory-notes', name))))
@@ -2211,6 +2211,35 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     Object.keys(__internals.DEFAULTS).length === 26
       && __internals.DECLARED_HOSTS.length === 8
       && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
+}
+
+/* ── 第 25 节：单模型估算的夜间折扣说明（spec 025）────────────────────────────
+ * 022 的估算按官方忙时价目算，夜间 22:00-08:00 官方打折，所以卡片数字是下界。
+ * 用户 m01841 点名要这一句；它是 024「屏上不留说明」的单句例外，且只在 estimate
+ * 口径渲染——回落到 019 capacity 时不该出现。 */
+{
+  const src25 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('025 i18n：夜间折扣说明键中英都在且逐字',
+    src25.includes('usageSingleModelNightNote: "按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。"')
+      && src25.includes('usageSingleModelNightNote: "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."'))
+  ok('025 客户端：说明只在 estimate 口径渲染（条件节点，位于结果卡之后）',
+    /estimate !== null \? React\.createElement\("p", \{\s*key: "night",\s*className: "tpq-usage-single-model-note",\s*\}, copy\.usageSingleModelNightNote\)/.test(src25))
+  ok('025 CSS：夜间折扣说明一行弱化色、11px、可断行',
+    /\.tpq-usage-single-model-note\{[^}]*font-size:11px[^}]*--dsw-alias-label-tertiary[^}]*overflow-wrap:anywhere/.test(src25))
+  ok('025 没有新增配置键 / 出站主机 / 依赖',
+    Object.keys(__internals.DEFAULTS).length === 26
+      && __internals.DECLARED_HOSTS.length === 8
+      && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
+  ok('025 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '025-single-model-night-note', name))))
+  const readme25 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn25 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  const changelog25 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('025 README / CHANGELOG 记了夜间折扣说明',
+    readme25.includes('025') && readme25.includes('tpq-usage-single-model-note')
+      && readmeEn25.includes('025') && readmeEn25.includes('tpq-usage-single-model-note')
+      && /## \[Unreleased\]/.test(changelog25) && changelog25.includes('025'))
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

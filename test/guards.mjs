@@ -1300,8 +1300,12 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /\.tpq-usage-viewport:focus-visible\{outline:none\}/.test(src)
       && !/\.tpq-usage-viewport:focus-visible\{[^}]*outline:2px solid/.test(src)
       && /"data-usage-scroll": "1",\s*tabIndex: 0,/.test(src))
-  ok('013 滚动：模型排行卡内滚动仍在（252px + thin + contain），两层互不吃掉',
-    src.includes('max-height:252px') && /\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(src))
+  // 020：内层列表与整页视口的职责分开——内层只管自己滚（auto，不拦链），
+  // 外层保留 contain 防穿透宿主。任一侧被改回 / 改成别的值，这条就红。
+  ok('013 滚动：模型排行卡内滚动仍在（252px + thin），且滚动链交还外层',
+    src.includes('max-height:252px')
+      && /\.tpq-usage-models\{[^}]*overscroll-behavior:auto/.test(src)
+      && /\.tpq-usage-viewport\{[^}]*overscroll-behavior:contain/.test(src))
 
   // 3) 索引 v2：版本、两键白名单、两条同步路径都继承上一片的模型。
   ok('013 索引：版本升到 2（空索引也带 2）', USAGE_INDEX_VERSION === 2 && emptyUsageIndex().version === 2)
@@ -1565,10 +1569,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     src.includes('官方不按模型拆分') && /not split by model/i.test(src))
 
   // 4) CSS：模型块定高内滚 + 焦点环 + 细滚动条，与 012 的模型卡同一套变量。
-  ok('015 CSS：模型块 252px 内滚（thin + contain）',
+  ok('015 CSS：模型块 252px 内滚（thin + 滚动链交还外层 auto）',
     /\.tpq-usage-credits-models\{[^}]*max-height:252px[^}]*overflow-y:auto/.test(src)
       && /\.tpq-usage-credits-models\{[^}]*scrollbar-width:thin/.test(src)
-      && /\.tpq-usage-credits-models\{[^}]*overscroll-behavior:contain/.test(src))
+      && /\.tpq-usage-credits-models\{[^}]*overscroll-behavior:auto/.test(src)
+      && /\.tpq-usage-viewport\{[^}]*overscroll-behavior:contain/.test(src))
   ok('015 CSS：焦点环与 8px 细滚动条都在（键盘也能滚这块）',
     /\.tpq-usage-credits-models:focus-visible\{[^}]*outline/.test(src)
       && /\.tpq-usage-credits-models::-webkit-scrollbar\{[^}]*width:8px/.test(src))
@@ -2021,6 +2026,61 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('019 规格目录存在（spec/plan/tasks/INTERFACE）',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '019-model-capacity', name))))
+}
+
+/* ── 第 20 节：滚动链交还（spec 020）──────────────────────────────────────────
+ * 取证：列表滚到底后同一次滚轮的余量被 overscroll-behavior:contain 吃掉，
+ * 外层整页视口纹丝不动（innerTop=396=max 时 outerTop 恒 1302，max 1526）。
+ * 这里钉的是职责划分而不是某个像素值：内层列表 auto（放行），外层视口 contain（防穿透宿主），
+ * 横向图表容器仍只拦横向（overscroll-behavior-x:contain），纵向不阻断。 */
+{
+  const src20 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('020 两处内层列表都放行纵向滚动链（auto），不再 contain',
+    /\.tpq-usage-models\{[^}]*overscroll-behavior:auto/.test(src20)
+      && /\.tpq-usage-credits-models\{[^}]*overscroll-behavior:auto/.test(src20)
+      && !/\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(src20)
+      && !/\.tpq-usage-credits-models\{[^}]*overscroll-behavior:contain/.test(src20))
+  ok('020 外层整页视口仍 contain（链到边界也不穿透宿主页面）',
+    /\.tpq-usage-viewport\{[^}]*overscroll-behavior:contain/.test(src20))
+  ok('020 横向图表容器只拦横向滚动链（overscroll-behavior-x:contain 保留）',
+    /\.tpq-usage-scroll\{[^}]*overscroll-behavior-x:contain/.test(src20))
+  const iface20 = readFileSync(join(ROOT, 'specs', '020-scroll-chain', 'INTERFACE.md'), 'utf8')
+  ok('020 INTERFACE 写明双层职责与可证伪判据（内层放行 / 外层拦截 / outerTop 递增）',
+    iface20.includes('overscroll-behavior:auto') && iface20.includes('overscroll-behavior:contain')
+      && iface20.includes('outerTop'))
+}
+
+/* ── 第 21 节：徽标面板固定底栏（spec 021）──────────────────────────────────
+ * 取证：入口原为 .tpq-body 末尾的裸按钮，面板被 52vh 夹住时被整块裁掉
+ * （锚定态 entry visiblePx=0、overflowBottomPx=32；悬浮最小高度态连「更新于」都切 5px）。
+ * 这里钉结构与不变量：底栏 sticky 粘底、背景走主题变量、不用绝对定位抢 resize 手柄、
+ * 两按钮显示条件与键盘可达性保持原样。 */
+{
+  const src21 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const footStart21 = src21.indexOf('.tpq-panel-foot{')
+  const footRule21 = footStart21 < 0 ? '' : src21.slice(footStart21, src21.indexOf('}', footStart21) + 1)
+  ok('021 底栏 sticky 粘底（position:sticky + bottom:0）',
+    footRule21.includes('position:sticky') && footRule21.includes('bottom:0'))
+  ok('021 底栏负外边距抵消 .tpq-body 的 12px/14px 内边距（铺满整宽）',
+    footRule21.includes('margin:8px -14px -12px') && footRule21.includes('padding:0 14px 8px'))
+  ok('021 底栏背景走面板同一主题变量、不写裸色 / transparent',
+    /background:var\(--dsw-alias-bg-overlay/.test(footRule21)
+      && !/background:(?:#|transparent|rgba\()/.test(footRule21))
+  ok('021 底栏不用绝对定位（绘制层不压住 .tpq-resize 手柄）',
+    !footRule21.includes('position:absolute') && /\.tpq-resize\{position:absolute/.test(src21))
+  ok('021 底栏内间距与焦点环由子选择器补、不改全局 .tpq-updated',
+    src21.includes('.tpq-panel-foot>.tpq-updated{margin-top:0}')
+      && src21.includes('.tpq-panel-foot>.tpq-usage-entry{margin-top:4px}')
+      && /\.tpq-panel-foot>\.tpq-updated:focus-visible\{[^}]*outline:2px solid var\(--dsw-alias-brand-primary/.test(src21)
+      && !/^\.tpq-updated:focus-visible\{/m.test(src21))
+  ok('021 底栏结构：两按钮收进 div.tpq-panel-foot；缩放手柄仍建在面板外层',
+    /React\.createElement\("div", \{ className: "tpq-panel-foot" \},/.test(src21)
+      && /React\.createElement\("div", \{ className: "tpq-resize"/.test(src21))
+  /* 021 验收：旧写法 [data-float=1] 的值不带引号，是无效选择器（值不能以数字开头），
+     浏览器整条丢弃 → 悬浮态 height:100% 从未生效、body 被基础 max-height 撑高再被面板裁掉。 */
+  ok('021 悬浮态 body 规则用有效属性选择器（带引号），悬浮态 height:100% 才生效',
+    src21.includes('.tpq-panel[data-float="1"] .tpq-body{max-height:none;height:100%}')
+      && !/^\.tpq-panel\[data-float=1\][ .{]/m.test(src21))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

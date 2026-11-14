@@ -2529,6 +2529,63 @@ async function mountUsage(options = {}) {
   findNodes(tree, 'tpq-chip')[0].props.onClick()
   tree = await settle(renderBadge, 3)
   check('usageStats=false 时不出现入口按钮', findNodes(tree, 'tpq-usage-entry').length, 0)
+  const footNoEntry = findNodes(tree, 'tpq-panel-foot')[0]
+  check('021 usageStats=false 时底栏仍在、只剩「更新于」（不塌陷成裸按钮）',
+    (footNoEntry?.children ?? []).filter(Boolean).map(node => node?.props?.className), ['tpq-updated'])
+}
+
+/* 021：面板底栏。「更新于 / 用量统计」原来裸挂在 .tpq-body 末尾，面板被 52vh 或悬浮高度
+ * 夹住时会被裁掉（取证：锚定态入口 visiblePx=0，悬浮最小高度态连「更新于」都切 5px）。
+ * 现在收进 .tpq-panel-foot 用 sticky 粘在可视底边；这里钉结构与「不改按钮语义」。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const renderBadge = () => {
+    beginRender()
+    return bundle.registered[0].component()
+  }
+  let tree = await settle(renderBadge, 4)
+  findNodes(tree, 'tpq-chip')[0].props.onClick()
+  tree = await settle(renderBadge, 3)
+  const body = findNodes(tree, 'tpq-body')[0]
+  const foot = findNodes(tree, 'tpq-panel-foot')[0]
+  ok('021 底栏恰好一个、且是 .tpq-body 的最后一个子元素',
+    findNodes(tree, 'tpq-panel-foot').length === 1
+      && (body?.children ?? []).at(-1)?.props?.className === 'tpq-panel-foot',
+    JSON.stringify((body?.children ?? []).map(node => node?.props?.className)))
+  check('021 底栏里依次是「更新于」与「用量统计」（顺序不变）',
+    (foot?.children ?? []).map(node => node?.props?.className), ['tpq-updated', 'tpq-usage-entry'])
+  ok('021 底栏两按钮仍是原生 button（Tab 可达、语义不变）',
+    (foot?.children ?? []).every(node => node?.type === 'button' && node?.props?.type === 'button'))
+  const panel = findNodes(tree, 'tpq-panel')[0]
+  ok('021 缩放手柄仍挂在面板上、没有被卷进底栏',
+    findNodes(panel, 'tpq-resize').length === 1 && findNodes(foot, 'tpq-resize').length === 0)
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const cssStart = code.indexOf('.tpq-panel-foot{')
+  const footRule = cssStart < 0 ? '' : code.slice(cssStart, code.indexOf('}', cssStart) + 1)
+  ok('021 CSS 底栏 sticky 粘底（position:sticky + bottom:0）',
+    footRule.includes('position:sticky') && footRule.includes('bottom:0'), footRule)
+  ok('021 CSS 底栏负外边距抵消 .tpq-body 的 12px/14px 内边距（铺满整宽）',
+    footRule.includes('margin:8px -14px -12px') && footRule.includes('padding:0 14px 8px'))
+  // 背景必须是面板同一个主题变量（fallback 与 .tpq-panel 一致），不能写成裸色或 transparent，
+  // 否则滚动内容会从底栏后面透出来。
+  ok('021 CSS 底栏背景走面板同一主题变量（不写裸色 / transparent）',
+    /background:var\(--dsw-alias-bg-overlay/.test(footRule)
+      && !/background:(?:#|transparent|rgba\()/.test(footRule))
+  ok('021 CSS 底栏不用绝对定位（不抢 .tpq-resize 手柄的绘制层）', !footRule.includes('position:absolute'))
+  ok('021 CSS 底栏内的间距与焦点环由子选择器补（全局 .tpq-updated 规则不动）',
+    code.includes('.tpq-panel-foot>.tpq-updated{margin-top:0}')
+      && code.includes('.tpq-panel-foot>.tpq-usage-entry{margin-top:4px}')
+      && /\.tpq-panel-foot>\.tpq-updated:focus-visible\{[^}]*outline:2px solid var\(--dsw-alias-brand-primary/.test(code)
+      && !/^\.tpq-updated:focus-visible\{/m.test(code))
+  /* 021 验收中发现：悬浮态那条 height:100% 的旧写法 [data-float=1] 值不带引号，按 CSS 语法是
+     无效选择器（值不能以数字开头），整条规则被浏览器丢弃 —— body 被基础 max-height 撑高、
+     再被 .tpq-panel 的 overflow:hidden 裁掉，底栏在悬浮态无处可粘。这里同时钉住
+     「带引号写法在」与「不带引号写法不在」。 */
+  ok('021 悬浮态 body 规则用有效属性选择器（[data-float="1"] 带引号），height:100% 才生效',
+    code.includes('.tpq-panel[data-float="1"] .tpq-body{max-height:none;height:100%}')
+      && !/^\.tpq-panel\[data-float=1\][ .{]/m.test(code)
+      && code.includes('.tpq-panel[data-float="1"]{box-shadow:'))
 }
 
 /* 视觉自检的结构面：窄视口自己滚动、375px 排版、零依赖配色。 */
@@ -4387,10 +4444,13 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   check('T012 模型容器有 group 语义', container?.props?.role, 'group')
   check('T012 模型容器不用 aria-live（不抢读屏）', container?.props?.['aria-live'], undefined)
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  ok('T012 模型列表 max-height + 纵向滚动 + 滚动链隔离',
+  // 020：内层列表不再拦滚动链（auto），到底/到顶后同一次滚轮交给外层整页视口续滚；
+  // 外层 .tpq-usage-viewport 仍 contain，防止滚动穿透到宿主页面。成对断言：改动任一半都会红。
+  ok('T012 模型列表 max-height + 纵向滚动 + 滚动链交还（内层 auto、外层仍 contain）',
     /\.tpq-usage-models\{[^}]*max-height:252px/.test(code)
       && /\.tpq-usage-models\{[^}]*overflow-y:auto/.test(code)
-      && /\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(code),
+      && /\.tpq-usage-models\{[^}]*overscroll-behavior:auto/.test(code)
+      && /\.tpq-usage-viewport\{[^}]*overscroll-behavior:contain/.test(code),
     code.slice(code.indexOf('.tpq-usage-models{'), code.indexOf('.tpq-usage-models{') + 260))
   ok('T012 滚动条细、thumb 用既有 border 变量（深色主题不写死颜色）',
     /\.tpq-usage-models\{[^}]*scrollbar-width:thin/.test(code)
@@ -5144,8 +5204,8 @@ async function mountBreakdown(credits, options = {}) {
     /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(source.slice(source.indexOf('@media (max-width:520px)'))))
   ok('T017 CSS 按日提示 11px 弱化色',
     /\.tpq-usage-credits-daily\{[^}]*font-size:11px;[\s\S]{0,120}label-tertiary/.test(creditsCss))
-  ok('T015 CSS 模型块定高内滚（252px / auto / contain / thin / scrollbar-color）',
-    /\.tpq-usage-credits-models\{[^}]*max-height:252px;[\s\S]{0,120}overflow-y:auto;[\s\S]{0,160}overscroll-behavior:contain;[\s\S]{0,160}scrollbar-width:thin;[\s\S]{0,200}scrollbar-color:var\(--dsw-alias-border-l2/.test(creditsCss))
+  ok('T015 CSS 模型块定高内滚（252px / auto / 滚动链 auto / thin / scrollbar-color）',
+    /\.tpq-usage-credits-models\{[^}]*max-height:252px;[\s\S]{0,120}overflow-y:auto;[\s\S]{0,160}overscroll-behavior:auto;[\s\S]{0,160}scrollbar-width:thin;[\s\S]{0,200}scrollbar-color:var\(--dsw-alias-border-l2/.test(creditsCss))
   ok('T015 CSS 细滚动条 8px + thumb 圆角 + 焦点环',
     creditsCss.includes('.tpq-usage-credits-models::-webkit-scrollbar{width:8px}')
     && /\.tpq-usage-credits-models::-webkit-scrollbar-thumb\{[^}]*border-radius:4px/.test(creditsCss)

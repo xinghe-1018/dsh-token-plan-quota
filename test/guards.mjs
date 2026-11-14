@@ -958,5 +958,96 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   }
 }
 
+
+/* 011 柱子悬停浮层：把「浮层内容 ≡ aria-label ≡ COPY」与「原生 <title> 不许回来」钉在源码形状上。
+ * 为什么值得进静态矩阵：这三件事坏掉时功能测试常常全绿——浮层另拼一套文案，视觉对、读屏错；
+ * 有人把 <title> 加回来，鼠标停 1 秒后系统提示框和浮层同时出现（只有真机才看得见）。
+ * 顺带钉住「零新 i18n 键 / 零新配置键 / 零新出站主机」：011 是纯客户端展示层，越界就会破坏口径。 */
+{
+  const clientSrc011 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const tipStart = clientSrc011.indexOf('function usageBucketRange')
+  const chartStart = clientSrc011.indexOf('function UsageChart')
+  const chartEnd = clientSrc011.indexOf('function usageSplitCell')
+  ok('011 浮层纯函数段在 lib/client.js 里存在且可定位', tipStart > 0 && chartStart > tipStart)
+  const tipRegion = tipStart > 0 ? clientSrc011.slice(tipStart, chartStart) : ''
+  const chartRegion = chartStart > 0 && chartEnd > chartStart ? clientSrc011.slice(chartStart, chartEnd) : ''
+  ok('011 浮层纯函数段被完整扫到（字符数 > 5000）', tipRegion.length > 5000)
+  ok('011 图表段被完整扫到（字符数 > 10000）', chartRegion.length > 10000)
+
+  // 1) 命中钩子：截图（⑭）与客户端测试都按这批属性找节点，漏一个就整条链断。
+  for (const hook of ['"data-usage-bar": "1"', '"data-usage-bar-index"', '"data-usage-bar-from"',
+    '"data-usage-bar-to"', '"data-usage-tip": "1"', '"data-usage-tip-index"',
+    '"data-usage-tip-range": "1"', '"data-usage-tip-tokens": "1"', '"data-usage-tip-" + row.key',
+    'role: "tooltip"', 'tabIndex: 0', 'role: "img"']) {
+    ok('011 客户端：命中钩子 ' + hook + ' 存在', clientSrc011.includes(hook))
+  }
+
+  // 2) 不许再渲染原生 <title>：它会和浮层同时弹（且样式不受控）。
+  ok('011 客户端：不再渲染原生 <title>（否则系统提示框与浮层同时出现）',
+    !/createElement\(\s*"title"/.test(clientSrc011))
+
+  // 3) 同一份文本：浮层首行与 aria-label 都从 usageBucketRange 拼，别各写一套。
+  ok('011 客户端：aria-label 走 usageBucketTitle（与浮层同源）',
+    chartRegion.includes('usageBucketTitle(bucket, copy)'))
+  ok('011 客户端：usageBucketTitle 与 usageTipContent 共用 usageBucketRange（不各拼一套日期）',
+    tipRegion.split('usageBucketRange(bucket)').length - 1 >= 2)
+  ok('011 客户端：周桶区间用 U+2013（en dash）且两端各一个空格',
+    tipRegion.includes('" \u2013 "'))
+
+  // 4) 展示口径（宪法原则 I）：浮层只报绝对 tokens，不派生百分比、不折算 Credits。
+  //    判据与 006 段一致：% 后紧跟数字才算百分比（这里的 % 只该出现在取模里）。
+  const stripComments011 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  const tipCode = stripComments011(tipRegion)
+  const chartCode = stripComments011(chartRegion)
+  ok('011 浮层段：不派生百分比、不出现 Credits、无硬编码中文（文案必须走 COPY）',
+    !/%\s*\d/.test(tipCode) && !/credit/i.test(tipCode) && !/[\u3400-\u9fff]/u.test(tipCode))
+  ok('011 图表段：不派生百分比、不出现 Credits、无硬编码中文',
+    !/%\s*\d/.test(chartCode) && !/credit/i.test(chartCode) && !/[\u3400-\u9fff]/u.test(chartCode))
+
+  // 5) 定位/夹紧的四个纯函数必须可由测试直接调（否则只能起真实布局，回归没人跑）。
+  const clientInternals011 = clientSrc011.slice(clientSrc011.lastIndexOf('__internals = {'),
+    clientSrc011.indexOf('exports.apply', clientSrc011.lastIndexOf('__internals = {')))
+  ok('011 纯函数从客户端 __internals 暴露（区间/内容/夹紧/内联/指针/柱矩形）',
+    ['usageBucketRange', 'usageTipContent', 'usageTipPlacement', 'usageTipInline', 'usagePointerPoint', 'usageBarRectOf']
+      .every(name => new RegExp('\\b' + name + '\\b').test(clientInternals011)))
+
+  // 6) CSS 形状：浮层不挡指针（否则 pointermove 会抖）、要浮在卡片之上、portal 时 pinned 到视口。
+  ok('011 CSS：浮层 pointer-events:none + position:fixed + 高 z-index 三件都在',
+    clientSrc011.includes('.tpq-usage-tip{position:fixed') && clientSrc011.includes('pointer-events:none')
+      && clientSrc011.includes('z-index:9999'))
+
+  // 7) 零新 i18n 键：COPY 仍是 zh/en 各 134（011 明确不加键，复用既有文案）。
+  const zhBlock011 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc011)
+  const enBlock011 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc011)
+  const keysOf011 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
+  const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
+  ok('011 i18n：COPY 仍是 zh / en 各 134 键（浮层复用既有键，不新增文案）',
+    zhKeys011.length === 134 && enKeys011.length === 134)
+
+  // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
+  ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('011 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+  // 9) 对外描述与截图清单：图没生成时 check-docs 会红，这里先钉住「名字没漂」。
+  const readme011 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn011 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('011 文档：中文 README 写了悬停说明与截图',
+    readme011.includes('悬停') && readme011.includes('docs/images/usage-tooltip-2d.png'))
+  ok('011 文档：英文 README 写了 hover 说明与截图',
+    /hover/i.test(readmeEn011) && readmeEn011.includes('docs/images/en/usage-tooltip-2d.png'))
+  const shotsManifest011 = readFileSync(join(ROOT, 'scripts', 'check-docs.mjs'), 'utf8')
+  ok('011 截图清单：中英 tooltip 图都在',
+    shotsManifest011.includes('docs/images/usage-tooltip-2d.png')
+      && shotsManifest011.includes('docs/images/en/usage-tooltip-2d.png'))
+  ok('011 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '011-bar-tooltip', name))))
+  const changelog011 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('011 CHANGELOG：Unreleased 段记了悬停浮层（含 011 编号）',
+    /## \[Unreleased\]/.test(changelog011) && changelog011.includes('悬停') && changelog011.includes('011'))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

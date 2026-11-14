@@ -424,6 +424,17 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null, op
       },
     },
   }
+  // 011：图表浮层的关闭通路里 Esc 与 blur 挂在 window 上（document 的 keydown 是整页屏
+  // 「Esc 关闭面板」的既有链路，图表再塞一个会把两样一起关掉）。假 window 本来是裸对象，
+  // 这里补最小 addEventListener/removeEventListener 并留登记表，用例才能像浏览器那样
+  // 「按一下 Esc → 下一次渲染浮层消失」。
+  const windowListeners = new Map()
+  globalThis.window.addEventListener = (type, handler) => {
+    const list = windowListeners.get(type) ?? []
+    list.push(handler)
+    windowListeners.set(type, list)
+  }
+  globalThis.window.removeEventListener = () => {}
   globalThis.document = dom.document
   // fetchImpl：用例要自己控制回包时序（挂住/迟到）时用；bundle 里的 fetch 是这个形参，
   // 所以必须在装载前定好，装载后再改 globalThis.fetch 是不生效的。
@@ -441,7 +452,11 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null, op
   }
   const requireStub = (id) => {
     if (id === 'react') return React
-    if (id === 'react-dom') return fakeReactDOM
+    // 011：没有 react-dom 种子词的老宿主 —— 走 createPortal === null 的内联回退分支。
+    if (id === 'react-dom') {
+      if (options.reactDOM === false) throw new Error('module not found: react-dom')
+      return fakeReactDOM
+    }
     if (id === '@deepseek-ai/dsh-client-store') {
       // 老宿主没有这个种子词：defineStore 拿不到，整页屏不注册（徽标照常）。
       if (options.clientStore === false) throw new Error('module not found: @deepseek-ai/dsh-client-store')
@@ -454,7 +469,7 @@ async function loadBundle(fetchMode, navLanguage = 'zh-CN', fetchImpl = null, op
 
   check('bundle 声明了自己的 id', spec.id, 'dsh-token-plan-quota')
   const api = spec.factory(requireStub)
-  return { spec, api, registered, injected, effects, dom, declaredSlots, intervals }
+  return { spec, api, registered, injected, effects, dom, declaredSlots, intervals, windowListeners }
 }
 
 /** 极简 SnapshotStore 替身（getSnapshot/subscribe/set 即 notify）。 */
@@ -1918,6 +1933,8 @@ async function mountUsage(options = {}) {
   const bundle = await loadBundle(options.fetchMode ?? 'ok', options.lang ?? 'zh-CN', options.fetchImpl ?? null, {
     main: true,
     clientStore: options.clientStore,
+    // 011：reactDOM:false 用来测 createPortal 缺席时的内联浮层路径。
+    reactDOM: options.reactDOM,
   })
   bundle.dom.document.documentElement.lang = options.lang ?? 'zh-CN'
   const warns = []
@@ -2019,8 +2036,23 @@ async function mountUsage(options = {}) {
   ok('模型行按 tokens 降序（qwen 在 deepseek 前，不按数组顺序）',
     text.indexOf('qwen/qwen3-max') >= 0 && text.indexOf('qwen/qwen3-max') < text.indexOf('deepseek/deepseek-chat'),
     String(text.indexOf('qwen/qwen3-max')) + ' vs ' + String(text.indexOf('deepseek/deepseek-chat')))
-  ok('每根柱子都带 tooltip（全量数字，不靠眼看）',
-    findNodes(tree, 'tpq-usage-bar2d').every((bar) => (bar.children ?? []).some((child) => child?.type === 'title')))
+  /* 011：原生 <title> 已删除（会与自绘浮层双提示）。可读文本改由 g 的 role/aria-label 提供，
+     与浮层首行/总量同一份 usageBucketTitle —— 「不靠眼看」这条意图不变，载体换了。 */
+  const bars2d = findNodes(tree, 'tpq-usage-bar2d')
+  ok('柱子不再渲染原生 <title>（011：改自绘浮层，避免系统提示与浮层双份）',
+    bars2d.length === 7 && bars2d.every((bar) => (bar.children ?? []).every((child) => child?.type !== 'title')),
+    bars2d.map((bar) => (bar.children ?? []).map((child) => child?.type).join('+')).join(' | '))
+  ok('每根柱子带 011 命中钩子与可读文本（aria-label 与浮层同源）',
+    bars2d.every((bar, index) => bar.props['data-usage-bar'] === '1'
+      && bar.props['data-usage-bar-index'] === String(index)
+      && typeof bar.props['data-usage-bar-from'] === 'string' && bar.props['data-usage-bar-from'].length === 10
+      && typeof bar.props['data-usage-bar-to'] === 'string' && bar.props['data-usage-bar-to'].length === 10
+      && bar.props.tabIndex === 0 && bar.props.role === 'img'
+      && typeof bar.props['aria-label'] === 'string'
+      && bar.props['aria-label'].includes(bar.props['data-usage-bar-from'])
+      && bar.props['aria-label'].includes('tokens')
+      && bar.props['aria-label'].includes('调用次数')),
+    bars2d.map((bar) => bar.props['aria-label']).join(' | '))
   ok('「更新于 HH:MM」', /更新于 \d{2}:\d{2}/.test(text), text.slice(-80))
   ok('可见期间每 30 秒刷新一次', bundle.intervals.some((entry) => entry.ms === 30000))
   check('打开时按当前天数请求 data 路由', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=7')
@@ -3757,6 +3789,402 @@ const monthParamOf = (url) => new URL(String(url), 'http://localhost').searchPar
   ok('T010 en：月份行不带 Credits', !/credit/i.test(collectText(monthRowOf(tree)).join(' ')))
   ok('T010 en：脚注仍是英文「仅统计本机」',
     text.includes('Only calls made by this DSH instance are counted'))
+}
+
+/* ============================================ T011 柱子悬停浮层
+ *
+ * 011「柱子悬停看当时用了多少 tokens」。契约唯一真值：specs/011-bar-tooltip/INTERFACE.md
+ * §2 DOM 钩子 / §3 行为 / §4 验收 SC-001..008。全部用假快照与假事件，不联网。
+ */
+
+/** 011：日桶形态（宿主 lib/usage-stats.js 的日桶 from === to）——首行只印一天。 */
+function makeDaySnapshot(days = 7) {
+  const snapshot = makeUsageSnapshot(days)
+  for (const bucket of snapshot.buckets) bucket.to = bucket.from
+  return snapshot
+}
+
+/** 011：日桶回包（任意天数都保持 from === to）。 */
+function dayFetch() {
+  return usageFetch(() => makeDaySnapshot(7))
+}
+
+function tipOf(tree) {
+  return nodesWithProp(tree, 'data-usage-tip')[0]
+}
+
+function tipCount(tree) {
+  return nodesWithProp(tree, 'data-usage-tip').length
+}
+
+function barOf(tree, index) {
+  return nodesWithProp(tree, 'data-usage-bar').find((node) => node.props['data-usage-bar-index'] === String(index))
+}
+
+function tipPartOf(tree, key) {
+  return nodesWithProp(tree, 'data-usage-tip-' + key)[0]
+}
+
+/** 011：一行 = 「标签|数值」两段文本（浮层内部结构就是 label span + value span）。 */
+function tipRowText(tree, key) {
+  const row = tipPartOf(tree, key)
+  if (row === undefined) return '<missing>'
+  const parts = (row.children ?? []).map((child) => collectText(child).join(''))
+  return parts.join('|')
+}
+
+function tipRowsOf(tree) {
+  return ['input', 'output', 'cache-read', 'cache-write', 'calls'].map((key) => tipPartOf(tree, key))
+}
+
+/** 011：模拟「指针进到第 index 根柱子」，返回重渲染后的树。 */
+function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
+  barOf(tree, index).props.onPointerEnter({ clientX, clientY })
+  return bundle.renderUsage()
+}
+
+/* T011 ①：命中钩子 + 浮层 DOM/内容逐字（SC-001）、最多一个浮层。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  // 011 的夹紧要读视口尺寸；假 window 是裸对象，这里直接给（每次渲染现读）。
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  const bars = nodesWithProp(tree, 'data-usage-bar')
+  check('T011 每根柱子一个命中钩子', bars.length, 7)
+  check('T011 钩子 index 连号且从 0 起', bars.map((bar) => bar.props['data-usage-bar-index']), ['0', '1', '2', '3', '4', '5', '6'])
+  ok('T011 日桶 from/to 同一天（浮层首行该只印一天）',
+    bars.every((bar) => bar.props['data-usage-bar-from'] === bar.props['data-usage-bar-to']),
+    bars.map((bar) => bar.props['data-usage-bar-from'] + '/' + bar.props['data-usage-bar-to']).join(' '))
+  ok('T011 每根柱子可聚焦（tabIndex 0）且 role=img',
+    bars.every((bar) => bar.props.tabIndex === 0 && bar.props.role === 'img'))
+  check('T011 未命中时不渲染浮层节点（不是 CSS 隐藏）', tipCount(tree), 0)
+
+  const fixture = makeDaySnapshot(7).buckets[3]
+  tree = hoverPointer(bundle, tree, 3, 100, 120)
+  check('T011 指针进入后渲染恰好一个浮层', tipCount(tree), 1)
+  const tip = tipOf(tree)
+  check('T011 浮层 role / data 钩子 / index',
+    [tip.props.role, tip.props['data-usage-tip'], tip.props['data-usage-tip-index']], ['tooltip', '1', '3'])
+  check('T011 指针坐标偏移 12px（portal + fixed）',
+    [tip.props.style.position, tip.props.style.left, tip.props.style.top], ['fixed', 112, 132])
+  check('T011 首行日期（日桶只印一天）', collectText(tipPartOf(tree, 'range')).join(''), fixture.from)
+  check('T011 总量行 = formatTokens + 单位（无空格、无百分比）',
+    collectText(tipPartOf(tree, 'tokens')).join(''), '4,000tokens')
+  check('T011 input 行', tipRowText(tree, 'input'), 'input|2,000')
+  check('T011 output 行', tipRowText(tree, 'output'), 'output|1,000')
+  check('T011 cache-read 行', tipRowText(tree, 'cache-read'), 'cacheRead|1,000')
+  check('T011 cache-write 行（0 也照样印，不隐藏）', tipRowText(tree, 'cache-write'), 'cacheWrite|0')
+  check('T011 调用次数行', tipRowText(tree, 'calls'), '调用次数|4')
+  const tipText = collectText(tip).join(' ')
+  ok('T011 浮层不出现百分比 / Credits / 估算余量字样',
+    !tipText.includes('%') && !/credit/i.test(tipText) && !/估算|余量/.test(tipText), tipText)
+  const aria3 = barOf(tree, 3).props['aria-label']
+  ok('T011 aria-label 与浮层同源（日期 + 总量 + 调用次数都在）',
+    aria3.includes(fixture.from) && aria3.includes('4,000') && aria3.includes('调用次数'), aria3)
+
+  tree = hoverPointer(bundle, tree, 5, 50, 70)
+  check('T011 换一根柱子仍只有一个浮层、index 跟着换',
+    [tipCount(tree), tipOf(tree).props['data-usage-tip-index']], [1, '5'])
+}
+
+/* T011 ②：英文界面逐字走英文、不混中文（SC-007）。 */
+{
+  const bundle = await mountUsage({ lang: 'en-US', fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 3, 40, 60)
+  const tipText = collectText(tipOf(tree)).join(' ')
+  check('T011 en：调用次数行走 requests', tipRowText(tree, 'calls'), 'requests|4')
+  check('T011 en：总量行用拉丁量纲', collectText(tipPartOf(tree, 'tokens')).join(''), '4.0Ktokens')
+  ok('T011 en：浮层不混中文', !/[\u3400-\u9fff]/u.test(tipText), tipText)
+  ok('T011 en：浮层无百分比 / Credits', !tipText.includes('%') && !/credit/i.test(tipText), tipText)
+  const aria = barOf(tree, 3).props['aria-label']
+  ok('T011 en：aria-label 也是英文（requests + tokens）', aria.includes('requests') && aria.includes('tokens'), aria)
+}
+
+/* T011 ③：2D / 3D 同一根柱内容逐字相同（SC-002），切换清空 hover（§3）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 4, 60, 60)
+  const text2d = collectText(tipOf(tree)).join('|')
+  const aria2d = barOf(tree, 4).props['aria-label']
+  const mode3d = findNodes(tree, 'tpq-usage-mode').find((node) => collectText(node).join('') === '3D')
+  ok('T011 有 3D 视图切换按钮', mode3d !== undefined)
+  mode3d.props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T011 切 2D→3D 清空 hover（旧坐标不残留）', tipCount(tree), 0)
+  tree = hoverPointer(bundle, tree, 4, 60, 60)
+  ok('T011 3D 同一根柱浮层内容与 2D 逐字相同', collectText(tipOf(tree)).join('|') === text2d, text2d)
+  check('T011 3D aria-label 与 2D 同源', barOf(tree, 4).props['aria-label'], aria2d)
+  check('T011 3D 柱子仍挂同一组命中钩子', barOf(tree, 4).props['data-usage-bar'], '1')
+}
+
+/* T011 ④：周桶首行是 from – to（U+2013 两端各一个空格，SC-003）。 */
+{
+  const weeklyFetch = usageFetch((snapshot) => {
+    snapshot.granularity = 'week'
+    snapshot.range = { kind: 'days', days: 14, from: '2026-10-31', to: '2026-11-13' }
+    snapshot.buckets = [
+      { from: '2026-10-31', to: '2026-11-06', label: '10-31', totals: { input: 100, output: 50, cacheRead: 25, cacheWrite: 0, calls: 2, steps: 2, tokens: 175 } },
+      { from: '2026-11-07', to: '2026-11-13', label: '11-07', totals: { input: 200, output: 100, cacheRead: 50, cacheWrite: 10, calls: 4, steps: 4, tokens: 350 } },
+    ]
+    return snapshot
+  })
+  const bundle = await mountUsage({ fetchImpl: weeklyFetch })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 1, 40, 60)
+  const rangeText = collectText(tipPartOf(tree, 'range')).join('')
+  check('T011 周桶首行 = from – to（en dash）', rangeText, '2026-11-07 \u2013 2026-11-13')
+  check('T011 连接符是 U+2013 且两端各一个空格',
+    [rangeText.indexOf(' \u2013 '), rangeText.charCodeAt(11)], [10, 0x2013])
+  check('T011 周桶总量行', collectText(tipPartOf(tree, 'tokens')).join(''), '350tokens')
+  check('T011 周桶调用次数行', tipRowText(tree, 'calls'), '调用次数|4')
+}
+
+/* T011 ⑤：坐标纯函数——偏移、翻面、四边夹紧、无效视口不崩（SC-004）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  const internals = bundle.api.__internals
+  ok('T011 __internals 追加浮层纯函数',
+    ['usageBucketRange', 'usageTipContent', 'usageTipPlacement', 'usageTipInline', 'usagePointerPoint', 'usageBarRectOf']
+      .every((key) => typeof internals[key] === 'function'),
+    Object.keys(internals).join(','))
+  check('T011 usageBucketRange：日桶只印一天',
+    internals.usageBucketRange({ from: '2026-10-22', to: '2026-10-22' }), '2026-10-22')
+  check('T011 usageBucketRange：周桶 en dash',
+    internals.usageBucketRange({ from: '2026-09-01', to: '2026-09-07' }), '2026-09-01 \u2013 2026-09-07')
+  const content = internals.usageTipContent(
+    { from: '2026-10-22', to: '2026-10-22', totals: { tokens: 12345, input: 6000, output: 3000, cacheRead: 3000, cacheWrite: 345, calls: 7 } },
+    { usageTokensUnit: 'tokens', usageSplitInput: 'input', usageSplitOutput: 'output', usageSplitCacheRead: 'cacheRead',
+      usageSplitCacheWrite: 'cacheWrite', usageCalls: 'calls' })
+  check('T011 usageTipContent：区间 / 总量 / 单位 / 五行键',
+    [content.range, content.tokens, content.unit, content.rows.map((row) => row.key).join(',')],
+    ['2026-10-22', '1.2万', 'tokens', 'input,output,cache-read,cache-write,calls'])
+  check('T011 usageTipContent：五行值都过 formatTokens',
+    content.rows.map((row) => row.value), ['6,000', '3,000', '3,000', '345', '7'])
+  check('T011 usagePointerPoint：缺坐标退 0', internals.usagePointerPoint({}), { x: 0, y: 0 })
+  check('T011 usageBarRectOf：rect 全 0 → null（调用方退回图表内几何）',
+    internals.usageBarRectOf({ currentTarget: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, bottom: 0 }) } }), null)
+  check('T011 usageBarRectOf：取柱中心 / 上沿 / 下沿',
+    internals.usageBarRectOf({ currentTarget: { getBoundingClientRect: () => ({ left: 300, top: 200, width: 60, height: 120, bottom: 320 }) } }),
+    { x: 330, top: 200, bottom: 320 })
+  const place = (options) => internals.usageTipPlacement(options)
+  check('T011 指针右下偏移 12px', place({ source: 'pointer', x: 100, y: 120, w: 210, h: 132, vw: 800, vh: 600 }),
+    { left: 112, top: 132, flipX: false, flipY: false })
+  check('T011 右下放不下翻到指针左/上并夹紧', place({ source: 'pointer', x: 790, y: 590, w: 210, h: 132, vw: 800, vh: 600 }),
+    { left: 568, top: 446, flipX: true, flipY: true })
+  check('T011 指针贴左上仍留 8px', place({ source: 'pointer', x: 0, y: 0, w: 210, h: 132, vw: 800, vh: 600 }),
+    { left: 12, top: 12, flipX: false, flipY: false })
+  check('T011 视口尺寸无效时不出现负坐标', place({ source: 'pointer', x: -50, y: -50, w: 210, h: 132, vw: 0, vh: 0 }),
+    { left: 0, top: 0, flipX: false, flipY: false })
+  check('T011 锚定柱：上方居中', place({ source: 'anchor', x: 400, top: 300, bottom: 420, w: 210, h: 132, vw: 800, vh: 600 }),
+    { left: 295, top: 160, flipX: false, flipY: false })
+  check('T011 锚定柱：上方不够翻到柱下', place({ source: 'anchor', x: 400, top: 50, bottom: 170, w: 210, h: 132, vw: 800, vh: 600 }),
+    { left: 295, top: 178, flipX: false, flipY: true })
+  check('T011 内联：柱中心上方并夹进容器宽',
+    internals.usageTipInline({ x: 100, top: 60, bottom: 160, w: 210, h: 132, vw: 800 }), { left: 0, top: 172 })
+  check('T011 内联：容器宽量不到也不出负坐标',
+    internals.usageTipInline({ x: 10, top: 10, bottom: 40, w: 210, h: 132, vw: 0 }), { left: 0, top: 52 })
+}
+
+/* T011 ⑥：DOM 里的夹紧（注入视口尺寸与指针坐标后四边 ≥8px，SC-004）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 2, 790, 590)
+  const corner = tipOf(tree).props.style
+  check('T011 DOM：右下角翻到指针左上并夹进视口', [corner.left, corner.top], [568, 446])
+  ok('T011 DOM：四边都留 ≥8px',
+    corner.left >= 8 && corner.top >= 8 && corner.left + 210 <= 800 - 8 && corner.top + 132 <= 600 - 8,
+    JSON.stringify(corner))
+  tree = hoverPointer(bundle, tree, 2, 0, 0)
+  check('T011 DOM：贴左上角也不出界', [tipOf(tree).props.style.left, tipOf(tree).props.style.top], [12, 12])
+  tree = hoverPointer(bundle, tree, 2, 795, 100)
+  check('T011 DOM：右侧放不下、下方放得下 → 只翻横向',
+    [tipOf(tree).props.style.left, tipOf(tree).props.style.top], [573, 112])
+}
+
+/* T011 ⑦：关闭通路（SC-005）——每个入口都真的移除节点。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 3)
+  barOf(tree, 3).props.onPointerLeave()
+  tree = bundle.renderUsage()
+  check('T011 pointerleave 关闭', tipCount(tree), 0)
+
+  tree = hoverPointer(bundle, tree, 3)
+  const keydownHandler = bundle.windowListeners.get('keydown')?.at(-1)
+  ok('T011 Esc 挂在 window 上（document keydown 留给整页屏）', typeof keydownHandler === 'function')
+  keydownHandler({ key: 'Enter' })
+  tree = bundle.renderUsage()
+  check('T011 非 Esc 键不关浮层', tipCount(tree), 1)
+  bundle.windowListeners.get('keydown').at(-1)({ key: 'Escape' })
+  tree = bundle.renderUsage()
+  check('T011 Esc 关闭浮层', tipCount(tree), 0)
+
+  tree = hoverPointer(bundle, tree, 3)
+  bundle.dom.listeners.get('pointerdown').at(-1)({ target: { closest: () => null } })
+  tree = bundle.renderUsage()
+  check('T011 点别处关闭（document 捕获 pointerdown）', tipCount(tree), 0)
+
+  tree = hoverPointer(bundle, tree, 3)
+  bundle.dom.listeners.get('pointerdown').at(-1)({ target: { closest: (selector) => (selector === '[data-usage-bar]' ? {} : null) } })
+  tree = bundle.renderUsage()
+  check('T011 点在柱子上的 pointerdown 不关（触屏是「显示并锚定」）', tipCount(tree), 1)
+
+  bundle.dom.listeners.get('scroll').at(-1)()
+  tree = bundle.renderUsage()
+  check('T011 滚动关闭（捕获 scroll）', tipCount(tree), 0)
+
+  tree = hoverPointer(bundle, tree, 3)
+  bundle.windowListeners.get('blur').at(-1)()
+  tree = bundle.renderUsage()
+  check('T011 窗口失焦关闭', tipCount(tree), 0)
+  check('T011 关闭后节点彻底移除（不是 CSS 隐藏）', nodesWithProp(tree, 'data-usage-tip').length, 0)
+}
+
+/* T011 ⑧：focus/blur（SC-006）——锚到柱上方居中，aria-label 与浮层同源。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  const rectTarget = { getBoundingClientRect: () => ({ left: 300, top: 200, width: 60, height: 120, bottom: 320 }) }
+  barOf(tree, 2).props.onFocus({ currentTarget: rectTarget })
+  tree = bundle.renderUsage()
+  const focusedTip = tipOf(tree)
+  check('T011 focus 显示并锚到柱上方居中', [focusedTip.props.style.left, focusedTip.props.style.top], [225, 60])
+  check('T011 focus 的浮层 index 指向该柱', focusedTip.props['data-usage-tip-index'], '2')
+  const focusedAria = barOf(tree, 2).props['aria-label']
+  ok('T011 focus 时 aria-label 与浮层内容同源',
+    focusedAria.includes(collectText(tipPartOf(tree, 'range')).join(''))
+      && focusedAria.includes('tokens') && focusedAria.includes('调用次数'),
+    focusedAria)
+  barOf(tree, 2).props.onBlur()
+  tree = bundle.renderUsage()
+  check('T011 blur 关闭', tipCount(tree), 0)
+
+  barOf(tree, 2).props.onFocus({ currentTarget: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, bottom: 0 }) } })
+  tree = bundle.renderUsage()
+  const fallbackTip = tipOf(tree)
+  ok('T011 rect 全 0 时退回图表内几何（不崩、坐标有限）',
+    fallbackTip !== undefined
+      && Number.isFinite(fallbackTip.props.style.left) && Number.isFinite(fallbackTip.props.style.top),
+    fallbackTip === undefined ? '<missing>' : JSON.stringify(fallbackTip.props.style))
+  check('T011 rect 全 0 时浮层照样渲染', tipCount(tree), 1)
+  bundle.windowListeners.get('keydown').at(-1)({ key: 'Escape' })
+  tree = bundle.renderUsage()
+
+  barOf(tree, 3).props.onPointerDown({
+    clientX: 500,
+    clientY: 400,
+    currentTarget: { getBoundingClientRect: () => ({ left: 480, top: 300, width: 40, height: 120, bottom: 420 }) },
+  })
+  tree = bundle.renderUsage()
+  check('T011 触屏 pointerdown 显示并锚到柱上方',
+    [tipOf(tree).props.style.left, tipOf(tree).props.style.top], [395, 160])
+}
+
+/* T011 ⑨：0 token 的桶也能悬停（透明命中区），数字照样印 0。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snapshot) => {
+      snapshot.buckets[3].totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, steps: 0, tokens: 0 }
+      for (const bucket of snapshot.buckets) bucket.to = bucket.from
+      return snapshot
+    }),
+  })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T011 0 token 的柱仍铺透明命中区（柱高 0 时可悬停）',
+    findNodes(barOf(tree, 3), 'tpq-usage-hit').length, 1)
+  tree = hoverPointer(bundle, tree, 3, 40, 60)
+  check('T011 0 token：总量行印 0 而不是空', collectText(tipPartOf(tree, 'tokens')).join(''), '0tokens')
+  check('T011 0 token：五行全 0（不省略行）',
+    tipRowsOf(tree).map((row) => collectText(row).join('')), ['input0', 'output0', 'cacheRead0', 'cacheWrite0', '调用次数0'])
+}
+
+/* T011 ⑩：切区间（数据变化）同样清空 hover。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snapshot) => {
+      for (const bucket of snapshot.buckets) bucket.to = bucket.from
+      return snapshot
+    }),
+  })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 3)
+  check('T011 切区间前浮层在', tipCount(tree), 1)
+  // 预设按钮（1/7/30/90）没有 data-usage-preset 钩子，按顺序取；[2] = 30 天。
+  const dayPresets = findNodes(tree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)
+  check('T011 天数预设仍是 4 个', dayPresets.length, 4)
+  dayPresets[2].props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T011 切到 30 天后浮层清空（新数据不该带走旧坐标）', tipCount(tree), 0)
+  check('T011 切区间后确实是 30 根柱', nodesWithProp(tree, 'data-usage-bar').length, 30)
+  // 代次 key 的回归：7 天 → 30 天 → 7 天 往返后，形状 key 与最初完全一样，
+  // 但快照换了对象。旧坐标上的浮层不许复活。
+  const backPresets = findNodes(tree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)
+  check('T011 往返前仍能拿到 4 个天数预设', backPresets.length, 4)
+  backPresets[1].props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T011 7→30→7 往返后旧浮层不复活（快照代次 key）', tipCount(tree), 0)
+  check('T011 往返后回到 7 根柱', nodesWithProp(tree, 'data-usage-bar').length, 7)
+}
+
+/* T011 ⑪：portal 与内联两条渲染路径（§3 位置规则的后半句）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 3)
+  const tip = tipOf(tree)
+  check('T011 有 react-dom 时浮层 portal 到 body', tip.portalTo, 'body')
+  check('T011 portal 路径用 fixed 定位', tip.props.style.position, 'fixed')
+  check('T011 图表外层有定位容器（滚动容器不裁浮层）', findNodes(tree, 'tpq-usage-chart-wrap').length, 1)
+}
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch(), reactDOM: false })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  tree = hoverPointer(bundle, tree, 3)
+  const tip = tipOf(tree)
+  ok('T011 无 react-dom 时浮层退回容器内 absolute',
+    tip !== undefined && tip.props.style.position === 'absolute',
+    tip === undefined ? '<missing>' : String(tip.props.style.position))
+  check('T011 回退路径带 -inline 类（CSS 用它盖掉 fixed）',
+    String(tip.props.className).split(/\s+/).includes('tpq-usage-tip-inline'), true)
+  ok('T011 回退路径锚到柱上方且不出负坐标',
+    tip.props.style.left >= 0 && tip.props.style.top >= 0, JSON.stringify(tip.props.style))
+  check('T011 回退路径不 portal', tip.portalTo, undefined)
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

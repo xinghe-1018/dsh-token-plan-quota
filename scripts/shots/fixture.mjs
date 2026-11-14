@@ -689,6 +689,38 @@ export function makeUsageSnapshot(options = {}) {
 }
 
 /**
+ * 011 截图 ⑭ 悬浮的那根柱：整月 `2026-10` 的 22 号（该月第 22 天，逐日 index = 21）。
+ *
+ * 为什么把日期与 tokens 钉成常量：截图脚本、DOM 断言、README 与 CHANGELOG 都要引用
+ * 「这根柱到底是多少 tokens」，四处各算一遍迟早漂。fixture 的逐日公式是确定性的
+ * （与真实日期无关，只看桶序号），所以真值可以而且应该写死；`usageTooltipBar()`
+ * 在造数与自检时复核，公式一改就当场抛错，而不是拍完图才发现浮层里是另一串数字。
+ *
+ * 月份同样写死：⑭ 要证明的是"某一根柱的浮层等于该桶 totals"，不是"当前是哪个月"。
+ * 跟着 `Date.now()` 走会让同一张 docs 图每个月换一个月份，字节不可复现。
+ */
+export const USAGE_TOOLTIP_BAR_MONTH = '2026-10'
+export const USAGE_TOOLTIP_BAR_DATE = '2026-10-22'
+export const USAGE_TOOLTIP_BAR_TOKENS = 1_403_000
+
+/**
+ * 从整月快照里取出 ⑭ 的锚柱，并核对 tokens 与常量一致。
+ * @param {object} usage `makeUsageSnapshot({month: USAGE_TOOLTIP_BAR_MONTH})` 的产物
+ * @returns {object} 该日桶
+ */
+export function usageTooltipBar(usage) {
+  const bucket = (Array.isArray(usage?.buckets) ? usage.buckets : []).find(one => one.from === USAGE_TOOLTIP_BAR_DATE)
+  if (bucket === undefined) {
+    throw new Error('usage fixture：' + USAGE_TOOLTIP_BAR_MONTH + ' 里找不到 ' + USAGE_TOOLTIP_BAR_DATE + ' 的桶，⑭ 没有可悬浮的柱')
+  }
+  if (bucket.totals.tokens !== USAGE_TOOLTIP_BAR_TOKENS) {
+    throw new Error('usage fixture：' + USAGE_TOOLTIP_BAR_DATE + ' 的 tokens 是 ' + bucket.totals.tokens
+      + '，常量写的是 ' + USAGE_TOOLTIP_BAR_TOKENS + '（逐日公式变了？同步改常量、断言与文档）')
+  }
+  return bucket
+}
+
+/**
  * /usage fixture 的自检：三层 totals 恒等、日期连续、周桶对齐周一、白名单、无百分比/Credits、
  * 无真实痕迹。任何一条不过就不该拍照。
  *
@@ -743,6 +775,12 @@ export function assertUsageFixture(usage, options = {}) {
     need('range.to = 夹到今天后的月末', usage.range.to === expectTo)
     need('range.days 与整月一致', usage.range.days === days)
     need('整月不走周粒度（自然月 <= 31 天）', days <= 31)
+    if (query.month === USAGE_TOOLTIP_BAR_MONTH) {
+      // 011 截图 ⑭ 的锚柱：浮层断言引用的就是这根柱。公式漂了要在造数时红，不是拍完图才发现。
+      const anchor = usageTooltipBar(usage)
+      need('⑭ 锚柱 ' + USAGE_TOOLTIP_BAR_DATE + ' 的 tokens = ' + USAGE_TOOLTIP_BAR_TOKENS + '（实际 ' + anchor.totals.tokens + '）',
+        anchor.totals.tokens === USAGE_TOOLTIP_BAR_TOKENS)
+    }
   } else {
     need('range.kind 与天数一致', usage.range.kind === (days === 1 ? 'today' : days + 'd'))
     need('range.from = to - (days-1)', usageAddDays(usage.range.to, -(days - 1)) === usage.range.from)

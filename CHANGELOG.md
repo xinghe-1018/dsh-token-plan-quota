@@ -10,6 +10,28 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **每 Credit 三格卡片与按日折算基准（017）**：016 的「每 Credit 分项」一行改成**三格卡片**
+  （`section.tpq-usage-credits-classes`、`data-usage-credits-classes="1"`）：标题 zh「1 Credit 折合」/ en
+  「One credit is worth」，三格固定顺序 **缓存命中 / 未命中输入 / 输出**，每格 = 标签 + **20px** 数值 + 单位
+  `tokens`，数值取该类 `perCredit`（`formatTokens` 格式化，不取整落盘）。任一类 `perCredit` 缺失或非有限时
+  **整张卡不渲染**（旧宿主兼容；不拿 0 顶替、不写 —）；卡内不出现百分比、`Credits` 或货币符号。
+  折算行之后新增按日提示 `p[data-usage-credits-daily]`：zh「按 {day} 当日实测比值计算，每日刷新一次（{time}）」/
+  en「Computed from the measured ratio on {day}; refreshed once per day ({time})」，`{time}` 按**读者本地时区的 HH:MM**
+  显示（不是 UTC 时间戳）；宿主没给 `ratio.basis` 时整条不出现，页面与 016 一致。
+  **宿主把折算基础按自然日缓存**：`ratio.basis = { day, computedAt, cycleKey, cached, policy: "daily" }`，
+  `ratio.classes[key]` 增 `capacity = Math.round(perCredit × credits.total)`。快照落盘为 version 1
+  （`day` / `cycleKey` / `computedAt` / `tokensOfficial` / `creditsTotal` / `creditsUsed` /
+  `tokensPerCredit` / `capacityTokens` / `classes`），**同一天 + 同一账期直接复用**（`cached: true`，同一天只向官方
+  取一次）；跨日、跨账期、`?fresh=1`、文件损坏或版本不符时重算并覆盖（`cached: false`）。官方明细被夹紧
+  （区间盖不住账期起点）、官方读数不可用或**写盘失败**时一律退回旧响应形状——不出 `basis`、不编一个假基准。
+  同一轮的并发请求共用一次计算。新增配置键 `creditsDailyPath`（`DEFAULTS` 25→26，默认
+  `$DSH_HOME/token-plan-quota.credits-daily.json`）；客户端 COPY 新增 `usageCreditsClasses` /
+  `usageCreditsClassesUnit` / `usageCreditsDaily`（zh / en 各 155 键）。零新路由、零新出站主机、零第三方依赖。
+  测试：宿主 971→1016、客户端 1159→1267、guards 526→561（第 17 节静态矩阵 35 条）。
+  截图 ⑰ 重拍 `docs/images/usage-credits-2d.png` 与 `docs/images/en/usage-credits-2d.png`（本账期 80000 Credits /
+  已用 37196.8802 / 官方 tokens 2,122,918,870，三格 perCredit 54821.49798681235 / 1,976.9850548073137 /
+  274.0433128132968，按日基准 2026-11-14 本地 20:05）。方案见 `specs/017-credit-class-card/`，
+  接口契约见该目录 `INTERFACE.md`。
 - **每个模型的分项比值（016）**：015 的模型行再拆一层——**该模型的输入 / 缓存命中 / 输出各自除以同一个账号级分母**
   （本账期已用 Credits），直接回答「1 Credit 对应该模型多少输入、多少缓存命中、多少输出 tokens」。四类 tokens 直接取本机
   该模型 `totals`，`perCredit = tokens ÷ credits.used` 不取整，行内恒等 `input + cacheRead + output + cacheWrite === tokens`；

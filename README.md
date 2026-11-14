@@ -207,7 +207,7 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
 
-![Credits 与 tokens 换算：本账期实测比值、官方 tokens、已用 Credits 与折算参考](docs/images/usage-credits-2d.png)
+![Credits 与 tokens 换算：本账期实测比值、三格折合卡片与按日刷新提示](docs/images/usage-credits-2d.png)
 
 - **只报绝对 token**：区间总量、四类拆分（输入 / 输出 / 缓存命中 / 缓存写入）、调用次数、按模型排行。
   这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有配额百分比，也没有 Credits。
@@ -243,15 +243,21 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   按区间等比例拆就是估算，所以不拆。它是**本账期的混合均值**：换模型、换缓存命中率都会变，脚注因此明写「不是固定兑换率」；
   「额度折合多少 tokens」那一行只是折算参考、非官方口径。官方明细被夹到更晚的起点、缺额度、缺重置时间、只有 5 小时计量时
   **不给比值**，只说明原因——不拿部分区间凑数，也不用本机数字顶替。
-- **每 Credit 的分项比值，以及每个模型各自的比值**：换算块里再往下拆两层。分项只取官方口径，把官方 tokens 拆成
-  「缓存命中 / 未命中输入 / 输出」三类，各自给 tokens/Credit——官方 input **含**缓存命中，所以先相减再单列，
-  三者相加等于官方 tokens（直接拿官方 input 当未命中输入，三项相加会超过总量）。每个模型各自的比值 =
+- **每 Credit 的三格折合卡片，以及每个模型各自的比值**：换算块里的「1 Credit 折合」是一张三格卡片
+  （标题随界面语言：中文「1 Credit 折合」、英文 "One credit is worth"），按**缓存命中 / 未命中输入 / 输出**
+  固定顺序各给一格：标签、**20px** 的数值与单位 `tokens`，数值是这一类每 Credit 折合多少 token。口径只取官方：
+  官方 input **含**缓存命中，所以先相减再单列，三格之和等于官方 tokens——直接拿官方 input 当未命中输入，
+  三项相加会超过总量。任一格缺 `perCredit`（旧宿主）时**整张卡不渲染**，不写 0、也不写 `—`。
+  卡片下方注明折算基准的日子：「按 {day} 当日实测比值计算，每日刷新一次（HH:MM）」，时间取**读者本地时区**的
+  刷新时刻；宿主按**自然日**缓存这份折算基础（同一天 + 同一账期直接复用、只向官方取一次），跨日、跨账期或
+  手动刷新才重算，官方读数不可用 / 写盘失败 / 旧宿主时这行不出现。每个模型各自的比值 =
   **本机该模型 tokens ÷ 本账期已用 Credits**，这是**贡献口径**：官方不按模型拆分 Credits，也没有公开的模型单价，
   按 tokens 比例去分摊只会让每行都等于总比值（假精确）。脚注因此写明「官方不按模型拆分」与
   「各行相加约等于本机总量，与账号级官方总量有少量差额」。模型行再往下拆一层：**该模型的输入 / 缓存命中 /
   输出各自除以同一个账号级分母**，直接回答「1 Credit 对应该模型多少输入、多少缓存命中、多少输出 tokens」，
   三者相加等于该行总量；分母仍是本账期已用 Credits（账号级），不是该模型自己的额度。
-  分项或模型行缺失时只少渲染那一块，不写 0、也不写 `—`。
+  分项卡片或模型行缺失时只少渲染那一块，不写 0、也不写 `—`。
+  折算基础落在 `creditsDailyPath` 指向的快照文件里（见下方配置表），删掉它下一次请求就会重算。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
@@ -289,7 +295,7 @@ JSON 优先级更高）：
 }
 ```
 
-下表 26 行：25 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
+下表 27 行：26 行是代码里 `DEFAULTS` 的键，另 1 行 `moonshotRegion` 不在 `DEFAULTS` 中——它是 Moonshot 源
 通过 `regionConfigKey` 读取的区选择器。**一个键一行，单位都写在键名里**（`Minutes`/`Seconds`/`Ms`）。
 
 | 键 | 默认 | 含义 |
@@ -313,6 +319,7 @@ JSON 优先级更高）：
 | `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | 本实例账本落盘位置（当月累计与窗口锚点） |
 | `usageStats` | `true` | 用量统计（把会话事件折叠成按本地日的 token 历史）的开关。关掉 = 不同步、内存也不累计；**入口保留**，统计屏里直接写已关闭并提示这个键——不删已有索引，也不影响上面那些额度源 |
 | `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | 用量索引落盘位置。与 `usagePath` 的月账本是**两个文件**：一个是按天的历史（统计屏用），一个是当月累计（明细里的本实例实测用） |
+| `creditsDailyPath` | `$DSH_HOME/token-plan-quota.credits-daily.json` | 折算基础的按日快照落盘位置（当天官方 tokens / 已用 Credits / 三类 per Credit）。**同一天 + 同一账期复用**，跨日、跨账期或手动刷新时覆盖；删除文件下一次请求即重算。只缓存折算基础，不缓存官方读数 |
 | `usageBackfillDays` | `365` | 索引保留天数，同时是统计屏可选天数的上界（1..365）。调小会裁掉更早的日桶；调大后从下一轮同步开始往回补 |
 | `officialUsage` | `true` | 统计屏里是否显示「官方账号侧」对照条：走控制台网关的 Token Plan 用量明细（账号级 tokens，与上面那些额度源无关）。关掉 = 不发这次出网请求，柱子与本机数字照旧 |
 | `officialUsageMinutes` | `5` | 官方对照的缓存分钟数：同一区间在 N 分钟内复用上次结果（`0` = 每次回源） |
@@ -522,16 +529,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 971 项，离线
-node test/client.mjs               # 1159 项，假 React/DOM/fetch
-node test/guards.mjs               # 526 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 1016 项，离线
+node test/client.mjs               # 1267 项，假 React/DOM/fetch
+node test/guards.mjs               # 561 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 971/1159 项 + guards 526 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 26 个键、配置表 27 行、8 个数据源、声明 8 个出站主机、测试 1016/1267 项 + guards 561 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

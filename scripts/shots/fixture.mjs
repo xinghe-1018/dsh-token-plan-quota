@@ -1389,22 +1389,35 @@ export const USAGE_CREDITS_CLASS_CACHE_READ_TOKENS =
   USAGE_CREDITS_OFFICIAL_TOKENS - USAGE_CREDITS_CLASS_OUTPUT_TOKENS - USAGE_CREDITS_CLASS_UNCACHED_TOKENS
 export const USAGE_CREDITS_MODELS_BASIS = 'local'
 
+/**
+ * 017 §2/§3：宿主给 ratio 附的按日折算基准（basis）。
+ *
+ * day 与 window.to 同一天（截图拍的是"今天已按当日实测比值算过"），computedAt 写死成
+ * 2026-11-14 20:05（Asia/Shanghai，= 12:05 UTC）——客户端按**读者本地时区**格式化成 HH:MM，
+ * 所以这里也导出毫秒值，截图脚本用同一个 Date 现算期望串，机器时区变了断言与画面一起变。
+ * cached:true 是稳态（当天第二次请求命中的样子）；policy 固定 daily。
+ */
+export const USAGE_CREDITS_DAILY_DAY = '2026-11-14'
+export const USAGE_CREDITS_DAILY_COMPUTED_AT = Date.UTC(2026, 10, 14, 12, 5, 0)
+export const USAGE_CREDITS_DAILY_CYCLE_KEY = 'monthly|2026-11-01|2026-11-30'
+export const USAGE_CREDITS_BASIS_POLICY = 'daily'
+
 /** perCredit = tokens ÷ used Credits (raw float; INTERFACE §2). */
 const creditsPerCredit = tokens => tokens / USAGE_CREDITS_USED
 
+/**
+ * 017 §3: 每类除 perCredit 外还带 capacity = round(perCredit × credits.total)。
+ * 它是"这类额度能换多少 tokens"的折算参考，宿主在按日快照可用时才发；断言复算同一条公式。
+ */
+const creditsClassCell = tokens => {
+  const perCredit = creditsPerCredit(tokens)
+  return Object.freeze({ tokens, perCredit, capacity: Math.round(perCredit * USAGE_CREDITS_TOTAL) })
+}
+
 export const USAGE_CREDITS_CLASSES = Object.freeze({
-  cacheRead: Object.freeze({
-    tokens: USAGE_CREDITS_CLASS_CACHE_READ_TOKENS,
-    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_CACHE_READ_TOKENS),
-  }),
-  uncachedInput: Object.freeze({
-    tokens: USAGE_CREDITS_CLASS_UNCACHED_TOKENS,
-    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_UNCACHED_TOKENS),
-  }),
-  output: Object.freeze({
-    tokens: USAGE_CREDITS_CLASS_OUTPUT_TOKENS,
-    perCredit: creditsPerCredit(USAGE_CREDITS_CLASS_OUTPUT_TOKENS),
-  }),
+  cacheRead: creditsClassCell(USAGE_CREDITS_CLASS_CACHE_READ_TOKENS),
+  uncachedInput: creditsClassCell(USAGE_CREDITS_CLASS_UNCACHED_TOKENS),
+  output: creditsClassCell(USAGE_CREDITS_CLASS_OUTPUT_TOKENS),
 })
 
 /** 016 §2: model row classes key order (host creditsModelRatios emits the same four). */
@@ -1497,7 +1510,8 @@ const USAGE_CREDITS_TOP_KEYS = ['generatedAt', 'available', 'window', 'credits',
 const USAGE_CREDITS_WINDOW_KEYS = ['key', 'label', 'labelEn', 'from', 'to', 'resetAt', 'resetDay', 'cycleDays', 'elapsedDays']
 const USAGE_CREDITS_CREDITS_KEYS = ['unit', 'total', 'used', 'usedPercent']
 const USAGE_CREDITS_TOKENS_KEYS = ['official', 'local']
-const USAGE_CREDITS_RATIO_KEYS = ['tokensPerCredit', 'capacityTokens', 'classes', 'modelsBasis', 'models']
+const USAGE_CREDITS_RATIO_KEYS = ['tokensPerCredit', 'capacityTokens', 'classes', 'modelsBasis', 'models', 'basis']
+const USAGE_CREDITS_BASIS_KEYS = ['day', 'computedAt', 'cycleKey', 'cached', 'policy']
 const USAGE_CREDITS_SCOPE_KEYS = ['officialFrom', 'officialTo', 'officialDays', 'cached', 'clampedFrom']
 const USAGE_CREDITS_SOURCE_KEYS = ['kind', 'veracity', 'label', 'labelEn']
 
@@ -1508,6 +1522,8 @@ const USAGE_CREDITS_SOURCE_KEYS = ['kind', 'veracity', 'label', 'labelEn']
  */
 export function builtCredits(options = {}) {
   const now = Number.isFinite(options.now) ? options.now : Date.now()
+  /* 017 §3：默认带 basis（截图拍的是"按日基准生效"的稳态）；传 {daily:false} 才造旧响应。 */
+  const withDaily = options.daily !== false
   return {
     generatedAt: now,
     available: true,
@@ -1528,6 +1544,15 @@ export function builtCredits(options = {}) {
         output: { ...USAGE_CREDITS_CLASSES.output },
       },
       modelsBasis: USAGE_CREDITS_MODELS_BASIS,
+      ...(withDaily ? {
+        basis: {
+          day: USAGE_CREDITS_DAILY_DAY,
+          computedAt: USAGE_CREDITS_DAILY_COMPUTED_AT,
+          cycleKey: USAGE_CREDITS_DAILY_CYCLE_KEY,
+          cached: true,
+          policy: USAGE_CREDITS_BASIS_POLICY,
+        },
+      } : {}),
       models: USAGE_CREDITS_MODELS.map(one => ({
         ...one,
         classes: {
@@ -1602,23 +1627,38 @@ export function assertUsageCreditsFixture(credits, options = {}) {
   need('tokens.local 是真值或 null（不参与比值）', tk.local === null || (Number.isFinite(tk.local) && tk.local >= 0))
 
   const ratio = credits.ratio
-  need('ratio 键集 = tokensPerCredit/capacityTokens', sameKeys(ratio, USAGE_CREDITS_RATIO_KEYS))
+  need('ratio 键集 = tokensPerCredit/capacityTokens/classes/modelsBasis/models/basis', sameKeys(ratio, USAGE_CREDITS_RATIO_KEYS))
   need('tokensPerCredit = official ÷ used（原始浮点）', ratio.tokensPerCredit === USAGE_CREDITS_TOKENS_PER_CREDIT)
   need('tokensPerCredit 是正有限数', Number.isFinite(ratio.tokensPerCredit) && ratio.tokensPerCredit > 0)
   need('capacityTokens = round(tokensPerCredit × total)', ratio.capacityTokens === Math.round(ratio.tokensPerCredit * cr.total))
   need('capacityTokens 是正有限整数', Number.isInteger(ratio.capacityTokens) && ratio.capacityTokens > 0)
 
   const classes = ratio.classes
-  need("ratio 键集 = tokensPerCredit/capacityTokens/classes/modelsBasis/models", sameKeys(ratio, USAGE_CREDITS_RATIO_KEYS))
   need("classes 键集 = cacheRead/uncachedInput/output", sameKeys(classes, ["cacheRead", "uncachedInput", "output"]))
   for (const key of ["cacheRead", "uncachedInput", "output"]) {
     const cell = classes[key]
-    need("classes." + key + " 键集 = tokens/perCredit", sameKeys(cell, ["tokens", "perCredit"]))
+    need("classes." + key + " 键集 = tokens/perCredit/capacity（017 加 capacity）", sameKeys(cell, ["tokens", "perCredit", "capacity"]))
     need("classes." + key + ".tokens 是非负整数", Number.isInteger(cell.tokens) && cell.tokens >= 0)
     need("classes." + key + ".perCredit = tokens ÷ used（现算，不写截断值）", cell.perCredit === cell.tokens / cr.used)
+    need("classes." + key + ".capacity = round(perCredit × credits.total)", cell.capacity === Math.round(cell.perCredit * cr.total))
+    need("classes." + key + ".capacity 是正有限整数", Number.isInteger(cell.capacity) && cell.capacity > 0)
   }
   need("classes 三类 tokens 相加 = 官方 tokens（没有截断也没有算重）", classes.cacheRead.tokens + classes.uncachedInput.tokens + classes.output.tokens === tk.official)
   need("ratio.modelsBasis = local", ratio.modelsBasis === USAGE_CREDITS_MODELS_BASIS)
+
+  /* 017 §3: basis 是"这份比值哪天、几点算的"，字段集与值都要与契约一致；缺 basis 属旧链路，
+     截图场景 ⑰ 拍的是按日基准生效的稳态，所以这里要求它必须在。 */
+  const basis = ratio.basis
+  need("ratio.basis 存在（017 按日基准）", basis !== undefined && basis !== null)
+  need("basis 键集 = day/computedAt/cycleKey/cached/policy", sameKeys(basis, USAGE_CREDITS_BASIS_KEYS))
+  need("basis.day = 2026-11-14 且是日期", basis.day === USAGE_CREDITS_DAILY_DAY && usageIsDayKey(basis.day))
+  need("basis.day = window.to（当天的快照）", basis.day === win.to)
+  need("basis.computedAt 是毫秒时间戳", isClockMillis(basis.computedAt))
+  need("basis.computedAt = fixture 写死的 12:05 UTC", basis.computedAt === USAGE_CREDITS_DAILY_COMPUTED_AT)
+  need("basis.cycleKey = monthly|from|resetDay", basis.cycleKey === USAGE_CREDITS_DAILY_CYCLE_KEY)
+  need("basis.cycleKey 与 window 自洽", basis.cycleKey === win.key + "|" + win.from + "|" + win.resetDay)
+  need("basis.cached 是布尔（稳态 true）", typeof basis.cached === "boolean" && basis.cached === true)
+  need("basis.policy = daily", basis.policy === USAGE_CREDITS_BASIS_POLICY)
 
   const modelRows = ratio.models
   need("ratio.models 是非空数组", Array.isArray(modelRows) && modelRows.length > 0)

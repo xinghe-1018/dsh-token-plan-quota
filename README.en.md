@@ -243,7 +243,7 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
 
-![Credits-to-tokens conversion: this cycle's measured ratio, official tokens, credits used and a derived reference](docs/images/en/usage-credits-2d.png)
+![Credits-to-tokens conversion: measured ratio, three-cell per-credit card and the daily refresh note](docs/images/en/usage-credits-2d.png)
 
 - **Absolute tokens only**: the range total, the four buckets (input / output / cache hit / cache write), the
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
@@ -297,10 +297,16 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   tokens" line is marked as derived, not official. When the official detail is clamped to a later start, or the
   allowance, reset time or a monthly/weekly meter is missing, the block shows **no ratio** and says why; it never
   borrows a partial range or this instance's numbers.
-- **Per-class ratios and a per-model ratio**: two more layers inside the same block. Classes use the official caliber
-  only - the official tokens are split into cache hit / uncached input / output, each with its own tokens-per-credit
-  (official input **includes** cache hits, so they are subtracted and shown separately; the three add up to the official
-  tokens - treating official input as "uncached input" would overflow the total). The **Per-model ratio** =
+- **A three-cell per-credit card, plus a per-model ratio**: the "One credit is worth" card (the title follows the UI
+  language) has three cells in the fixed order **cache hit / uncached input / output** - a label, a **20px** value and
+  the unit `tokens`, where the value is how many tokens one credit buys of that class. Official caliber only - official
+  input **includes** cache hits, so they are subtracted and shown separately; the three add up to the official tokens.
+  If any cell lacks `perCredit` (older host) the **whole card is skipped** - never a 0, never a dash. Under the card it
+  names the day the basis came from: "Computed from the measured ratio on {day}; refreshed once per day (HH:MM)", the
+  time being the refresh moment in the reader's local zone. The host caches that basis per **calendar day** (same day +
+  same cycle is reused, so the official side is read once a day), recomputes across days or cycles and on an explicit
+  refresh, and omits the line when the official reading or the write is unavailable, or the host is older. The
+  **Per-model ratio** =
   local tokens for that model / credits used this cycle, which is a **contribution** figure: official data is not split
   by model and no per-model price is published, and splitting credits by token share would make every row equal the
   overall ratio (false precision). The footnote therefore states that official data is not split by model and that rows
@@ -356,7 +362,7 @@ apply without a restart** (it can also go in the bundle row's `config`; the JSON
 }
 ```
 
-The table below has 26 rows: 25 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
+The table below has 27 rows: 26 are keys of `DEFAULTS` in the code, and `moonshotRegion` is the exception - it is
 not in `DEFAULTS` but is read by the Moonshot source through `regionConfigKey`. **One key per row, and the unit is
 part of every name** (`Minutes` / `Seconds` / `Ms`).
 
@@ -381,6 +387,7 @@ part of every name** (`Minutes` / `Seconds` / `Ms`).
 | `usagePath` | `$DSH_HOME/token-plan-quota.usage.json` | Where the local ledger is persisted (current month and window anchors) |
 | `usageStats` | `true` | Enables usage statistics (session events folded into a per-local-day token history). Off = no sync and no in-memory counting; the **entry point stays**, and the screen states that it is disabled and which key turns it on - existing index data is kept, and the quota sources above are unaffected |
 | `usageIndexPath` | `$DSH_HOME/token-plan-quota.usage-index.json` | Where the usage index lives. This is a **different file** from the `usagePath` ledger: one is day-by-day history (this screen), the other is the current month plus window anchors (the measured block in the detail panel) |
+| `creditsDailyPath` | `$DSH_HOME/token-plan-quota.credits-daily.json` | Where the per-day snapshot behind the conversion basis is persisted (official tokens, credits used and the three per-credit classes). Reused **within the same day and cycle**; overwritten across days, cycles or an explicit refresh; delete the file to recompute. Only the basis is cached, never the official readings |
 | `usageBackfillDays` | `365` | How many days the index keeps, and the upper bound of the screen's range picker (1..365). Lowering it trims older day buckets; raising it backfills on the next sync |
 | `officialUsage` | `true` | Whether the usage screen shows the "official account side" strip: the console gateway's Token Plan usage details (account-level tokens, unrelated to the quota sources above). Off = that request is not made; bars and local numbers stay as they are |
 | `officialUsageMinutes` | `5` | Cache minutes for the official strip: the same range is reused for N minutes (`0` = always refetch) |
@@ -618,17 +625,17 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 971 assertions, offline
-node test/client.mjs                # 1159 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 526 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 1016 assertions, offline
+node test/client.mjs                # 1267 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 561 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
 node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
-`check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 971/1159 tests plus 526 guards assertions" - and checks them against
+`check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
+config table, 8 sources, 8 declared outbound hosts, 1016/1267 tests plus 561 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

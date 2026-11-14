@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,16] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -23,12 +23,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture, USAGE_CREDITS_CLASSES, USAGE_CREDITS_MODELS } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture, USAGE_CREDITS_CLASSES, USAGE_CREDITS_MODELS, USAGE_CREDITS_DAILY_DAY, USAGE_CREDITS_DAILY_COMPUTED_AT } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -189,7 +189,7 @@ function compactTokens(value, langKey) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,16] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -759,9 +759,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ---------------------------- ⑧⑨⑩⑪⑫⑬⑭⑮⑯ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 悬停 / 构成 / Credits 换算） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15, 16].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫⑬⑭⑮⑯ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成 / Credits 换算）')
+  /* ---------------------------- ⑧⑨⑩⑪⑫⑬⑭⑮⑰ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 悬停 / 构成 / Credits 换算） */
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15, 17].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬⑭⑮⑰ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成 / Credits 折合卡片）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -1394,49 +1394,93 @@ async function main() {
       save('usage-composition-2d.png', await page.shot({}))
     }
 
-    if (args.shots.includes(16)) {
+    if (args.shots.includes(17)) {
       /*
-       * ⑯ Credits ↔ tokens 换算块（014）：唯一一个**本账期混合口径**的块 ——
+       * ⑰ Credits ↔ tokens 换算块（014 起、017 改版）：唯一一个**本账期混合口径**的块 ——
        * 分母是官方 Credits 计量、分子是官方账号 tokens，所以它既不是本机实测也不是区间快照。
-       * 断言分五层：① 四个文本钩子都在且非空；② 展示串逐项等于 fixture 现值（比值 / 官方 tokens /
-       * 已用 ÷ 总额 / 折算容量），这样客户端换量纲或换公式会在这里红，而不是拍出一张自相矛盾的图；
-       * ③ 015 分项行：前缀 + 三类标签顺序 + 每类「每 Credit 多少 tokens」逐项等于 fixture 的 perCredit
-       * （是 perCredit，不是三类 tokens 本身），且整行无 %；
-       * ④ 015 按模型块：tabIndex/role/aria、行数与宿主顺序、每行 tokens/比值文本；
-       * ⑤ 016 两行制：每行第二行存在且四类 perCredit 逐字等于 fixture（cacheWrite>0 才追加第四段），
-       *    8 行两行制下 252px 定高被真正撑开（scrollHeight > clientHeight，不是 015 的「cap 在位但没触发」）；
-       * ⑥ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
+       * 017 把 015 的「每 Credit 的分项（tokens）：…」一行文字换成三格小卡片，并在折算行后加一条
+       * 按日提示（ratio.basis.day + 本地 HH:MM）。断言分七层：
+       * ① 四个文本钩子都在且非空；② 展示串逐项等于 fixture 现值（比值 / 官方 tokens / 已用 ÷ 总额 /
+       * 折算容量），客户端换量纲或换公式会在这里红，而不是拍出一张自相矛盾的图；
+       * ③ 017 折合卡片：section 钩子唯一、标题逐字、grid 三列、三格顺序/标签/数值/单位逐字等于
+       * fixture 的 perCredit、数值字号 ≥18px、卡内无 % / Credits / 货币符号；
+       * ④ 017 按日提示：节点唯一、整句逐字等于「按 {day} 当日实测比值计算，每日刷新一次（{HH:MM}）」，
+       *    day 取 fixture 的 basis.day、时间按同一个 computedAt 的**本地**时分现算；且插入位置是
+       *    明细 → 卡片 → 折算 → 按日提示 → 模型 → 脚注（折算行必须在提示之上，提示解释的正是它）；
+       * ⑤ 015 按模型块：tabIndex/role/aria、行数与宿主顺序、每行 tokens/比值文本；
+       * ⑥ 016 两行制：每行第二行存在且四类 perCredit 逐字等于 fixture（cacheWrite>0 才追加第四段），
+       *    8 行两行制下 252px 定高被真正撑开（scrollHeight > clientHeight）；
+       * ⑦ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
        */
       const credits = creditsFixture.credits
       await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
       const wait16 = '(() => { const s = document.querySelector("[data-usage-credits]"); if (s === null) return false; const r = s.querySelector("[data-usage-credits-ratio]"); return s.getAttribute("data-stale") === "0" && r !== null && (r.textContent || "").trim() !== "" })()'
-      await page.waitFor(wait16, { timeoutMs: 25_000, label: '⑯ Credits 换算块' })
+      await page.waitFor(wait16, { timeoutMs: 25_000, label: '⑰ Credits 换算块' })
       await sleep(400)
       const probe16 = await page.evaluate("(() => { const all = document.querySelectorAll('[data-usage-credits]'); const s = all.length > 0 ? all[0] : null; if (s === null) return { ok: false }; const pick = sel => { const n = s.querySelector(sel); return n === null ? null : (n.innerText || n.textContent || '').trim() }; const official = document.querySelector('[data-usage-official]'); const r = s.getBoundingClientRect(); return { ok: true, count: all.length, stale: s.getAttribute('data-stale'), ratio: pick('[data-usage-credits-ratio]'), window: pick('[data-usage-credits-window]'), detail: pick('[data-usage-credits-detail]'), estimate: pick('[data-usage-credits-estimate]'), note: pick('.tpq-usage-credits-note'), loading: s.querySelector('.tpq-usage-credits-loading') !== null, unavailable: s.querySelector('[data-usage-credits-unavailable]') !== null, retry: s.querySelector('[data-usage-credits-retry]') !== null, afterOfficial: official === null ? null : (official.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, rect: { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }, vh: innerHeight, text: (s.innerText || '') } })()")
-      if (probe16 === null || probe16.ok !== true) throw new Error('⑯ 找不到 Credits 换算块（[data-usage-credits] 缺失）：014 客户端未落盘或请求没发，不拍')
-      if (probe16.count !== 1) throw new Error('⑯ 屏上有 ' + probe16.count + ' 个 [data-usage-credits]，同一时刻应只有一个，不拍')
-      if (probe16.stale !== '0') throw new Error('⑯ Credits 换算块 data-stale=' + probe16.stale + '（还是旧账期数据），不拍')
-      if (probe16.loading === true) throw new Error('⑯ Credits 换算块还在 loading，不拍')
-      if (probe16.unavailable === true) throw new Error('⑯ Credits 换算块是「暂不可用」态（fixture 给的是可用态），不拍')
-      if (probe16.retry === true) throw new Error('⑯ 可用态不该出现重试按钮（[data-usage-credits-retry]），不拍')
+      if (probe16 === null || probe16.ok !== true) throw new Error('⑰ 找不到 Credits 换算块（[data-usage-credits] 缺失）：014 客户端未落盘或请求没发，不拍')
+      if (probe16.count !== 1) throw new Error('⑰ 屏上有 ' + probe16.count + ' 个 [data-usage-credits]，同一时刻应只有一个，不拍')
+      if (probe16.stale !== '0') throw new Error('⑰ Credits 换算块 data-stale=' + probe16.stale + '（还是旧账期数据），不拍')
+      if (probe16.loading === true) throw new Error('⑰ Credits 换算块还在 loading，不拍')
+      if (probe16.unavailable === true) throw new Error('⑰ Credits 换算块是「暂不可用」态（fixture 给的是可用态），不拍')
+      if (probe16.retry === true) throw new Error('⑰ 可用态不该出现重试按钮（[data-usage-credits-retry]），不拍')
       for (const key of ['ratio', 'window', 'detail', 'estimate', 'note']) {
-        if (probe16[key] === null || probe16[key] === '') throw new Error('⑯ Credits 换算块的 ' + key + ' 是空的，不拍')
+        if (probe16[key] === null || probe16[key] === '') throw new Error('⑰ Credits 换算块的 ' + key + ' 是空的，不拍')
       }
-      if (probe16.afterOfficial !== true) throw new Error('⑯ Credits 换算块不在官方对照块之后（INTERFACE §3.2 插入位置），不拍')
+      if (probe16.afterOfficial !== true) throw new Error('⑰ Credits 换算块不在官方对照块之后（INTERFACE §3.2 插入位置），不拍')
 
       // 015 §3.2/§3.3：分项行与按模型块。块内位置的插入顺序（明细 → 分项 → 折算 → 模型 → 脚注）也一起钉住，
       // 因为图里看到的是最终排布，顺序错了读者会把「每 Credit 分项」当成折算参考的一部分。
       const probe15 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const c = s.querySelector('[data-usage-credits-classes]'); const m = s.querySelector('[data-usage-credits-models]'); const detail = s.querySelector('[data-usage-credits-detail]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = c !== null && m !== null && detail !== null && estimate !== null && note !== null && (detail.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (c.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (m.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const rows = m === null ? [] : Array.from(m.querySelectorAll('[data-usage-credits-model]')).map(function (n) { const name = n.querySelector('.tpq-usage-credits-model-name'); const tk = n.querySelector('.tpq-usage-credits-model-tokens'); const ra = n.querySelector('.tpq-usage-credits-model-ratio'); const cl = n.querySelector('[data-usage-credits-model-classes]'); return { id: n.getAttribute('data-model'), name: name === null ? null : (name.innerText || '').trim(), title: name === null ? null : name.getAttribute('title'), tokens: tk === null ? null : (tk.innerText || '').trim(), ratio: ra === null ? null : (ra.innerText || '').trim(), classes: cl === null ? null : (cl.innerText || '').trim(), classesCount: n.querySelectorAll('[data-usage-credits-model-classes]').length, classesFlag: cl === null ? null : cl.getAttribute('data-usage-credits-model-classes') } }); const ms = m === null ? null : getComputedStyle(m); const noteNode = m === null ? null : m.querySelector('.tpq-usage-credits-models-note'); return { classesNode: c !== null, classes: c === null ? null : (c.innerText || '').trim(), modelsNode: m !== null, modelsTabIndex: m === null ? null : m.tabIndex, modelsRole: m === null ? null : m.getAttribute('role'), modelsAria: m === null ? null : m.getAttribute('aria-label'), modelsMaxH: ms === null ? null : ms.maxHeight, modelsOverflowY: ms === null ? null : ms.overflowY, scrollH: m === null ? 0 : m.scrollHeight, clientH: m === null ? 0 : m.clientHeight, rows: rows, modelsNote: noteNode === null ? null : (noteNode.innerText || '').trim(), modelsText: m === null ? '' : (m.innerText || ''), order: order } })()")
-      if (probe15 === null) throw new Error("⑯ 量不到 Credits 换算块，分项/模型断言无从谈起，不拍")
-      if (probe15.classesNode !== true) throw new Error("⑯ 缺分项行（[data-usage-credits-classes]）：015 客户端未落盘，或 ratio.classes 不完整被整行闸门丢弃，不拍")
-      if (probe15.modelsNode !== true) throw new Error("⑯ 缺按模型块（[data-usage-credits-models]）：015 客户端未落盘，或 ratio.models 为空被整块闸门丢弃，不拍")
-      if (probe15.order !== true) throw new Error("⑯ 分项行/模型块插入位置不对（应 明细 → 分项 → 折算 → 模型 → 脚注），不拍")
-      console.log("  ⑯ 模型块：行数=" + probe15.rows.length + " scrollHeight=" + probe15.scrollH + " clientHeight=" + probe15.clientH + " maxHeight=" + probe15.modelsMaxH + " overflowY=" + probe15.modelsOverflowY)
+      if (probe15 === null) throw new Error("⑰ 量不到 Credits 换算块，分项/模型断言无从谈起，不拍")
+      if (probe15.classesNode !== true) throw new Error("⑰ 缺分项行（[data-usage-credits-classes]）：015 客户端未落盘，或 ratio.classes 不完整被整行闸门丢弃，不拍")
+      if (probe15.modelsNode !== true) throw new Error("⑰ 缺按模型块（[data-usage-credits-models]）：015 客户端未落盘，或 ratio.models 为空被整块闸门丢弃，不拍")
+      if (probe15.order !== true) throw new Error("⑰ 折合卡片/模型块插入位置不对（应 明细 → 卡片 → 折算 → 按日提示 → 模型 → 脚注），不拍")
+      console.log("  ⑰ 模型块：行数=" + probe15.rows.length + " scrollHeight=" + probe15.scrollH + " clientHeight=" + probe15.clientH + " maxHeight=" + probe15.modelsMaxH + " overflowY=" + probe15.modelsOverflowY)
+      // 017 §4/§6：三格折合卡片与按日提示。两者都是 017 新增节点，缺一个就说明客户端还是旧版；
+      // 卡片的三格顺序固定（缓存命中 / 未命中输入 / 输出），数值是 perCredit 而不是三类 tokens 本身。
+      const probe17 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return { ok: false }; const cards = Array.from(s.querySelectorAll('[data-usage-credits-classes]')); const c = cards.length > 0 ? cards[0] : null; const textOf = n => n === null ? null : (n.innerText || n.textContent || '').trim(); const title = c === null ? null : textOf(c.querySelector('.tpq-usage-credits-classes-title')); const grid = c === null ? null : c.querySelector('.tpq-usage-credits-classes-grid'); const gs = grid === null ? null : getComputedStyle(grid); const cells = c === null ? [] : Array.from(c.querySelectorAll('[data-usage-credits-class]')).map(function (n) { const v = n.querySelector('.tpq-usage-credits-class-value'); const l = n.querySelector('.tpq-usage-credits-class-label'); const u = n.querySelector('.tpq-usage-credits-class-unit'); const vs = v === null ? null : getComputedStyle(v); const r = n.getBoundingClientRect(); return { key: n.getAttribute('data-usage-credits-class'), label: textOf(l), value: textOf(v), unit: textOf(u), valueSize: vs === null ? null : parseFloat(vs.fontSize), valueSizeRaw: vs === null ? null : vs.fontSize, top: Math.round(r.top), bottom: Math.round(r.bottom) } }); const dailyNodes = Array.from(s.querySelectorAll('[data-usage-credits-daily]')); const detail = s.querySelector('[data-usage-credits-detail]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const models = s.querySelector('[data-usage-credits-models]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = c !== null && dailyNodes.length === 1 && detail !== null && estimate !== null && models !== null && note !== null && (detail.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (c.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(dailyNodes[0]) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (dailyNodes[0].compareDocumentPosition(models) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (models.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const cr = c === null ? null : c.getBoundingClientRect(); return { ok: true, cards: cards.length, cardAttr: c === null ? null : c.getAttribute('data-usage-credits-classes'), title: title, gridDisplay: gs === null ? null : gs.display, gridColumns: gs === null ? null : gs.gridTemplateColumns, gridChildren: grid === null ? -1 : grid.children.length, cells: cells, cardText: c === null ? '' : (c.innerText || ''), dailyCount: dailyNodes.length, daily: dailyNodes.length > 0 ? textOf(dailyNodes[0]) : null, order: order, cardRect: cr === null ? null : { top: Math.round(cr.top), bottom: Math.round(cr.bottom), h: Math.round(cr.height) }, vh: innerHeight } })()")
+      if (probe17 === null || probe17.ok !== true) throw new Error("⑰ 量不到折合卡片/按日提示，不拍")
+      if (probe17.cards !== 1) throw new Error("⑰ 屏上有 " + probe17.cards + " 个 [data-usage-credits-classes]，同一时刻应只有一个，不拍")
+      if (probe17.cardAttr !== "1") throw new Error("⑰ [data-usage-credits-classes] 的值是 " + probe17.cardAttr + "，应为 1，不拍")
+      const classesTitle17 = langKey === "zh" ? "1 Credit 折合" : "One credit is worth"
+      if (probe17.title !== classesTitle17) throw new Error("⑰ 折合卡片标题「" + probe17.title + "」≠「" + classesTitle17 + "」，不拍")
+      if (probe17.gridDisplay !== "grid") throw new Error("⑰ 折合卡片 grid display=" + probe17.gridDisplay + "，INTERFACE §5 要求 grid，不拍")
+      const gridTracks17 = String(probe17.gridColumns === null ? "" : probe17.gridColumns).trim().split(/\s+/).filter(Boolean)
+      if (gridTracks17.length !== 3) throw new Error("⑰ 折合卡片 grid-template-columns=「" + probe17.gridColumns + "」不是 3 列（INTERFACE §5），不拍")
+      if (probe17.gridChildren !== 3) throw new Error("⑰ 折合卡片 grid 子节点 " + probe17.gridChildren + " 个 ≠ 3 格，不拍")
+      if (probe17.cells.length !== 3) throw new Error("⑰ 折合卡片格数 " + probe17.cells.length + " ≠ 3，不拍")
+      const classOrder17 = langKey === "zh"
+        ? [{ key: "cacheRead", label: "缓存命中" }, { key: "uncachedInput", label: "未命中输入" }, { key: "output", label: "输出" }]
+        : [{ key: "cacheRead", label: "cache hit" }, { key: "uncachedInput", label: "uncached input" }, { key: "output", label: "output" }]
+      probe17.cells.forEach(function (cell, index) {
+        const want17 = classOrder17[index]
+        if (cell.key !== want17.key) throw new Error("⑰ 卡片第 " + index + " 格 data-usage-credits-class=" + cell.key + "，期望 " + want17.key + "（顺序固定：缓存命中/未命中输入/输出），不拍")
+        if (cell.label !== want17.label) throw new Error("⑰ 卡片第 " + index + " 格标签「" + cell.label + "」≠「" + want17.label + "」，不拍")
+        const valueNeedle17 = compactTokens(USAGE_CREDITS_CLASSES[want17.key].perCredit, langKey)
+        if (cell.value !== valueNeedle17) throw new Error("⑰ 卡片第 " + index + " 格数值「" + cell.value + "」≠「" + valueNeedle17 + "」（fixture 的 perCredit，不是 tokens），不拍")
+        if (cell.unit !== "tokens") throw new Error("⑰ 卡片第 " + index + " 格单位「" + cell.unit + "」≠ tokens，不拍")
+        if (!(cell.valueSize >= 18)) throw new Error("⑰ 卡片第 " + index + " 格数值字号 " + cell.valueSizeRaw + " < 18px（INTERFACE §5 要求 20px），不拍")
+      })
+      if (/%|Credits|[¥$€£]|元/.test(probe17.cardText)) throw new Error("⑰ 卡片内出现 % / Credits / 货币符号（" + probe17.cardText + "），不拍")
+      // 017 §6 按日提示：与客户端同一套本地时区格式（客户端按读者本地时区把 computedAt 写成 HH:MM），
+      // 所以期望串也必须用同一个毫秒值在断言进程里现算，不能写死 20:05。
+      const basisAt17 = new Date(USAGE_CREDITS_DAILY_COMPUTED_AT)
+      const pad17 = n => String(n).padStart(2, "0")
+      const time17 = pad17(basisAt17.getHours()) + ":" + pad17(basisAt17.getMinutes())
+      const dailyNeedle17 = langKey === "zh"
+        ? "按 " + USAGE_CREDITS_DAILY_DAY + " 当日实测比值计算，每日刷新一次（" + time17 + "）"
+        : "Computed from the measured ratio on " + USAGE_CREDITS_DAILY_DAY + "; refreshed once per day (" + time17 + ")"
+      if (probe17.dailyCount !== 1) throw new Error("⑰ 按日提示节点数 " + probe17.dailyCount + " ≠ 1（basis 缺失应整条不渲染，出现就说明宿主/客户端版本不对），不拍")
+      if (probe17.daily !== dailyNeedle17) throw new Error("⑰ 按日提示「" + probe17.daily + "」≠ 期望「" + dailyNeedle17 + "」（本地 " + time17 + "），不拍")
+      if (probe17.order !== true) throw new Error("⑰ 插入顺序不对（应 明细 → 折合卡片 → 折算 → 按日提示 → 模型 → 脚注），不拍")
+      console.log("  ⑰ 折合卡片：「" + probe17.title + "」；" + probe17.cells.map(function (c) { return c.label + "=" + c.value + " " + c.unit + "（" + c.valueSizeRaw + "）" }).join(" / ") + "；grid=" + probe17.gridColumns + "；按日提示「" + probe17.daily + "」")
+
 
       // ① 比值：唯一允许写「1 Credit ≈ … tokens」的地方，数值按 fixture 现值 + 客户端量纲。
       const ratioNeedle = compactTokens(credits.ratio.tokensPerCredit, langKey)
-      if (!/credit/i.test(probe16.ratio)) throw new Error('⑯ 比值行没有 Credit 字样（' + probe16.ratio + '），不拍')
-      if (probe16.ratio.indexOf(ratioNeedle) < 0) throw new Error('⑯ 比值行是「' + probe16.ratio + '」，期望含 ' + ratioNeedle + '，不拍')
+      if (!/credit/i.test(probe16.ratio)) throw new Error('⑰ 比值行没有 Credit 字样（' + probe16.ratio + '），不拍')
+      if (probe16.ratio.indexOf(ratioNeedle) < 0) throw new Error('⑰ 比值行是「' + probe16.ratio + '」，期望含 ' + ratioNeedle + '，不拍')
 
       // ② 明细：官方 tokens 与 已用/总额（Credits 用 usageCount：纯整数无千分位），百分比按 4 位取整。
       const officialNeedle = compactTokens(credits.tokens.official, langKey)
@@ -1445,108 +1489,94 @@ async function main() {
       const percent16 = Math.round((credits.credits.used / credits.credits.total) * 1000) / 10
       const percentNeedle = (Number.isInteger(percent16) ? String(percent16) : percent16.toFixed(1)) + '%'
       for (const needle of [officialNeedle, usedNeedle, totalNeedle, percentNeedle]) {
-        if (probe16.detail.indexOf(needle) < 0) throw new Error('⑯ 明细行缺「' + needle + '」（实际：' + probe16.detail + '），不拍')
+        if (probe16.detail.indexOf(needle) < 0) throw new Error('⑰ 明细行缺「' + needle + '」（实际：' + probe16.detail + '），不拍')
       }
       // ③ 账期：起点与重置日都要出现（日期来自 fixture 的 window，不跟今天的实际日期走）。
       for (const needle of [credits.window.from, credits.window.resetDay]) {
-        if (probe16.window.indexOf(needle) < 0) throw new Error('⑯ 账期行缺日期「' + needle + '」（实际：' + probe16.window + '），不拍')
+        if (probe16.window.indexOf(needle) < 0) throw new Error('⑰ 账期行缺日期「' + needle + '」（实际：' + probe16.window + '），不拍')
       }
       // ④ 折算参考：容量 tokens + 总额 Credits，并明确标注「折算参考 / derived」。
       const capacityNeedle = compactTokens(credits.ratio.capacityTokens, langKey)
       const estimateNeedle = langKey === 'zh' ? '折算参考' : 'derived'
       for (const needle of [capacityNeedle, totalNeedle, estimateNeedle]) {
-        if (probe16.estimate.indexOf(needle) < 0) throw new Error('⑯ 折算行缺「' + needle + '」（实际：' + probe16.estimate + '），不拍')
+        if (probe16.estimate.indexOf(needle) < 0) throw new Error('⑰ 折算行缺「' + needle + '」（实际：' + probe16.estimate + '），不拍')
       }
 
-      // ⑥ 015 §3.2 分项行：文案前缀 + 三类标签顺序，数值是**每 Credit 的 tokens**（formatTokens 口径），
-      // 不是三类 tokens 本身 —— 图里读者看到的是「缓存命中 5.5万」，把它当成 tokens 就会差四个数量级。
-      const classesPrefix15 = langKey === "zh" ? "每 Credit 的分项（tokens）：" : "Per credit by class (tokens):"
-      const classLabels15 = langKey === "zh" ? ["缓存命中", "未命中输入", "输出"] : ["cache hit", "uncached input", "output"]
-      const classCells15 = [USAGE_CREDITS_CLASSES.cacheRead, USAGE_CREDITS_CLASSES.uncachedInput, USAGE_CREDITS_CLASSES.output]
-      if (probe15.classes === null || probe15.classes === "") throw new Error("⑯ 分项行是空的，不拍")
-      if (probe15.classes.indexOf(classesPrefix15) < 0) throw new Error("⑯ 分项行缺前缀「" + classesPrefix15 + "」（实际：" + probe15.classes + "），不拍")
-      let cursor15 = 0
-      for (let i = 0; i < 3; i += 1) {
-        const label15 = classLabels15[i]
-        const needle15 = compactTokens(classCells15[i].perCredit, langKey)
-        const labelAt15 = probe15.classes.indexOf(label15, cursor15)
-        if (labelAt15 < 0) throw new Error("⑯ 分项行缺「" + label15 + "」或顺序不对（实际：" + probe15.classes + "），不拍")
-        const valueAt15 = probe15.classes.indexOf(needle15, labelAt15 + label15.length)
-        if (valueAt15 < 0) throw new Error("⑯ 分项行「" + label15 + "」的每 Credit 值不是 " + needle15 + "（实际：" + probe15.classes + "），不拍")
-        cursor15 = valueAt15 + needle15.length
-      }
-      if (probe15.classes.indexOf("%") >= 0) throw new Error("⑯ 分项行出现百分比（分项是每 Credit 的 tokens，不是比例）：" + probe15.classes)
-
-      // ⑦ 015 §3.3 模型块：宿主顺序原样保留、每行 tokens/比值与 fixture 现算值相等、键盘可聚焦、252px 定高内滚。
-      if (probe15.modelsTabIndex !== 0) throw new Error("⑯ 模型块 tabIndex=" + probe15.modelsTabIndex + "，键盘滚不进这块定高列表，不拍")
-      if (probe15.modelsRole !== "group") throw new Error("⑯ 模型块 role=" + probe15.modelsRole + "，应为 group，不拍")
+      // ⑤ 015 §3.3 模型块：宿主顺序原样保留、每行 tokens/比值与 fixture 现算值相等、键盘可聚焦、252px 定高内滚。
+      if (probe15.modelsTabIndex !== 0) throw new Error("⑰ 模型块 tabIndex=" + probe15.modelsTabIndex + "，键盘滚不进这块定高列表，不拍")
+      if (probe15.modelsRole !== "group") throw new Error("⑰ 模型块 role=" + probe15.modelsRole + "，应为 group，不拍")
       const modelsAria15 = langKey === "zh" ? "每个模型各自的比值" : "Ratio per model"
-      if (probe15.modelsAria !== modelsAria15) throw new Error("⑯ 模型块 aria-label 应为「" + modelsAria15 + "」（实际：" + probe15.modelsAria + "），不拍")
-      if (probe15.rows.length !== USAGE_CREDITS_MODELS.length) throw new Error("⑯ 模型行数 " + probe15.rows.length + " ≠ fixture " + USAGE_CREDITS_MODELS.length + " 行，不拍")
+      if (probe15.modelsAria !== modelsAria15) throw new Error("⑰ 模型块 aria-label 应为「" + modelsAria15 + "」（实际：" + probe15.modelsAria + "），不拍")
+      if (probe15.rows.length !== USAGE_CREDITS_MODELS.length) throw new Error("⑰ 模型行数 " + probe15.rows.length + " ≠ fixture " + USAGE_CREDITS_MODELS.length + " 行，不拍")
       USAGE_CREDITS_MODELS.forEach(function (expected, index) {
         const row = probe15.rows[index]
-        if (row === null || row === undefined) throw new Error("⑯ 模型块缺第 " + index + " 行，不拍")
-        if (row.id !== expected.id) throw new Error("⑯ 模型第 " + index + " 行 data-model=" + row.id + "，期望 " + expected.id + "（宿主顺序要原样保留），不拍")
-        if (row.title !== expected.id) throw new Error("⑯ 模型第 " + index + " 行 name 的 title 不是完整 id（" + row.title + "），悬停看不到全名，不拍")
-        if (row.name !== expected.id) throw new Error("⑯ 模型第 " + index + " 行显示名 ≠ id（" + row.name + "），不拍")
+        if (row === null || row === undefined) throw new Error("⑰ 模型块缺第 " + index + " 行，不拍")
+        if (row.id !== expected.id) throw new Error("⑰ 模型第 " + index + " 行 data-model=" + row.id + "，期望 " + expected.id + "（宿主顺序要原样保留），不拍")
+        if (row.title !== expected.id) throw new Error("⑰ 模型第 " + index + " 行 name 的 title 不是完整 id（" + row.title + "），悬停看不到全名，不拍")
+        if (row.name !== expected.id) throw new Error("⑰ 模型第 " + index + " 行显示名 ≠ id（" + row.name + "），不拍")
         const tokensNeedle15 = compactTokens(expected.tokens, langKey) + " tokens"
-        if (row.tokens !== tokensNeedle15) throw new Error("⑯ 模型第 " + index + " 行 tokens 文本「" + row.tokens + "」≠「" + tokensNeedle15 + "」，不拍")
+        if (row.tokens !== tokensNeedle15) throw new Error("⑰ 模型第 " + index + " 行 tokens 文本「" + row.tokens + "」≠「" + tokensNeedle15 + "」，不拍")
         const ratioNeedle15 = compactTokens(expected.tokensPerCredit, langKey)
-        if (row.ratio.indexOf(ratioNeedle15) < 0) throw new Error("⑯ 模型第 " + index + " 行比值「" + row.ratio + "」不含 " + ratioNeedle15 + "，不拍")
-        if (!/credit/i.test(row.ratio)) throw new Error("⑯ 模型第 " + index + " 行比值没有 Credit 字样（" + row.ratio + "），不拍")
+        if (row.ratio.indexOf(ratioNeedle15) < 0) throw new Error("⑰ 模型第 " + index + " 行比值「" + row.ratio + "」不含 " + ratioNeedle15 + "，不拍")
+        if (!/credit/i.test(row.ratio)) throw new Error("⑰ 模型第 " + index + " 行比值没有 Credit 字样（" + row.ratio + "），不拍")
       })
-      // 016 §3.3：每行第二行（输入 / 缓存命中 / 输出 各自的 perCredit）必须逐行存在且与 fixture 现算值逐字相等；
+      // ⑥ 016 §3.3：每行第二行（输入 / 缓存命中 / 输出 各自的 perCredit）必须逐行存在且与 fixture 现算值逐字相等；
       // cacheWrite > 0 才追加第四段，所以首行（cacheWrite=0）的文案里不能出现「缓存写入 / cache write」。
       const classesCopy16 = langKey === "zh"
         ? { input: "每 Credit：输入 ", hit: " · 缓存命中 ", out: " · 输出 ", write: " · 缓存写入 " }
         : { input: "Per credit: input ", hit: " · cache hit ", out: " · output ", write: " · cache write " }
       probe15.rows.forEach(function (row, index) {
-        if (row === null || row === undefined) throw new Error("⑯ 模型块缺第 " + index + " 行，不拍")
-        if (row.classesCount !== 1) throw new Error("⑯ 模型第 " + index + " 行第二行数量=" + row.classesCount + "，应恰好 1 个 [data-usage-credits-model-classes]，不拍")
-        if (row.classesFlag !== "1") throw new Error("⑯ 模型第 " + index + " 行第二行 data-usage-credits-model-classes=" + row.classesFlag + "，应为 1，不拍")
+        if (row === null || row === undefined) throw new Error("⑰ 模型块缺第 " + index + " 行，不拍")
+        if (row.classesCount !== 1) throw new Error("⑰ 模型第 " + index + " 行第二行数量=" + row.classesCount + "，应恰好 1 个 [data-usage-credits-model-classes]，不拍")
+        if (row.classesFlag !== "1") throw new Error("⑰ 模型第 " + index + " 行第二行 data-usage-credits-model-classes=" + row.classesFlag + "，应为 1，不拍")
         const classes = USAGE_CREDITS_MODELS[index].classes
         const expected16 = classesCopy16.input + compactTokens(classes.input.perCredit, langKey)
           + classesCopy16.hit + compactTokens(classes.cacheRead.perCredit, langKey)
           + classesCopy16.out + compactTokens(classes.output.perCredit, langKey)
           + (classes.cacheWrite.perCredit > 0 ? classesCopy16.write + compactTokens(classes.cacheWrite.perCredit, langKey) : "")
-        if (row.classes !== expected16) throw new Error("⑯ 模型第 " + index + " 行第二行「" + row.classes + "」≠ 期望「" + expected16 + "」（四类 perCredit 与 fixture 不符），不拍")
-        if (row.classes.indexOf("%") >= 0) throw new Error("⑯ 模型第 " + index + " 行第二行出现百分比（每 Credit 的 tokens 不是比例）：" + row.classes)
+        if (row.classes !== expected16) throw new Error("⑰ 模型第 " + index + " 行第二行「" + row.classes + "」≠ 期望「" + expected16 + "」（四类 perCredit 与 fixture 不符），不拍")
+        if (row.classes.indexOf("%") >= 0) throw new Error("⑰ 模型第 " + index + " 行第二行出现百分比（每 Credit 的 tokens 不是比例）：" + row.classes)
       })
       const modelsNoteNeedle15 = langKey === "zh" ? "本账期已用 Credits" : "credits used this cycle"
-      if (probe15.modelsNote === null || probe15.modelsNote.indexOf(modelsNoteNeedle15) < 0) throw new Error("⑯ 模型块脚注缺「" + modelsNoteNeedle15 + "」（实际：" + probe15.modelsNote + "），贡献值口径没交代，不拍")
-      if (probe15.modelsText.indexOf("%") >= 0) throw new Error("⑯ 模型块出现百分比（模型比值是每 Credit 的 tokens）：" + probe15.modelsText)
-      if (probe15.modelsMaxH !== "252px") throw new Error("⑯ 模型块 max-height=" + probe15.modelsMaxH + "，INTERFACE §3.4 要求 252px，不拍")
-      if (probe15.modelsOverflowY !== "auto") throw new Error("⑯ 模型块 overflow-y=" + probe15.modelsOverflowY + "，INTERFACE §3.4 要求 auto（定高内滚），不拍")
+      if (probe15.modelsNote === null || probe15.modelsNote.indexOf(modelsNoteNeedle15) < 0) throw new Error("⑰ 模型块脚注缺「" + modelsNoteNeedle15 + "」（实际：" + probe15.modelsNote + "），贡献值口径没交代，不拍")
+      if (probe15.modelsText.indexOf("%") >= 0) throw new Error("⑰ 模型块出现百分比（模型比值是每 Credit 的 tokens）：" + probe15.modelsText)
+      if (probe15.modelsMaxH !== "252px") throw new Error("⑰ 模型块 max-height=" + probe15.modelsMaxH + "，INTERFACE §3.4 要求 252px，不拍")
+      if (probe15.modelsOverflowY !== "auto") throw new Error("⑰ 模型块 overflow-y=" + probe15.modelsOverflowY + "，INTERFACE §3.4 要求 auto（定高内滚），不拍")
       // 016 §3.4：每行多出第二行后，8 行内容必然高于 252px 定高 —— 内滚在截图里是**真正被触发**的，
       // 所以这里要的是硬证据 scrollHeight > clientHeight（不是 015 那句「cap 在位但没触发」）。
-      if (!(probe15.clientH <= 252)) throw new Error("⑯ 模型块 clientHeight=" + probe15.clientH + " > 252px，max-height 没生效，不拍")
-      if (!(probe15.scrollH > probe15.clientH)) throw new Error("⑯ 模型块 scrollHeight=" + probe15.scrollH + " 未超过 clientHeight=" + probe15.clientH + "，两行制没把定高撑开（016 §3.4 要求真实内滚），不拍")
-      if (!(probe15.scrollH > 252)) throw new Error("⑯ 模型块 scrollHeight=" + probe15.scrollH + " ≤ 252px，内容没超出定高，内滚断言没有证据，不拍")
+      if (!(probe15.clientH <= 252)) throw new Error("⑰ 模型块 clientHeight=" + probe15.clientH + " > 252px，max-height 没生效，不拍")
+      if (!(probe15.scrollH > probe15.clientH)) throw new Error("⑰ 模型块 scrollHeight=" + probe15.scrollH + " 未超过 clientHeight=" + probe15.clientH + "，两行制没把定高撑开（016 §3.4 要求真实内滚），不拍")
+      if (!(probe15.scrollH > 252)) throw new Error("⑰ 模型块 scrollHeight=" + probe15.scrollH + " ≤ 252px，内容没超出定高，内滚断言没有证据，不拍")
 
-      // ⑤ 口径护栏：这块是整个用量屏唯一合法出现 Credits 的地方，仍不许出现货币符号与「剩余」话术。
-      if (/[¥$€£]|元/.test(probe16.text)) throw new Error('⑯ 换算块出现货币符号（' + probe16.text + '），不拍')
-      if (/Credits\s*剩余/i.test(probe16.text)) throw new Error('⑯ 换算块出现「Credits 剩余」话术（Credits 只有已用口径），不拍')
-      if (/NaN|undefined/.test(probe16.text)) throw new Error('⑯ 换算块出现 NaN/undefined（' + probe16.text + '），不拍')
+      // ⑦ 口径护栏：这块是整个用量屏唯一合法出现 Credits 的地方，仍不许出现货币符号与「剩余」话术。
+      if (/[¥$€£]|元/.test(probe16.text)) throw new Error('⑰ 换算块出现货币符号（' + probe16.text + '），不拍')
+      if (/Credits\s*剩余/i.test(probe16.text)) throw new Error('⑰ 换算块出现「Credits 剩余」话术（Credits 只有已用口径），不拍')
+      if (/NaN|undefined/.test(probe16.text)) throw new Error('⑰ 换算块出现 NaN/undefined（' + probe16.text + '），不拍')
       const noteNeedle = langKey === 'zh' ? '不是固定兑换率' : 'not a fixed exchange rate'
-      if (probe16.note.indexOf(noteNeedle) < 0) throw new Error('⑯ 脚注缺「' + noteNeedle + '」（实际：' + probe16.note + '），不拍')
-      if (langKey === 'en' && /\p{Script=Han}/u.test(probe16.text)) throw new Error('⑯ 英文界面换算块混了中文（' + probe16.text + '），不拍')
-      if (langKey === 'zh' && /\b(credits used|allowance resets|Official tokens)\b/.test(probe16.text)) throw new Error('⑯ 中文界面换算块混了英文句式（' + probe16.text + '），不拍')
+      if (probe16.note.indexOf(noteNeedle) < 0) throw new Error('⑰ 脚注缺「' + noteNeedle + '」（实际：' + probe16.note + '），不拍')
+      if (langKey === 'en' && /\p{Script=Han}/u.test(probe16.text)) throw new Error('⑰ 英文界面换算块混了中文（' + probe16.text + '），不拍')
+      if (langKey === 'zh' && /\b(credits used|allowance resets|Official tokens)\b/.test(probe16.text)) throw new Error('⑰ 中文界面换算块混了英文句式（' + probe16.text + '），不拍')
 
       // 取景：换算块滚到可视区上半部；块必须完整落在视口内（裁一半的图不能进 docs/）。
       const framed16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; s.scrollIntoView({ block: 'center' }); let sc = s.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const before = s.getBoundingClientRect(); box.scrollTop = Math.max(0, box.scrollTop + Math.round(before.top - 120)); return { top: Math.round(s.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
-      if (framed16 === null) throw new Error('⑯ 量不到 Credits 换算块的位置，不拍')
+      if (framed16 === null) throw new Error('⑰ 量不到 Credits 换算块的位置，不拍')
       await sleep(350)
       const frameState16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const r = s.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
-      if (frameState16 === null) throw new Error('⑯ 取景后找不到 Credits 换算块，不拍')
-      if (frameState16.top < 8 || frameState16.bottom > frameState16.vh - 8) throw new Error('⑯ 换算块没有完整落在视口内（' + JSON.stringify(frameState16) + '），不拍')
-      if (frameState16.h < 120) throw new Error('⑯ 换算块在取景里只有 ' + frameState16.h + 'px 高，内容不像渲染完整，不拍')
+      if (frameState16 === null) throw new Error('⑰ 取景后找不到 Credits 换算块，不拍')
+      if (frameState16.top < 8 || frameState16.bottom > frameState16.vh - 8) throw new Error('⑰ 换算块没有完整落在视口内（' + JSON.stringify(frameState16) + '），不拍')
+      if (frameState16.h < 120) throw new Error('⑰ 换算块在取景里只有 ' + frameState16.h + 'px 高，内容不像渲染完整，不拍')
       // 模型块是 252px 定高内滚列表，整块必须落在视口里：截一半的图会把「内滚」截成「列表被切掉」。
       const frameModels16 = await page.evaluate("(() => { const m = document.querySelector('[data-usage-credits-models]'); if (m === null) return null; const r = m.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
-      if (frameModels16 === null) throw new Error('⑯ 取景后找不到按模型块，不拍')
-      if (frameModels16.top < 8 || frameModels16.bottom > frameModels16.vh - 8) throw new Error('⑯ 模型块没有完整落在视口内（' + JSON.stringify(frameModels16) + '），不拍')
-      if (frameModels16.h > 253) throw new Error('⑯ 模型块渲染高度 ' + frameModels16.h + 'px > max-height 252px + 1px 容差，定高没生效，不拍')
+      if (frameModels16 === null) throw new Error('⑰ 取景后找不到按模型块，不拍')
+      if (frameModels16.top < 8 || frameModels16.bottom > frameModels16.vh - 8) throw new Error('⑰ 模型块没有完整落在视口内（' + JSON.stringify(frameModels16) + '），不拍')
+      if (frameModels16.h > 253) throw new Error('⑰ 模型块渲染高度 ' + frameModels16.h + 'px > max-height 252px + 1px 容差，定高没生效，不拍')
+      // 017：折合卡片必须在取景里完整可见（它是 017 的证据主体，被 252px 模型块挤出去就等于没拍）。
+      const frameCard17 = await page.evaluate("(() => { const c = document.querySelector('[data-usage-credits-classes]'); if (c === null) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
+      if (frameCard17 === null) throw new Error('⑰ 取景后找不到折合卡片，不拍')
+      if (frameCard17.top < 8 || frameCard17.bottom > frameCard17.vh - 8) throw new Error('⑰ 折合卡片没有完整落在视口内（' + JSON.stringify(frameCard17) + '），不拍')
+      if (frameCard17.h < 60) throw new Error('⑰ 折合卡片在取景里只有 ' + frameCard17.h + 'px 高，三格没渲染开，不拍')
 
-      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；分项「' + probe15.classes + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + ' / 第二行「' + probe15.rows[0].classes + '」）；内滚 ' + probe15.scrollH + '/' + probe15.clientH + 'px；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
+      console.log('  ⑰ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；折合卡片「' + probe17.title + '：' + probe17.cells.map(function (c) { return c.label + '=' + c.value + ' ' + c.unit }).join(' / ') + '」；按日提示「' + probe17.daily + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + ' / 第二行「' + probe15.rows[0].classes + '」）；内滚 ' + probe15.scrollH + '/' + probe15.clientH + 'px；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16) + '；卡片 ' + JSON.stringify(frameCard17))
       save('usage-credits-2d.png', await page.shot({}))
     }
 

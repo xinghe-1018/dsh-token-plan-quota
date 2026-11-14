@@ -135,6 +135,30 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **按模型用量列表滚到底后外层不续滚（020）**：`.tpq-usage-credits-models` 与 012 遗留的 `.tpq-usage-models`
+  原先都带 `overscroll-behavior:contain`，把内层列表的滚动链切断——列表滚到底（实测 `scrollTop=396` 即上限）后，
+  同一次滚轮的余量不再交给外层 `.tpq-usage-viewport`，整页纹丝不动（CDP 取证：15 步滚轮里外层 `scrollTop`
+  恒为 1302，上限 1526）。现在两处内层改为 `overscroll-behavior:auto`，滚动链交还外层，双向（到底继续向下、
+  到顶继续向上）都通；外层视口仍保留 `contain`，链到边界也不穿透宿主页面，横向图表容器的
+  `overscroll-behavior-x:contain` 不动。8px 细滚动条、hover、`tabIndex=0` 与键盘滚动、018 的焦点环口径全部不变。
+  零新路由、零新配置键、零新出站主机、零第三方依赖。测试：客户端 1346 → 1358，guards 592 → 603（新增第 20 节矩阵），
+  宿主不变（1037）。修复后 CDP 验收（`evidence/wheel-after.json`，verdict=`chain-ok`）：正向 4 步内层到 396 后外层
+  1302 → 1526 同向续滚（+224），反向从双底位起内层 396 → 0、随后外层 1406 → 0，全程 `window.scrollY` 恒 0。
+  取证与验收数据见 `~/.dsh/tmp/shots-020/evidence/`（不入库），方案见 `specs/020-scroll-chain/`。
+- **徽标面板底部的「更新于 / 用量统计」被裁掉（021）**：两个按钮原先是 `.tpq-body` 的裸尾部子元素，随内容一起滚；
+  面板被 `max-height:min(52vh,460px)`（或悬浮态被拖到最小高度）夹住时，入口会被整块裁掉——取证锚定态
+  `visiblePx=0`、`overflowBottomPx=32`，悬浮最小高度态连「更新于」都被切 5px。验收时还揪出悬浮态本身的一处真缺陷：
+  `.tpq-panel[data-float=1]` 的属性值没加引号，按 CSS 语法是**无效选择器**（值不能以数字开头），浏览器整条丢弃，
+  悬浮态 `height:100%` 从未生效、`box-shadow` 也没生效——body 被基础 `max-height` 撑高后又被面板 `overflow:hidden` 裁掉，
+  底栏在悬浮态无处可粘。现改为 `[data-float="1"]` 并补断言（带引号在、不带引号不在）。现在两者收进
+  `div.tpq-panel-foot`，用 `position:sticky;bottom:0` 粘在滚动容器可视底边，负外边距抵消 `.tpq-body` 的
+  12px/14px 内边距铺满整宽，背景取面板同一主题变量（不写裸色，滚动内容不会从底栏后面透出）；与内容的分界
+  沿用「更新于」自带的 `border-top`，不画双线。缩放手柄仍是面板直接子元素、底栏不用绝对定位，右下 18×18
+  可正常拖拽；两按钮仍是原生 `button`，Tab 顺序与 `:focus-visible` 品牌色 2px 焦点环不变，
+  `usageStats !== false` 的显示条件不变（关掉时底栏只剩「更新于」）。零新路由、零新配置键、零新出站主机。
+  测试：客户端 1358 项里的 021 结构与 CSS 断言、guards 第 21 节矩阵（603 项）。修复后 CDP 验收（`evidence/panel-after.json`，
+  verdict=`pinned-ok`）：锚定态入口 370..396 全可见、悬浮 280×160 下 body 182 可滚且两按钮各 26px 全可见、160→420
+  十一档高度 sweep 无一被裁。方案见 `specs/021-badge-footer/`。
 - **用量页的焦点噪音：整页白边与点柱出框（018）**：两处噪音同源——焦点环只看了「键盘还是鼠标」，
   没看「这块元素是不是页面骨架」。① 整页滚动视口 `.tpq-usage-viewport` 是 `tabIndex=0` 的整屏容器，
   原先的焦点环是 2px 实线 + `outline-offset:-2px`，颜色取 `--dsw-alias-brand-primary`——该变量在 body

@@ -13,8 +13,20 @@
 
 | 编号 | 目录 | 一句话 |
 | --- | --- | --- |
-| 020 | `specs/020-scroll-chain/` | 「按模型用量」列表滚到底后，滚轮应继续滚动外层整页视口（根因已确认：内层 `overscroll-behavior:contain`）。 |
-| 021 | `specs/021-badge-footer/` | 徽标小窗底部「用量统计」入口被挤到边缘只露半行，需要固定底栏（先复现再定实现路线）。 |
+| ~~020~~ | `specs/020-scroll-chain/` | 已完成（2026-11-15）：内层两个列表 `contain` → `auto`，滚动链交还外层；双向链与「不穿透宿主」均有 CDP 证据。 |
+| ~~021~~ | `specs/021-badge-footer/` | 已完成（2026-11-15）：两按钮收进 `.tpq-panel-foot` sticky 粘底；顺带修掉悬浮态无效属性选择器。 |
+
+## 2026-11-15 进展
+
+- 两个待做项都按工作流走完（取证 → plan/INTERFACE → 实现 → 断言 → CDP 验收 → 文档），提交为
+  `fix(usage) 020 滚动链` → `fix(panel) 021 底栏（含 [data-float] 选择器修正）` → `test(usage,panel) 成对断言`
+  → `docs(usage) README/CHANGELOG/specs`。
+- 020 验收：`evidence/wheel-after.json` verdict=`chain-ok`（内层到 396 后外层 1302→1526，反向内层归零后外层 1406→0，
+  `window.scrollY` 恒 0）。021 验收：`evidence/panel-after.json` verdict=`pinned-ok`（锚定态入口全可见、悬浮 280×160 可滚、
+  160→420 十一档 sweep 无一被裁）。证据在 `~/.dsh/tmp/shots-020/evidence/`，不入库。
+- 门禁：host 1037 / client 1358 / guards 603，check-manifest / check-docs / check-refs / check-submission 全 OK。
+- 仍未送达用户的两项待点头决定（不变）：010 的 0.6.0 发版（`scripts/release.mjs --minor`，不可回退）、
+  本体升级 0.2.2-rc.3（只报告不动手）。
 
 ## 环境备注（接手会话直接可用）
 

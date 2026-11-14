@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17,18] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -23,12 +23,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture, USAGE_CREDITS_CLASSES, USAGE_CREDITS_MODELS, USAGE_CREDITS_DAILY_DAY, USAGE_CREDITS_DAILY_COMPUTED_AT } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture, USAGE_CREDITS_CLASSES, USAGE_CREDITS_MODELS, USAGE_CREDITS_DAILY_DAY, USAGE_CREDITS_DAILY_COMPUTED_AT, USAGE_MODELPICK_FIRST, USAGE_MODELPICK_SECOND, USAGE_MODELPICK_COUNT } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -189,7 +189,7 @@ function compactTokens(value, langKey) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,17,18] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -759,9 +759,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ---------------------------- ⑧⑨⑩⑪⑫⑬⑭⑮⑰ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 悬停 / 构成 / Credits 换算） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15, 17].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫⑬⑭⑮⑰ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成 / Credits 折合卡片）')
+  /* ---------------------------- ⑧⑨⑩⑪⑫⑬⑭⑮⑰⑱ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 悬停 / 构成 / Credits 换算 / 单模型容量） */
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15, 17, 18].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬⑭⑮⑰⑱ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成 / Credits 折合卡片 / 单模型容量测算）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -1557,27 +1557,167 @@ async function main() {
       if (langKey === 'en' && /\p{Script=Han}/u.test(probe16.text)) throw new Error('⑰ 英文界面换算块混了中文（' + probe16.text + '），不拍')
       if (langKey === 'zh' && /\b(credits used|allowance resets|Official tokens)\b/.test(probe16.text)) throw new Error('⑰ 中文界面换算块混了英文句式（' + probe16.text + '），不拍')
 
-      // 取景：换算块滚到可视区上半部；块必须完整落在视口内（裁一半的图不能进 docs/）。
-      const framed16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; s.scrollIntoView({ block: 'center' }); let sc = s.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const before = s.getBoundingClientRect(); box.scrollTop = Math.max(0, box.scrollTop + Math.round(before.top - 120)); return { top: Math.round(s.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
+      // 取景：019 之后换算块里多了「如果只用这一个模型」选择器，整块高度（zh 实测 857px）已经超过 860 视口，
+      // 所以不再要求整块落进视口，改为**以折合卡片为锚点**：卡顶贴近页顶，保证 比值/明细 → 三格卡 → 折算 → 按日提示
+      // 这一段（017 的证据主体）完整可见；模型明细在 860 折叠线以下，由 ⑱ 的单模型图与 QA 截图另行覆盖。
+      const framed16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; s.scrollIntoView({ block: 'center' }); let sc = s.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const card = s.querySelector('[data-usage-credits-classes]'); const anchor = card === null ? s : card; box.scrollTop = Math.max(0, box.scrollTop + Math.round(anchor.getBoundingClientRect().top - 130)); return { top: Math.round(s.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
       if (framed16 === null) throw new Error('⑰ 量不到 Credits 换算块的位置，不拍')
       await sleep(350)
       const frameState16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const r = s.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
       if (frameState16 === null) throw new Error('⑰ 取景后找不到 Credits 换算块，不拍')
-      if (frameState16.top < 8 || frameState16.bottom > frameState16.vh - 8) throw new Error('⑰ 换算块没有完整落在视口内（' + JSON.stringify(frameState16) + '），不拍')
-      if (frameState16.h < 120) throw new Error('⑰ 换算块在取景里只有 ' + frameState16.h + 'px 高，内容不像渲染完整，不拍')
-      // 模型块是 252px 定高内滚列表，整块必须落在视口里：截一半的图会把「内滚」截成「列表被切掉」。
+      if (frameState16.top > 8 || frameState16.h < 120) throw new Error('⑰ 换算块取景位置不对（块顶 ' + frameState16.top + ' / 高 ' + frameState16.h + '），不拍')
+      // 模型块仍是 252px 定高内滚列表；019 之后它落到折叠线以下，这里只校验「渲染高度没被定高撑开」。
       const frameModels16 = await page.evaluate("(() => { const m = document.querySelector('[data-usage-credits-models]'); if (m === null) return null; const r = m.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
       if (frameModels16 === null) throw new Error('⑰ 取景后找不到按模型块，不拍')
-      if (frameModels16.top < 8 || frameModels16.bottom > frameModels16.vh - 8) throw new Error('⑰ 模型块没有完整落在视口内（' + JSON.stringify(frameModels16) + '），不拍')
       if (frameModels16.h > 253) throw new Error('⑰ 模型块渲染高度 ' + frameModels16.h + 'px > max-height 252px + 1px 容差，定高没生效，不拍')
-      // 017：折合卡片必须在取景里完整可见（它是 017 的证据主体，被 252px 模型块挤出去就等于没拍）。
-      const frameCard17 = await page.evaluate("(() => { const c = document.querySelector('[data-usage-credits-classes]'); if (c === null) return null; const r = c.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
-      if (frameCard17 === null) throw new Error('⑰ 取景后找不到折合卡片，不拍')
-      if (frameCard17.top < 8 || frameCard17.bottom > frameCard17.vh - 8) throw new Error('⑰ 折合卡片没有完整落在视口内（' + JSON.stringify(frameCard17) + '），不拍')
-      if (frameCard17.h < 60) throw new Error('⑰ 折合卡片在取景里只有 ' + frameCard17.h + 'px 高，三格没渲染开，不拍')
+      // 017：折合卡片必须在取景里完整可见（它是 017 的证据主体）；按日提示紧贴其下，也一并要求完整可见。
+      const frameCard17 = await page.evaluate("(() => { const box = function (sel) { const n = document.querySelector(sel); if (n === null) return null; const r = n.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) } }; return { card: box('[data-usage-credits-classes]'), daily: box('[data-usage-credits-daily]'), estimate: box('[data-usage-credits-estimate]'), vh: innerHeight } })()")
+      if (frameCard17 === null || frameCard17.card === null) throw new Error('⑰ 取景后找不到折合卡片，不拍')
+      if (frameCard17.card.top < 8 || frameCard17.card.bottom > frameCard17.vh - 8) throw new Error('⑰ 折合卡片没有完整落在视口内（' + JSON.stringify(frameCard17.card) + '），不拍')
+      if (frameCard17.card.h < 60) throw new Error('⑰ 折合卡片在取景里只有 ' + frameCard17.card.h + 'px 高，三格没渲染开，不拍')
+      if (frameCard17.daily === null || frameCard17.daily.top < 8 || frameCard17.daily.bottom > frameCard17.vh - 8) throw new Error('⑰ 按日提示没有完整落在视口内（' + JSON.stringify(frameCard17.daily) + '），不拍')
+      if (frameCard17.estimate === null || frameCard17.estimate.top < 8 || frameCard17.estimate.bottom > frameCard17.vh - 8) throw new Error('⑰ 折算行没有完整落在视口内（' + JSON.stringify(frameCard17.estimate) + '），不拍')
 
       console.log('  ⑰ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；折合卡片「' + probe17.title + '：' + probe17.cells.map(function (c) { return c.label + '=' + c.value + ' ' + c.unit }).join(' / ') + '」；按日提示「' + probe17.daily + '」；模型 ' + probe15.rows.length + ' 行（首行 ' + probe15.rows[0].name + ' / ' + probe15.rows[0].tokens + ' / ' + probe15.rows[0].ratio + ' / 第二行「' + probe15.rows[0].classes + '」）；内滚 ' + probe15.scrollH + '/' + probe15.clientH + 'px；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16) + '；卡片 ' + JSON.stringify(frameCard17))
       save('usage-credits-2d.png', await page.shot({}))
+    }
+
+    /*
+     * ⑱ 单模型容量测算（spec 019）：点一下「如果只用这一个模型」的 chip，卡片总值与四类分项跟着换。
+     * 这张图要证明的是**选择器真的会换数**，不是一张静态卡片截图，所以断言分四层：
+     * ① 钩子与结构：section 唯一 [data-usage-credits-modelpick=1]、title/hint 非空、chips role=group +
+     *    aria-label=title、chip 数 = 可算容量的模型数（本夹具 8 个全部带 capacity）；
+     * ② 默认态：第 1 枚 data-selected=1 / aria-pressed=true、其余 0/false；卡片总值 =
+     *    formatTokens(夹具首项 capacity.tokens) + tokens；三格顺序 input→cacheRead→output，
+     *    标签/数值/单位逐字等于夹具容量；首项 cacheWrite 容量为 0，所以**不出现第四格**；
+     * ③ 交互后：真鼠标点第 2 枚 chip → 选中态互换、总值与四格（含 cacheWrite>0 的「缓存写入」）
+     *    逐字等于第二项容量；hint 里的模型名与「全部 {total} Credits」跟着换；
+     * ④ 口径护栏：卡片内无 % / Credits / 货币符号 / NaN；插入顺序 折算行 → 按日提示 → 单模型 →
+     *    模型明细；英文套不混中文；取景后 section 与卡片完整落在视口内。
+     */
+    if (args.shots.includes(18)) {
+      const credits18 = creditsFixture.credits
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+      const wait18 = "(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return false; const p = s.querySelector('[data-usage-credits-modelpick]'); const c = p === null ? null : p.querySelector('[data-usage-credits-modelpick-card]'); const v = c === null ? null : c.querySelector('.tpq-usage-credits-modelpick-value'); return p !== null && v !== null && (v.textContent || '').trim() !== '' })()"
+      await page.waitFor(wait18, { timeoutMs: 25_000, label: '⑱ 单模型容量测算块' })
+      await sleep(400)
+      const probe18 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return { ok: false }; const textOf = n => n === null ? null : (n.innerText || n.textContent || '').trim(); const sections = Array.from(document.querySelectorAll('[data-usage-credits-modelpick]')); const pick = sections.length > 0 ? sections[0] : null; if (pick === null) return { ok: true, sections: 0 }; const chipsBox = pick.querySelector('.tpq-usage-credits-modelpick-chips'); const chips = Array.from(pick.querySelectorAll('[data-usage-credits-modelpick-chip]')).map(function (n) { const r = n.getBoundingClientRect(); return { model: n.getAttribute('data-model'), selected: n.getAttribute('data-selected'), pressed: n.getAttribute('aria-pressed'), text: (n.innerText || '').trim(), title: n.getAttribute('title'), x: r.x + r.width / 2, y: r.y + r.height / 2 } }); const cards = Array.from(pick.querySelectorAll('[data-usage-credits-modelpick-card]')); const card = cards.length > 0 ? cards[0] : null; const cells = card === null ? [] : Array.from(card.querySelectorAll('[data-usage-credits-modelpick-class]')).map(function (n) { return { key: n.getAttribute('data-usage-credits-modelpick-class'), label: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-label')), value: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-value')), unit: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-unit')) } }); const grid = card === null ? null : card.querySelector('.tpq-usage-credits-modelpick-grid'); const gs = grid === null ? null : getComputedStyle(grid); const detail = s.querySelector('[data-usage-credits-detail]'); const classesCard = s.querySelector('[data-usage-credits-classes]'); const estimate = s.querySelector('[data-usage-credits-estimate]'); const daily = s.querySelector('[data-usage-credits-daily]'); const models = s.querySelector('[data-usage-credits-models]'); const note = s.querySelector('.tpq-usage-credits-note'); const order = detail !== null && classesCard !== null && estimate !== null && daily !== null && models !== null && note !== null && (detail.compareDocumentPosition(classesCard) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (classesCard.compareDocumentPosition(estimate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (estimate.compareDocumentPosition(daily) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (daily.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (pick.compareDocumentPosition(models) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (models.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; const pr = pick.getBoundingClientRect(); return { ok: true, sections: sections.length, attr: pick.getAttribute('data-usage-credits-modelpick'), title: textOf(pick.querySelector('.tpq-usage-credits-modelpick-title')), hint: textOf(pick.querySelector('.tpq-usage-credits-modelpick-hint')), chipsRole: chipsBox === null ? null : chipsBox.getAttribute('role'), chipsAria: chipsBox === null ? null : chipsBox.getAttribute('aria-label'), chips: chips, cards: cards.length, cardAttr: card === null ? null : card.getAttribute('data-usage-credits-modelpick-card'), cardLabel: card === null ? null : textOf(card.querySelector('.tpq-usage-credits-modelpick-card-label')), value: card === null ? null : textOf(card.querySelector('.tpq-usage-credits-modelpick-value')), unit: card === null ? null : textOf(card.querySelector('.tpq-usage-credits-modelpick-unit')), cells: cells, gridDisplay: gs === null ? null : gs.display, gridColumns: gs === null ? null : gs.gridTemplateColumns, note: card === null ? null : textOf(pick.querySelector('.tpq-usage-credits-modelpick-note')), cardText: card === null ? '' : (card.innerText || ''), order: order, rect: { top: Math.round(pr.top), bottom: Math.round(pr.bottom), h: Math.round(pr.height) }, vh: innerHeight } })()")
+      if (probe18 === null || probe18.ok !== true) throw new Error('⑱ 量不到 Credits 换算块，不拍')
+      if (probe18.sections !== 1) throw new Error('⑱ 屏上有 ' + probe18.sections + ' 个 [data-usage-credits-modelpick]，同一时刻应只有一个，不拍')
+      if (probe18.attr !== '1') throw new Error('⑱ [data-usage-credits-modelpick] 的值是 ' + probe18.attr + '，应为 1，不拍')
+      const pickTitle18 = langKey === 'zh' ? '如果只用这一个模型' : 'If you used only this model'
+      if (probe18.title !== pickTitle18) throw new Error('⑱ 单模型标题「' + probe18.title + '」≠「' + pickTitle18 + '」，不拍')
+      if (probe18.chipsRole !== 'group') throw new Error('⑱ chip 容器 role=' + probe18.chipsRole + '，应为 group，不拍')
+      if (probe18.chipsAria !== pickTitle18) throw new Error('⑱ chip 容器 aria-label「' + probe18.chipsAria + '」≠ 标题「' + pickTitle18 + '」，不拍')
+      if (probe18.chips.length !== USAGE_MODELPICK_COUNT) throw new Error('⑱ chip 数 ' + probe18.chips.length + ' ≠ 可算容量模型数 ' + USAGE_MODELPICK_COUNT + '，不拍')
+      probe18.chips.forEach(function (chip, index) {
+        const expected = USAGE_CREDITS_MODELS[index]
+        if (chip.model !== expected.id) throw new Error('⑱ 第 ' + index + ' 枚 chip data-model=' + chip.model + '，期望 ' + expected.id + '，不拍')
+        if (chip.text !== expected.model) throw new Error('⑱ 第 ' + index + ' 枚 chip 文案「' + chip.text + '」≠「' + expected.model + '」（模型名唯一时不加 provider 前缀），不拍')
+        if (chip.title !== expected.id) throw new Error('⑱ 第 ' + index + ' 枚 chip title 不是完整 id（' + chip.title + '），悬停看不到全名，不拍')
+        const isFirst = index === 0
+        if (chip.selected !== (isFirst ? '1' : '0')) throw new Error('⑱ 第 ' + index + ' 枚 chip data-selected=' + chip.selected + '，默认应只有第 1 枚为 1，不拍')
+        if (chip.pressed !== (isFirst ? 'true' : 'false')) throw new Error('⑱ 第 ' + index + ' 枚 chip aria-pressed=' + chip.pressed + '，与 data-selected 不一致，不拍')
+      })
+      if (probe18.cards !== 1) throw new Error('⑱ 卡片数 ' + probe18.cards + ' ≠ 1，不拍')
+      if (probe18.cardAttr !== '1') throw new Error('⑱ [data-usage-credits-modelpick-card] 的值是 ' + probe18.cardAttr + '，应为 1，不拍')
+      const cardLabel18 = langKey === 'zh' ? '折算可用 tokens' : 'Derived capacity'
+      if (probe18.cardLabel !== cardLabel18) throw new Error('⑱ 卡片标签「' + probe18.cardLabel + '」≠「' + cardLabel18 + '」，不拍')
+      const valueNeedle18 = compactTokens(USAGE_MODELPICK_FIRST.tokens, langKey)
+      if (probe18.value !== valueNeedle18) throw new Error('⑱ 默认卡片总值「' + probe18.value + '」≠「' + valueNeedle18 + '」（fixture 首项 capacity.tokens），不拍')
+      if (probe18.unit !== 'tokens') throw new Error('⑱ 卡片单位「' + probe18.unit + '」≠ tokens，不拍')
+      const splitLabels18 = langKey === 'zh'
+        ? { input: '输入', cacheRead: '缓存命中', output: '输出', cacheWrite: '缓存写入' }
+        : { input: 'input', cacheRead: 'cache hit', output: 'output', cacheWrite: 'cache write' }
+      const assertCells18 = function (probe, expected, expectedKeys, tag) {
+        if (probe.cells.length !== expectedKeys.length) throw new Error(tag + ' 分项格数 ' + probe.cells.length + ' ≠ ' + expectedKeys.length + '（cacheWrite 为 0 时不出现第四格），不拍')
+        probe.cells.forEach(function (cell, index) {
+          const key = expectedKeys[index]
+          if (cell.key !== key) throw new Error(tag + ' 第 ' + index + ' 格 data-usage-credits-modelpick-class=' + cell.key + '，期望 ' + key + '（顺序 input→cacheRead→output→cacheWrite），不拍')
+          if (cell.label !== splitLabels18[key]) throw new Error(tag + ' 第 ' + index + ' 格标签「' + cell.label + '」≠「' + splitLabels18[key] + '」，不拍')
+          const want = compactTokens(expected[key], langKey)
+          if (cell.value !== want) throw new Error(tag + ' 第 ' + index + ' 格数值「' + cell.value + '」≠「' + want + '」（夹具四类容量），不拍')
+          if (cell.unit !== 'tokens') throw new Error(tag + ' 第 ' + index + ' 格单位「' + cell.unit + '」≠ tokens，不拍')
+        })
+      }
+      assertCells18(probe18, USAGE_MODELPICK_FIRST.classes, ['input', 'cacheRead', 'output'], '⑱ 默认项')
+      if (probe18.gridDisplay !== 'grid') throw new Error('⑱ 分项网格 display=' + probe18.gridDisplay + '，INTERFACE §6 要求 grid，不拍')
+      const tracks18 = String(probe18.gridColumns === null ? '' : probe18.gridColumns).trim().split(/\s+/).filter(Boolean)
+      if (tracks18.length !== 3) throw new Error('⑱ 分项网格 grid-template-columns=「' + probe18.gridColumns + '」不是 3 列，不拍')
+      const hintTotal18 = String(Math.round(credits18.credits.total))
+      const hint18Of = function (label) {
+        return langKey === 'zh'
+          ? '按 ' + label + ' 本账期实测比值，把全部 ' + hintTotal18 + ' Credits 都花在它上面（折算参考，非官方口径）'
+          : 'Using the measured ratio of ' + label + ' for this cycle and spending all ' + hintTotal18 + ' credits on it (derived, not official)'
+      }
+      if (probe18.hint !== hint18Of(USAGE_MODELPICK_FIRST.label)) throw new Error('⑱ 默认 hint「' + probe18.hint + '」≠ 期望「' + hint18Of(USAGE_MODELPICK_FIRST.label) + '」（模型名与全部 Credits 口径），不拍')
+      const note18 = langKey === 'zh'
+        ? '该模型的比值分子是本机用量、分母是账号级已用 Credits；四类分项各自取整后相加等于上方总量。'
+        : 'The ratio uses local tokens over the account-level used credits; the four class figures are rounded separately and add up to the total above.'
+      if (probe18.note !== note18) throw new Error('⑱ 卡片脚注「' + probe18.note + '」≠ 期望「' + note18 + '」，不拍')
+      if (/%|Credits|[¥$€£]|元/.test(probe18.cardText)) throw new Error('⑱ 卡片内出现 % / Credits / 货币符号（' + probe18.cardText + '），不拍')
+      if (/NaN|undefined/.test(probe18.cardText)) throw new Error('⑱ 卡片内出现 NaN/undefined（' + probe18.cardText + '），不拍')
+      if (probe18.order !== true) throw new Error('⑱ 插入顺序不对（应 折算行 → 按日提示 → 单模型 → 模型明细 → 脚注），不拍')
+      if (langKey === 'en' && /\p{Script=Han}/u.test((probe18.title || '') + (probe18.hint || '') + (probe18.note || '') + probe18.cardText + probe18.cells.map(function (c) { return c.label }).join(''))) throw new Error('⑱ 英文界面单模型块混了中文，不拍')
+      console.log('  ⑱ 默认项「' + probe18.title + '」：' + USAGE_MODELPICK_FIRST.label + ' → ' + probe18.value + ' ' + probe18.unit + '；' + probe18.cells.map(function (c) { return c.label + '=' + c.value }).join(' / ') + '；hint「' + probe18.hint + '」')
+
+      /*
+       * 交互层：滚到块上，再用**真鼠标**点第 2 枚 chip（Input.dispatchMouseEvent）。
+       * 用 element.click() 只能证明 React 的 onClick 在，不证明这个按钮点得到（可能被浮层/裁切挡住）。
+       */
+      const secondSelector18 = '[data-usage-credits-modelpick-chip][data-model="' + USAGE_MODELPICK_SECOND.id + '"]'
+      const scrollPick18 = await page.evaluate("(() => { const p = document.querySelector('[data-usage-credits-modelpick]'); if (p === null) return null; p.scrollIntoView({ block: 'center' }); let sc = p.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; box.scrollTop = Math.max(0, box.scrollTop + Math.round(p.getBoundingClientRect().top - 140)); return Math.round(box.scrollTop) })()")
+      if (scrollPick18 === null) throw new Error('⑱ 量不到单模型块的滚动容器，不拍')
+      await sleep(300)
+      const secondChip18 = await page.rectOf(secondSelector18)
+      if (secondChip18 === null) throw new Error('⑱ 找不到第 2 枚 chip（' + secondSelector18 + '），不拍')
+      const cx18 = secondChip18.x + secondChip18.width / 2
+      const cy18 = secondChip18.y + secondChip18.height / 2
+      const vw18 = await page.evaluate('innerWidth')
+      const vh18 = await page.evaluate('innerHeight')
+      if (!(cx18 > 0 && cy18 > 0 && cx18 < vw18 && cy18 < vh18)) throw new Error('⑱ 第 2 枚 chip 中心不在视口内（' + Math.round(cx18) + ',' + Math.round(cy18) + ' / ' + vw18 + '×' + vh18 + '），点不到，不拍')
+      await page.click(cx18, cy18)
+      const waitPicked18 = "(() => { const pick = document.querySelector('[data-usage-credits-modelpick]'); if (pick === null) return false; const chips = Array.from(pick.querySelectorAll('[data-usage-credits-modelpick-chip]')); const second = chips.find(function (n) { return n.getAttribute('data-model') === " + JSON.stringify(USAGE_MODELPICK_SECOND.id) + " }); const first = chips.find(function (n) { return n.getAttribute('data-model') === " + JSON.stringify(USAGE_MODELPICK_FIRST.id) + " }); return second !== undefined && first !== undefined && second.getAttribute('data-selected') === '1' && second.getAttribute('aria-pressed') === 'true' && first.getAttribute('data-selected') === '0' && first.getAttribute('aria-pressed') === 'false' })()"
+      await page.waitFor(waitPicked18, { timeoutMs: 8_000, label: '⑱ 第 2 枚 chip 选中' })
+      await sleep(300)
+      const probe18b = await page.evaluate("(() => { const pick = document.querySelector('[data-usage-credits-modelpick]'); if (pick === null) return null; const textOf = n => n === null ? null : (n.innerText || n.textContent || '').trim(); const chips = Array.from(pick.querySelectorAll('[data-usage-credits-modelpick-chip]')).map(function (n) { return { model: n.getAttribute('data-model'), selected: n.getAttribute('data-selected'), pressed: n.getAttribute('aria-pressed'), text: (n.innerText || '').trim() } }); const card = pick.querySelector('[data-usage-credits-modelpick-card]'); if (card === null) return null; const cells = Array.from(card.querySelectorAll('[data-usage-credits-modelpick-class]')).map(function (n) { return { key: n.getAttribute('data-usage-credits-modelpick-class'), label: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-label')), value: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-value')), unit: textOf(n.querySelector('.tpq-usage-credits-modelpick-cell-unit')) } }); return { chips: chips, value: textOf(card.querySelector('.tpq-usage-credits-modelpick-value')), unit: textOf(card.querySelector('.tpq-usage-credits-modelpick-unit')), cells: cells, hint: textOf(pick.querySelector('.tpq-usage-credits-modelpick-hint')), cardText: card.innerText || '' } })()")
+      if (probe18b === null) throw new Error('⑱ 点击后量不到单模型块，不拍')
+      if (probe18b.chips.length !== USAGE_MODELPICK_COUNT) throw new Error('⑱ 点击后 chip 数变成 ' + probe18b.chips.length + '，不拍')
+      probe18b.chips.forEach(function (chip, index) {
+        const isSecond = index === 1
+        if (chip.selected !== (isSecond ? '1' : '0')) throw new Error('⑱ 点击后第 ' + index + ' 枚 chip data-selected=' + chip.selected + '，应只有第 2 枚为 1，不拍')
+        if (chip.pressed !== (isSecond ? 'true' : 'false')) throw new Error('⑱ 点击后第 ' + index + ' 枚 chip aria-pressed=' + chip.pressed + '，与选中态不一致，不拍')
+      })
+      const valueNeedle18b = compactTokens(USAGE_MODELPICK_SECOND.tokens, langKey)
+      if (probe18b.value !== valueNeedle18b) throw new Error('⑱ 点击后卡片总值「' + probe18b.value + '」≠「' + valueNeedle18b + '」（fixture 第二项 capacity.tokens），不拍')
+      if (probe18b.unit !== 'tokens') throw new Error('⑱ 点击后卡片单位「' + probe18b.unit + '」≠ tokens，不拍')
+      assertCells18(probe18b, USAGE_MODELPICK_SECOND.classes, ['input', 'cacheRead', 'output', 'cacheWrite'], '⑱ 第二项')
+      if (probe18b.hint !== hint18Of(USAGE_MODELPICK_SECOND.label)) throw new Error('⑱ 点击后 hint「' + probe18b.hint + '」≠ 期望「' + hint18Of(USAGE_MODELPICK_SECOND.label) + '」，不拍')
+      if (/%|Credits|[¥$€£]|元/.test(probe18b.cardText)) throw new Error('⑱ 点击后卡片内出现 % / Credits / 货币符号（' + probe18b.cardText + '），不拍')
+      console.log('  ⑱ 点击第 2 枚 chip（' + USAGE_MODELPICK_SECOND.label + '）：' + probe18b.value + ' ' + probe18b.unit + '；' + probe18b.cells.map(function (c) { return c.label + '=' + c.value }).join(' / '))
+
+      /*
+       * 取景：单模型块整块落进视口（含卡片与四格）——卡半截在图外就等于没拍到交互结果。
+       */
+      // 取景锚点用「1 Credit 折合」卡片（在 ⑱ 块上面一层）：让卡片顶贴到 y≈8，于是
+      // 三格卡 → 折算行 → 按日提示 → 单模型块 一串上下文都完整落在图里，且取景边界落在卡片上方的留白里
+      // （不能直接锚单模型块：那样上边界会切在折合卡片中间，露出半行数值；锚到卡片后 8px 内还在卡片上方的留白里，不会切到上一行文字的降部）。
+      const framed18 = await page.evaluate("(() => { const p = document.querySelector('[data-usage-credits-modelpick]'); const card = document.querySelector('[data-usage-credits-classes]'); if (p === null || card === null) return null; let sc = p.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; box.scrollTop = Math.max(0, box.scrollTop + Math.round(card.getBoundingClientRect().top - 8)); return { top: Math.round(p.getBoundingClientRect().top), cardTop: Math.round(card.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
+      if (framed18 === null) throw new Error('⑱ 量不到单模型块的位置，不拍')
+      await sleep(350)
+      const framePick18 = await page.evaluate("(() => { const p = document.querySelector('[data-usage-credits-modelpick]'); const c = document.querySelector('[data-usage-credits-modelpick-card]'); if (p === null || c === null) return null; const pr = p.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { pick: { top: Math.round(pr.top), bottom: Math.round(pr.bottom), h: Math.round(pr.height) }, card: { top: Math.round(cr.top), bottom: Math.round(cr.bottom), h: Math.round(cr.height) }, vh: innerHeight } })()")
+      if (framePick18 === null) throw new Error('⑱ 取景后找不到单模型块/卡片，不拍')
+      if (framePick18.pick.top < 8 || framePick18.pick.bottom > framePick18.vh - 8) throw new Error('⑱ 单模型块没有完整落在视口内（' + JSON.stringify(framePick18.pick) + '），不拍')
+      if (framePick18.card.top < 8) throw new Error('⑱ 上边界切进了单模型卡片（' + JSON.stringify(framePick18.card) + '），不拍')
+      if (framePick18.pick.h < 160) throw new Error('⑱ 单模型块在取景里只有 ' + framePick18.pick.h + 'px 高，chip/卡片没渲染开，不拍')
+      if (framePick18.card.top < 8 || framePick18.card.bottom > framePick18.vh - 8) throw new Error('⑱ 卡片没有完整落在视口内（' + JSON.stringify(framePick18.card) + '），不拍')
+      if (framePick18.card.h < 80) throw new Error('⑱ 卡片在取景里只有 ' + framePick18.card.h + 'px 高，四格没渲染开，不拍')
+      const frameCard18 = await page.evaluate("(() => { const c = document.querySelector('[data-usage-credits-modelpick-card]'); if (c === null) return null; const v = c.querySelector('.tpq-usage-credits-modelpick-value'); return { value: v === null ? null : (v.innerText || '').trim(), cells: c.querySelectorAll('[data-usage-credits-modelpick-class]').length } })()")
+      if (frameCard18 === null) throw new Error('⑱ 取景后量不到卡片数值，不拍')
+      if (frameCard18.value !== valueNeedle18b) throw new Error('⑱ 取景后卡片总值「' + frameCard18.value + '」≠ 点击后的「' + valueNeedle18b + '」，不拍')
+      if (frameCard18.cells !== 4) throw new Error('⑱ 取景后分项格数 ' + frameCard18.cells + ' ≠ 4，不拍')
+      console.log('  ⑱ 取景 ' + JSON.stringify(framePick18.pick) + '；卡片 ' + JSON.stringify(framePick18.card) + '；滚动 ' + framed18.scrollTop)
+      save('usage-credits-model.png', await page.shot({}))
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

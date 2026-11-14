@@ -10,6 +10,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **单模型容量测算（019）**：`ratio.models[]` 每项新增
+  `capacity = { tokens, classes: { input, cacheRead, output, cacheWrite } }`；
+  `classes[key] = Math.round(max(0, perCredit) × credits.total)`，`capacity.tokens` 是四类之和（四类相加恒等于总量，
+  取整后不再二次调整）。`credits.total` 不是有限正数时**整项不带 `capacity`**，保持旧形状；客户端读取
+  `capacity.classes` 时同时兼容数字与 `{tokens}` 对象。客户端在 Credits 换算块里新增
+  「如果只用这一个模型」（en "If you used only this model"）选择器：chips 是原生 `button`
+  （`data-usage-credits-modelpick-chip` / `data-model` / `data-selected` / `aria-pressed`，选中态只存模型 id、
+  默认第一项，`Tab` 聚焦与回车切换都可用），结果卡 `data-usage-credits-modelpick-card` 先给总值
+  （`formatTokens(capacity.tokens)` + 单位 `tokens`），再按 **input → cacheRead → output** 三格拆开；
+  `cacheWrite` 仅有限且 > 0 时追加第四格，为 0 不出现；分项格 `data-usage-credits-modelpick-class` 带标签 / 数值 / 单位。
+  卡内不出现百分比、`Credits` 与货币符号；脚注写明分子是本机用量、分母是账号级已用 Credits，
+  四类分项各自取整后相加等于上方总量。旧宿主没有 `capacity`、或没有任何模型能算出容量时**整块不渲染**
+  （不写 0、不写 —）。零新路由、零新配置键（`DEFAULTS` 仍 26 个）、零新出站主机、零第三方依赖。
+  测试：宿主 1016 → 1037、客户端 1268 → 1346、guards 570 → 592（新增第 19 节静态矩阵）。
+  截图新增 ⑱：`docs/images/usage-credits-model.png` 与 `docs/images/en/usage-credits-model.png`（选中
+  qwen3.8-flash：zh「8.69亿 tokens」，四格 5.10亿 / 2.36亿 / 5818.0万 / 缓存写入 6444.6万；en「869.12M tokens」，
+  四格 510.19M / 236.30M / 58.18M / 64.45M）；同一块变高后 ⑰ 的取景从「整块进视口」改为以「1 Credit 折合」
+  卡片为锚点，两张旧图同步重拍。方案与验收口径见 `specs/019-model-capacity/`，接口契约见该目录 `INTERFACE.md`。
 - **每 Credit 三格卡片与按日折算基准（017）**：016 的「每 Credit 分项」一行改成**三格卡片**
   （`section.tpq-usage-credits-classes`、`data-usage-credits-classes="1"`）：标题 zh「1 Credit 折合」/ en
   「One credit is worth」，三格固定顺序 **缓存命中 / 未命中输入 / 输出**，每格 = 标签 + **20px** 数值 + 单位

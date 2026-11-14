@@ -101,6 +101,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 14 | `usage-tooltip-2d.png` | 柱子悬停：浮层报出该桶日期与 tokens 明细，位置夹在视口内 |
 | 15 | `usage-composition-2d.png` | 用量构成（012）：中文分项标签、四类占比、缓存命中率、模型列表内滚动 |
 | 17 | `usage-credits-2d.png` | Credits ↔ tokens 换算（014）+ 三格折合卡片、按日提示（017）与按模型比值（015）：本账期比值、官方 tokens、已用 Credits、折算参考 |
+| 18 | `usage-credits-model.png` | 单模型容量测算（019）：选中一个模型，把本账期全部 Credits 都花在它身上能折合多少 tokens——总值、四类分项与口径脚注 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -237,7 +238,7 @@ en「Per credit: input {input} · cache hit {cacheRead} · output {output}」，
 （formatTokens 口径，**不是**三类 tokens 本身），逐行等于 fixture 的 `classes.*.perCredit`；`classes.cacheWrite.perCredit > 0` 才追加
 「· 缓存写入 {tokens} / · cache write {tokens}」，所以首行（cacheWrite=0）文案里不许出现这一截；第二行也不许出现 `%`；
 模型块的 `max-height` 必须是 `252px`、`overflow-y` 是 `auto`；
-⑥ 插入位置：明细 → 折合卡片 → 折算 → 按日提示 → 模型 → 脚注，且整块在官方对照块之后；
+⑥ 插入位置：明细 → 折合卡片 → 折算 → 按日提示 → 单模型（019）→ 模型 → 脚注，且整块在官方对照块之后；
 ⑦ 口径护栏：无货币符号（¥ $ € £ / 元）、无「Credits 剩余」话术、无 `NaN`/`undefined`，
 英文套不混中文、中文套不混 `credits used` 这类英文句式。
 
@@ -247,9 +248,30 @@ en「Per credit: input {input} · cache hit {cacheRead} · output {output}」，
 截图沿用全流水线既有 `--hide-scrollbars`，滚动条在图上不可见，所以「最后一行第二行被容器底边裁掉」就是内滚的视觉证据；
 DOM 里 8 行的第二行文本都是完整的（逐行逐字比对），裁切只发生在 252px 视口边缘，不是 CSS 截断。
 
-取景把这一块滚到视口上部，断言整块完整可见、**折合卡片四边都在视口内**（top ≥ 8px、bottom ≤ 视口高 − 8px）——
-它的证据是这几段文本和卡片，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。重拍产物（017）：zh `docs/images/usage-credits-2d.png` 178,273 B、
-en `docs/images/en/usage-credits-2d.png` 155,967 B，均 1280×860（DPR 1）。
+取景改了（019）：单模型块插进同一个 `[data-usage-credits]` 后整块 zh 857px / en 874px，1280×860 装不下整块，
+所以改成**以「1 Credit 折合」卡片为锚点**——卡片顶吸到视口上部，断言折合卡片、折算行、按日提示**三块各自**
+top ≥ 8px 且 bottom ≤ 视口高 − 8px（块顶 `frameState16.top` ≤ 8），模型块只断言渲染高 ≤ 253px（落在折叠线以下）。
+这样卡片、折算与按日提示都完整，不会把一行字切一半；它的证据是这几段文本和卡片，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。
+重拍产物（019）：zh `docs/images/usage-credits-2d.png` 167,086 B、en `docs/images/en/usage-credits-2d.png` 149,653 B，均 1280×860（DPR 1）。
+
+⑱ 拍同一块下半截的**单模型容量测算**（019）：`[data-usage-credits-modelpick="1"]` 里一排 chip
+（`[data-usage-credits-modelpick-chip]`，`data-model` 存模型 id）加一张结果卡（`[data-usage-credits-modelpick-card="1"]`）。
+断言：块唯一；标题逐字 zh「如果只用这一个模型」/ en「If you used only this model」；chips 是 `role="group"` 且
+`aria-label` 等于标题，chip 数 = fixture 里可算容量的模型数（8），逐枚 `data-model` 按 fixture 顺序、文案 = 模型名、
+`title` = 完整 `provider/model`，默认**只有第一枚** `data-selected="1"` 且 `aria-pressed="true"`；结果卡唯一，
+标签 zh「折算可用 tokens」/ en「Derived capacity」，总值 = `formatTokens(capacity.tokens)`（zh「9.06亿」/ en「905.57M」）
+加单位 `tokens`；分项格顺序固定 **input → cacheRead → output**，标签 zh「输入 / 缓存命中 / 输出」、
+en「input / cache hit / output」，逐格数值等于 `formatTokens(capacity.classes[key])`，首项 `cacheWrite` 容量为 0
+所以**不许出现第四格**；网格 `display: grid` 三轨；提示行逐字含模型名与「全部 80000 Credits」/「all 80000 credits」；
+脚注逐字（分子是本机用量、分母是账号级已用 Credits）；卡内无 `%`、`Credits`、货币符号与 `NaN`/`undefined`；
+插入顺序 明细 → 折合卡片 → 折算 → 按日提示 → 单模型 → 模型 → 脚注。
+然后用**真鼠标点击**（`Input.dispatchMouseEvent`）第二枚 chip（`qwen3.8-flash`）：选中态互换、总值变成
+`formatTokens(SECOND.tokens)`（zh「8.69亿」/ en「869.12M」）、四格变成 input / cacheRead / output / **cacheWrite**
+（第四格标签 zh「缓存写入」/ en「cache write」）且逐格等于该模型夹具容量、提示行换成新模型名。
+取景以「1 Credit 折合」卡片顶边为锚（`top = 8`；锚单模型块的话上边界会切在卡片中间、露出半行数值），
+断言 pick 块 top ≥ 8 / bottom ≤ 视口高 − 8 / 高 ≥ 160，卡片四边同样在视口内，并在滚动之后**再量一次**总值与格数，
+确认没有回落到默认项。重拍产物（019）：zh `docs/images/usage-credits-model.png` 162,816 B、
+en `docs/images/en/usage-credits-model.png` 142,295 B，均 1280×860（DPR 1）。
 
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的

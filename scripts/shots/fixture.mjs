@@ -1448,6 +1448,23 @@ function splitModelClasses(rawClasses, total) {
 }
 
 /**
+ * 019 §2.1: 单模型容量 = round(max(0, perCredit) × credits.total)，四类各自取整，总量是四类之和。
+ * 宿主 modelsWithCapacity 用同一条公式（perCredit 缺失按 0）；夹具必须由 classes[].perCredit 现算，
+ * 另编一组数就会让「卡上总值 / 四格」与上面模型行的比值脱钩。
+ */
+function modelCapacityClasses(classes) {
+  const out = {}
+  let tokens = 0
+  for (const key of USAGE_CREDITS_MODEL_CLASS_KEYS) {
+    const perCredit = Number(classes[key].perCredit)
+    const value = Math.round(Math.max(0, Number.isFinite(perCredit) ? perCredit : 0) * USAGE_CREDITS_TOTAL)
+    out[key] = value
+    tokens += value
+  }
+  return { tokens, classes: out }
+}
+
+/**
  * 015 §3.3 model rows (ratio.models): numerators come from the fixture own per-model data over
  * 2026-11-01 .. 11-14 (the elapsed part of the cycle), scaled proportionally to the local total
  * USAGE_CREDITS_LOCAL_TOKENS with the largest-remainder method (integer rows, exact sum).
@@ -1486,6 +1503,13 @@ function buildUsageCreditsModels() {
   return usage.models
     .map((one, index) => {
       const classTokens = splitModelClasses(rawClasses[index], tokens[index])
+      const classes = {
+        input: { tokens: classTokens.input, perCredit: creditsPerCredit(classTokens.input) },
+        cacheRead: { tokens: classTokens.cacheRead, perCredit: creditsPerCredit(classTokens.cacheRead) },
+        output: { tokens: classTokens.output, perCredit: creditsPerCredit(classTokens.output) },
+        cacheWrite: { tokens: classTokens.cacheWrite, perCredit: creditsPerCredit(classTokens.cacheWrite) },
+      }
+      /* 019 §2.1：capacity 由上面这四类的 perCredit 现算，总量是四类取整后之和（宿主同源）。 */
       return {
         id: one.id,
         provider: one.provider,
@@ -1493,18 +1517,29 @@ function buildUsageCreditsModels() {
         tokens: tokens[index],
         calls: Math.max(1, Math.round(one.totals.calls * callsScale)),
         tokensPerCredit: creditsPerCredit(tokens[index]),
-        classes: {
-          input: { tokens: classTokens.input, perCredit: creditsPerCredit(classTokens.input) },
-          cacheRead: { tokens: classTokens.cacheRead, perCredit: creditsPerCredit(classTokens.cacheRead) },
-          output: { tokens: classTokens.output, perCredit: creditsPerCredit(classTokens.output) },
-          cacheWrite: { tokens: classTokens.cacheWrite, perCredit: creditsPerCredit(classTokens.cacheWrite) },
-        },
+        classes,
+        capacity: modelCapacityClasses(classes),
       }
     })
     .sort((a, b) => (b.tokens - a.tokens) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
 export const USAGE_CREDITS_MODELS = Object.freeze(buildUsageCreditsModels())
+
+/**
+ * 019 §2.1 截图场景 ⑱ 的锚点：默认选中的第一项与点第二枚 chip 之后的那一项。
+ * 数值全部从 USAGE_CREDITS_MODELS 现算（id / chip 文案 / 容量总量 / 四类分项），
+ * 场景断言与夹具共用同一份来源 —— 换夹具数字时不用改脚本。
+ */
+const usageModelPickOf = index => Object.freeze({
+  id: USAGE_CREDITS_MODELS[index].id,
+  label: USAGE_CREDITS_MODELS[index].model,
+  tokens: USAGE_CREDITS_MODELS[index].capacity.tokens,
+  classes: Object.freeze({ ...USAGE_CREDITS_MODELS[index].capacity.classes }),
+})
+export const USAGE_MODELPICK_FIRST = usageModelPickOf(0)
+export const USAGE_MODELPICK_SECOND = usageModelPickOf(1)
+export const USAGE_MODELPICK_COUNT = USAGE_CREDITS_MODELS.length
 
 const USAGE_CREDITS_TOP_KEYS = ['generatedAt', 'available', 'window', 'credits', 'tokens', 'ratio', 'scope', 'source']
 const USAGE_CREDITS_WINDOW_KEYS = ['key', 'label', 'labelEn', 'from', 'to', 'resetAt', 'resetDay', 'cycleDays', 'elapsedDays']
@@ -1664,7 +1699,7 @@ export function assertUsageCreditsFixture(credits, options = {}) {
   need("ratio.models 是非空数组", Array.isArray(modelRows) && modelRows.length > 0)
   need("ratio.models 行数 = fixture 的按模型条数", modelRows.length === USAGE_CREDITS_MODELS.length)
   modelRows.forEach((row, index) => {
-    need("models[" + index + "] 键集 = id/provider/model/tokens/calls/tokensPerCredit/classes", sameKeys(row, ["id", "provider", "model", "tokens", "calls", "tokensPerCredit", "classes"]))
+    need("models[" + index + "] 键集 = id/provider/model/tokens/calls/tokensPerCredit/classes/capacity", sameKeys(row, ["id", "provider", "model", "tokens", "calls", "tokensPerCredit", "classes", "capacity"]))
     need("models[" + index + "].id = provider/model", row.id === row.provider + "/" + row.model)
     need("models[" + index + "].tokens 是正有限整数", Number.isInteger(row.tokens) && row.tokens > 0)
     need("models[" + index + "].calls 是非负整数", Number.isInteger(row.calls) && row.calls >= 0)
@@ -1681,10 +1716,30 @@ export function assertUsageCreditsFixture(credits, options = {}) {
       classTotal += cell.tokens
     }
     need("models[" + index + "] 四类 tokens 相加 = 行 tokens（宿主恒等）", classTotal === row.tokens)
+    // 019 §2.1: capacity = {tokens, classes}; 四类各 = round(max(0, perCredit) × credits.total)，
+    // tokens 是四类之和。宿主只认 number 的 total，夹具这里必须给出同形（数字，不是 {tokens} 对象）。
+    const capacity = row.capacity
+    need("models[" + index + "].capacity 键集 = tokens/classes", sameKeys(capacity, ["tokens", "classes"]))
+    need("models[" + index + "].capacity.classes 键集 = input/cacheRead/output/cacheWrite", sameKeys(capacity.classes, USAGE_CREDITS_MODEL_CLASS_KEYS))
+    let capacityTotal = 0
+    for (const classKey of USAGE_CREDITS_MODEL_CLASS_KEYS) {
+      const value = capacity.classes[classKey]
+      need("models[" + index + "].capacity.classes." + classKey + " 是非负整数", Number.isInteger(value) && value >= 0)
+      need("models[" + index + "].capacity.classes." + classKey + " = round(max(0, perCredit) × total)（现算）", value === Math.round(Math.max(0, row.classes[classKey].perCredit) * cr.total))
+      capacityTotal += value
+    }
+    need("models[" + index + "].capacity.tokens 是非负整数", Number.isInteger(capacity.tokens) && capacity.tokens >= 0)
+    need("models[" + index + "].capacity.tokens = 四类容量之和（宿主恒等）", capacity.tokens === capacityTotal)
     if (index > 0) need("models 按 tokens 降序（第 " + index + " 行）", modelRows[index - 1].tokens >= row.tokens)
   })
   need("models 各行 tokens 相加 = tokens.local", modelRows.reduce((total, row) => total + row.tokens, 0) === tk.local)
   need("models 与 fixture 常量逐行一致（展示串与断言同一个来源）", JSON.stringify(modelRows) === JSON.stringify(USAGE_CREDITS_MODELS))
+  // 019：⑱ 场景的锚点常量必须与 models 现算值同源（首项默认选中、第二项点击后切换）。
+  need("USAGE_MODELPICK_FIRST 与 models[0] 同源", JSON.stringify(USAGE_MODELPICK_FIRST) === JSON.stringify({ id: modelRows[0].id, label: modelRows[0].model, tokens: modelRows[0].capacity.tokens, classes: modelRows[0].capacity.classes }))
+  need("USAGE_MODELPICK_SECOND 与 models[1] 同源", JSON.stringify(USAGE_MODELPICK_SECOND) === JSON.stringify({ id: modelRows[1].id, label: modelRows[1].model, tokens: modelRows[1].capacity.tokens, classes: modelRows[1].capacity.classes }))
+  need("USAGE_MODELPICK_COUNT = models 行数", USAGE_MODELPICK_COUNT === modelRows.length)
+  need("首项 cacheWrite 容量为 0（⑱ 用它对「第四格不出现」）", modelRows[0].capacity.classes.cacheWrite === 0)
+  need("第二项 cacheWrite 容量 > 0（⑱ 用它对「第四格出现」）", modelRows[1].capacity.classes.cacheWrite > 0)
 
   const scope = credits.scope
   need('scope 键集 = 5 个', sameKeys(scope, USAGE_CREDITS_SCOPE_KEYS))

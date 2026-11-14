@@ -396,6 +396,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
   'docs/images/usage-official-2d.png',
     'docs/images/usage-composition-2d.png',
     'docs/images/usage-credits-2d.png',
+    'docs/images/usage-credits-model.png',
     'docs/images/usage-3d.png',
     'docs/images/en/badge-follows-model.gif',
     'docs/images/en/panel-official-plus-meters.png',
@@ -410,6 +411,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
   'docs/images/en/usage-official-2d.png',
     'docs/images/en/usage-composition-2d.png',
     'docs/images/en/usage-credits-2d.png',
+    'docs/images/en/usage-credits-model.png',
     'docs/images/en/usage-3d.png',
   ]
   // 结构图与截图套不同源（由 diagrams/ 的规格产出、中英共用一张），所以它只进**存在性**清单，

@@ -209,6 +209,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![Credits 与 tokens 换算：本账期实测比值、三格折合卡片与按日刷新提示](docs/images/usage-credits-2d.png)
 
+![单模型容量测算：挑一个模型，看把本账期全部 Credits 都花在它身上、按它自己的实测比值能折合多少 tokens](docs/images/usage-credits-model.png)
+
 - **只报绝对 token**：区间总量、四类拆分（输入 / 输出 / 缓存命中 / 缓存写入）、调用次数、按模型排行。
   这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有配额百分比，也没有 Credits。
 - **看得懂构成**：总量卡除四个绝对值外，还给出每一项**占区间总量的比例**，以及
@@ -258,6 +260,16 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   三者相加等于该行总量；分母仍是本账期已用 Credits（账号级），不是该模型自己的额度。
   分项卡片或模型行缺失时只少渲染那一块，不写 0、也不写 `—`。
   折算基础落在 `creditsDailyPath` 指向的快照文件里（见下方配置表），删掉它下一次请求就会重算。
+- **如果只用这一个模型**：换算块里能挑一个模型，看把本账期全部 Credits 都花在它身上、按它自己的实测比值
+  能折合多少 tokens。chip 是原生 `button`（`data-usage-credits-modelpick-chip`，`data-model` 存模型 id、
+  `data-selected` 与 `aria-pressed` 同源），可 `Tab` 聚焦、可回车切换，选中态只记 id，默认第一项。
+  标题同时写明当前模型与「全部 {total} Credits」的口径。结果卡（`data-usage-credits-modelpick-card`）先给总值
+  （`formatTokens(capacity.tokens)` + 单位 `tokens`），再按 **输入 / 缓存命中 / 输出** 三格拆开；该类容量 > 0
+  时才追加第四格「缓存写入」，为 0 就不出现——不写 0。四格各自取整后相加等于总值：宿主口径是
+  `capacity.classes[key] = Math.round(max(0, perCredit) × credits.total)`、`capacity.tokens` 为四类之和；
+  `credits.total` 不是有限正数时整个 `capacity` 缺席（旧形状）。卡内不出现百分比、`Credits` 与货币符号——
+  它是折算参考，不是官方口径；脚注写明分子是本机用量、分母是账号级已用 Credits。旧宿主或所有模型都算不出
+  容量时整块不渲染，不拿 0 顶替。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
@@ -529,16 +541,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 1016 项，离线
-node test/client.mjs               # 1268 项，假 React/DOM/fetch
-node test/guards.mjs               # 570 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 1037 项，离线
+node test/client.mjs               # 1346 项，假 React/DOM/fetch
+node test/guards.mjs               # 592 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 26 个键、配置表 27 行、8 个数据源、声明 8 个出站主机、测试 1016/1268 项 + guards 570 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 26 个键、配置表 27 行、8 个数据源、声明 8 个出站主机、测试 1037/1346 项 + guards 592 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

@@ -10,10 +10,11 @@
 | T006 | 静态门禁 §12（白名单段、键数、CSS、文档/截图清单）+ §11 计数 134→138 | test/guards.mjs | T003,T004 | ✅ |
 | T007 | 截图：fixture 模型补到 8 条、场景 ⑮ 中英各一张、重拍含模型行的旧图 | scripts/shots, docs/images | T004 | ✅ |
 | T008 | 文档：两版 README 用量统计节、CHANGELOG、check-docs 截图清单、specs/012 收尾 | 文档 | T005,T007 | ✅ |
+| T009 | 复核：OpenCodeReview 10 条结论按严重度处置（修 8 条、2 条记偏差）+ T013 段 15 条 + guards 第 13 节 17 条 + 可失败性实证 | lib/client.js, test/*, 文档 | T008 | ✅ |
 
 ## 提交计划（一个提交一件事）
 
-> 2026-11-14 全部任务完成；计数与偏差见 `INTERFACE.md` §10。
+> 2026-11-14 全部任务完成；计数与偏差见 `INTERFACE.md` §10，复核（T009）见 §11。
 
 1. `feat(usage): 按模型用量改中文并补占比与缓存命中`（lib/client.js）
 2. `test(usage): 分项占比、命中率与模型列表滚动的断言`（test/client.mjs、test/guards.mjs）

@@ -158,3 +158,40 @@ check-refs OK（69 活文档）、check-submission OK（category=usage）。
 在 `usageSplitCell` 体内插入 `"%" ` 字面量、把 zh `usageSplitInput` 退回 `"input"`，
 三者各触发一次 FAIL（均 359 通过 / 1 失败），证明第 12 节不是空转。
 
+## 11. 复核记录（012 复核，2026-11-14）
+
+工具：本机 `ocr`（OpenCodeReview v1.12.7，provider `dashscope-tokenplan` / `qwen3.8-flash`），
+`ocr review --from b49c258 --to HEAD --format json --audience agent --effort medium --max-tools 40
+--exclude test/**,scripts/**,specs/**,docs/**`，只审产品代码。耗时 16m49s、1.9M tokens、59 次工具调用
+（stdout 报 status failed 是收尾写会话文件 Access is denied，落盘 JSON 实为 complete、10 条 comments；
+以 JSON 为准）。10 条**全部落在 `lib/client.js`**，按严重度处置如下。
+
+| # | 级别 / 类别 | 结论 | 处置 |
+|---|---|---|---|
+| 1 | medium / bug | `weekly` 仍在 `data` 可能为 null 时解引用 | 改 `data !== null && data !== undefined && data.granularity === "week"` |
+| 2 | medium / maintainability | 总量卡手抄了 `usageHitRateText` 内部的三次有限数归一 | 抽 `usageHitRateBase(totals)`，两处共用并导出 `__internals` |
+| 3 | medium / bug | 内联浮层用 SVG 用户坐标定位，未补 svg 居中与滚动位移 | 新增 `usageTipInlineOffsetX(scrollElement)`，`x: localCenter + offsetX` |
+| 4 | low / style | 浮层锚定坐标是嵌套三元，混了「是否指针」与「坐标可用」 | 抽 `usageTipAnchorOf(value, fallback)`，三个锚点各取一次 |
+| 5 | low / performance | 每根柱 `pointermove` 都新建 hover 对象 → 90 桶时每次移动重建约 540 个闭包 | 柱子树整体 `React.useMemo`，依赖只放 `tipIndex`（跨柱才重建） |
+| 6 | medium / bug | 浮层 `var(--tpq-font)` 在 portal 到 `body` 后失效 | `.tpq-usage-tip` 规则自带 `--tpq-font` |
+| 7 | medium / bug | 透明命中 rect 作为数组子节点缺 `key` | 加 `key: "hit"` |
+| 8 | medium / bug | 外层 `<svg role="img">` 是 Children-Presentational，剪掉每柱 `tabIndex`/`aria-label` | svg 改 `role="group"`；浮层加 `USAGE_TIP_ID`，命中柱挂 `aria-describedby` |
+| 9 | low / bug | 3D 命中区往右扩（`barWidth + ISO_DEPTH`），左侧可见面反而不接指针 | 改 `x - barWidth/2`、`width: barWidth*1.5`、高度补 `ISO_DEPTH` |
+| 10 | low / bug | 占比 0 只有 cacheWrite 单点判断，其余三类印「占 0%」 | 0 值守卫收进 `usageShareText` / `usagePercentSuffix` |
+
+**不改的两条**（复核已判定为 011 记录的既有偏差，本次不动）：`canPortal` 在图表内重算（011 §7 偏差 #4）、
+`USAGE_TIP_W/H` 保守估计（011 §7 偏差）。另发现既有 CSS 约 20 处 `font-variant-numeric` 用逗号分隔（无效声明，
+计算值回落 `normal`）——本次新增规则用的是空格写法，**旧规则未批量修**：改动会重拍 13 张历史截图，
+收益只是数字略等宽，留作后续单独一次改动。
+
+唯一对外可见的行为变化：占比子行在值 ≤ 0 时不再出现（与规格「>0 才显」一致）。
+
+门禁（复核修复后，同一套命令）：host **855**（不变）／client **875**（856→875，T013 段 15 条）／
+guards **377**（360→377，第 13 节 17 条），全 0 failed；check-manifest OK（0.5.0、出站 8）、
+check-docs OK（配置键 25、数据源 8、计数一致）、check-refs OK（69 活文档）、check-submission OK（category=usage）。
+
+守卫可失败性实证（临时副本 `~/.dsh/tmp/proof-013b`，逐条改回旧写法、每改一次复原后基线 875／377 全绿）：
+把 3D 命中区 `x` 改回 `x` → client T013 1 条红 + guards 第 13 节 1 条红；去掉 `"aria-describedby"` → 各 1 条红；
+`usageShareText` 去掉 `value <= 0` → client 6 条红（0／负数／NaN／字符串四个直测 + 模型行 + 总量卡）与 guards 1 条红；
+把浮层规则里的 `--tpq-font` 改名 → client 与 guards 各 1 条红。四处都证明新断言不是空转。
+

@@ -55,6 +55,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **用量构成的健壮性与可读性复核（012 复核，OpenCodeReview 结论）**：客户端 012 那批代码过了一遍
+  OpenCodeReview（10 条结论，9 条落在 `lib/client.js`），按严重度修了 8 条。**对外行为只变一处**：
+  占比子行统一由 `usageShareText` / `usagePercentSuffix` 在值 ≤ 0 时返回空串——之前总量卡只有「缓存写入」单点判 0，
+  另外三类会印出「占 0%」，与 012 规格「>0 才显」矛盾（模型行当时是对的）。其余都是内部质量：
+  命中率分母抽成 `usageHitRateBase(totals)`，总量卡与模型行共用一份（原来总量卡手抄了一遍三次 `Number.isFinite` 归一）；
+  命中率纯函数的 0 分母分支随之只剩一处；`weekly` 判定改成 `data !== null && data !== undefined && ...`（空快照不再解引用）；
+  模型行对 `id` / `totals` 先判类型、`key` 改用下标（外部数据缺字段不再抛错，也不产生重复 key）；
+  柱子树整体 `React.useMemo`（90 桶时指针每动一次不再重建约 540 个闭包，依赖里只放 `tipIndex` 而不是指针坐标）；
+  3D 透明命中区改成向左半柱宽、向上一个 `ISO_DEPTH` 扩张（原写法往右扩，左侧可见面反而点不中）；
+  柱组两个子节点补上 `key`（缺 key 时每柱每帧一条 React warning）；
+  图表 `<svg>` 的 `role` 从 `img` 改成 `group`（`img` 是 Children-Presentational，会把新加的每柱 `tabIndex` / `aria-label` 从无障碍树里剪掉），
+  浮层补稳定 `id` 并给当前命中柱挂 `aria-describedby`；浮层规则自带 `--tpq-font`（portal 到 `body` 后拿不到 `.tpq` 上的字体变量，原来会回落宿主正文字体）；
+  浮层锚定坐标收进 `usageTipAnchorOf`、内联模式补 `usageTipInlineOffsetX`（滚动与 svg 居中两个位移）。
+  另外记两处**不改**的已知项：`canPortal` 在图表内重算与浮层宽高保守估计（011 已记录的偏差），
+  以及既有约 20 处 `font-variant-numeric` 用了逗号分隔（无效声明，但改动会重拍全部历史截图，本次不批量动）。
+  测试：客户端 856→875（T013 段 15 条：0 值占比、分母归一、`role=group`、浮层 `id`/`aria-describedby`、3D 命中区几何、
+  脏模型不炸、`--tpq-font`），guards 静态矩阵 360→377（第 13 节 17 条，逐条钉住上面这些「改回旧写法测试照样绿」的形状），
+  宿主仍 855 条。复核记录见 `specs/012-usage-composition/INTERFACE.md` §10。
+
 - **CI：Node 20 上 009 的 zstd 用例不再假红**：0.5.0 的 tag 落地后 ci 矩阵的 node 20 三平台全红——
   Node < 22.15 没有 `zlib.zstdCompressSync` / `zstdDecompressSync`，而 §1.4 的日志 fixture 无条件压缩、
   三条解码断言与 §2.2 的两段路由用例又要求真解出调用。改法全在 `test/host.mjs`：无 zstd 时

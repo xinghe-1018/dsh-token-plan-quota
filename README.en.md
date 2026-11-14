@@ -317,21 +317,24 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   screen answers "one credit buys this model this many input / cache-hit / output tokens"; the three add up to the row
   total, and the denominator is still the cycle credits used (account-level), not a per-model allowance. When classes
   or model rows are missing, only that part is skipped - never a 0, never a dash.
-- **If you used only this model**: inside the conversion block you can pick one model and see how many tokens the
-  cycle's whole credit balance would buy at that model's own measured ratio. The chips are native `button`s
-  (`data-usage-credits-modelpick-chip`, with `data-model` holding the model id and `data-selected` / `aria-pressed`
-  kept in sync); they are `Tab`-focusable, switch on Enter, and the selection stores only the id, defaulting to the
-  first item. The heading names the current model and the "all {total} credits" caliber. The result card
-  (`data-usage-credits-modelpick-card`) leads with the total (`formatTokens(capacity.tokens)` plus the unit `tokens`)
-  and then splits it into **input / cache hit / output**; a fourth "cache write" cell is appended only when that
-  class capacity is > 0 - a zero simply omits the cell. The cells are rounded individually and still add up to the
-  total: the host computes `capacity.classes[key] = Math.round(max(0, perCredit) × credits.total)` and
-  `capacity.tokens` as their sum, and when `credits.total` is not a finite positive number the whole `capacity` is
-  absent (old shape). Nothing in the card shows a percentage, `Credits` or a currency symbol - it is a derived
-  reference, not the official caliber - and the footnote states that the numerator is this instance's usage while
-  the denominator is account-level credits used. With an older host, or when no model yields a capacity, the whole
-  block is not rendered; a 0 is never substituted.
-- **Estimated from list prices (022)**: for models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) the picker leads with the tokens the whole cycle's credits would buy at that model alone: the row's list-price cost divided by this account's measured list-price cost per credit (`ratio.priceBasis` records the basis, its verification date and the unit). A smaller line keeps the 019 share-derived estimate (contribution only, not additive) and notes that the 22:00-08:00 discount and models without a published price are not modelled; without an estimate every field falls back to 019, `capacity` stays, and both calibers coexist - the estimate is a reference, not an official reading.
+- **If you used a single model (023)**: a standalone section (`section.tpq-usage-single-model`,
+  `data-usage-single-model="1"`, `data-stale` tied to the snapshot) sits after the "One credit is worth" card, headed
+  `h3.tpq-usage-single-model-title` with the literal text "If you used a single model". Inside it you can pick one
+  model and see how many tokens the cycle's whole credit balance would buy at that model alone. The chips are native
+  `button`s (`data-usage-credits-modelpick-chip`, with `data-model` holding the model id and `data-selected` /
+  `aria-pressed` kept in sync); they are `Tab`-focusable, switch on Enter, and the selection stores only the id,
+  defaulting to the first item. The result card (`data-usage-credits-modelpick-card`) leads with the total
+  (`formatTokens(...)` plus the unit `tokens`) and then splits it into **input / cache hit / output**; a fourth
+  "cache write" cell is appended only when that class capacity is > 0 - a zero simply omits the cell. The cells are
+  rounded individually and still add up to the total.
+  Models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) lead with the
+  022 "estimated from list prices" number and the card label becomes "Estimated from list prices"
+  (`ratio.priceBasis` records the basis, its verification date and the unit); without a price the card falls back to
+  the 019 share-derived `capacity`, and the two calibers never mix within one figure. There is no smaller print below
+  the card: the caliber lives in this README and the specs, and the section holds only the chips and the result card.
+  With an older host, when no model yields a figure, or while credits are not ready, the whole block is not
+  rendered; a 0 is never substituted.
+- **Estimated from list prices (022)**: for models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) the picker leads with the tokens the whole cycle's credits would buy at that model alone: the row's list-price cost divided by this account's measured list-price cost per credit (`ratio.priceBasis` records the basis, its verification date and the unit). The 22:00-08:00 discount and models without a published price are not modelled; without an estimate every field falls back to 019, `capacity` stays, and both calibers coexist - the estimate is a reference, not an official reading.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -643,8 +646,8 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 1073 assertions, offline
-node test/client.mjs                # 1384 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 615 assertions: behaviour matrices of the gates themselves
+node test/client.mjs                # 1394 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 624 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -652,7 +655,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
-config table, 8 sources, 8 declared outbound hosts, 1073/1384 tests plus 615 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 1073/1394 tests plus 624 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

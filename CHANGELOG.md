@@ -34,9 +34,16 @@ All notable changes to this project are documented here. The format follows
   `estimate.tokens = Math.round(total × ypc / priceMix)`；单模型时价目约掉，即 `total × tokens / used`。
   仅对 qwen3.8-flash、deepseek-v4.1-flash-1017、deepseek-v4.1-flash 三个有公开忙时单价的模型给估算（取价日
   `2026-11-15`），无价目 / 0 tokens 的行跳过、老 `capacity` 保留；有估算时 `ratio.priceBasis` 记口径、取价日与单位。
-  客户端主数字/分项改用 estimate 并标「按官方价目估算 tokens」，下方小字保留 019 占比折算（贡献份额，不可相加）；
+  客户端主数字/分项改用 estimate 并标「按官方价目估算 tokens」；
   无估算时逐字段回落 019。零新路由、零新配置键、零新出站主机、零第三方依赖。
   测试：宿主 1037 → 1073、客户端 1346 → 1384、guards 592 → 615（新增第 22 节静态矩阵）。方案与验收见 `specs/022-price-estimate/`。
+- **单模型估算独立成模块（023）**：022 的估算选择器从 Credits 换算卡里移出，改成独立
+  `section.tpq-usage-single-model`（`data-usage-single-model="1"`，仅 `status=ready` 且至少一个模型可算时渲染）
+  排在换算卡之后；标题 `h3.tpq-usage-single-model-title` 逐字「如果只用单个模型」/「If you used a single model」。
+  删除 `usageCreditsModelPickHint` / `Share` / `Note` 三个 i18n 键及其 DOM 与 CSS（COPY 161 → 158）：
+  模块内只剩 chips 与结果卡，022 的「按实测占比折算」小字与口径脚注不再出现；主数字仍按 022 estimate、
+  无价目回落 019 capacity，数据口径不变。零新路由、零新配置键、零新出站主机、零第三方依赖。
+  测试：宿主 1073 不变、客户端 1384 → 1394、guards 615 → 624（新增第 23 节静态矩阵）。方案见 `specs/023-single-model-module/`。
 - **每 Credit 三格卡片与按日折算基准（017）**：016 的「每 Credit 分项」一行改成**三格卡片**
   （`section.tpq-usage-credits-classes`、`data-usage-credits-classes="1"`）：标题 zh「1 Credit 折合」/ en
   「One credit is worth」，三格固定顺序 **缓存命中 / 未命中输入 / 输出**，每格 = 标签 + **20px** 数值 + 单位

@@ -1692,7 +1692,8 @@ function findChip(node) {
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [155, 155])
+  // 019 增了 4 个容量测算键（ModelPickTitle/Hint/Card/Note），155 → 159。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [159, 159])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -5213,11 +5214,11 @@ async function mountBreakdown(credits, options = {}) {
       collectText(findNodes(rows[2], 'tpq-usage-credits-model-ratio')[0]).join('')],
     ['1200.0万 tokens', '1 Credit ≈ 322.6 tokens'])
   const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
-  check('T015 块内顺序：detail → classes → estimate → models → note',
+  check('T015 块内顺序：detail → classes → estimate → modelpick → models → note',
     seq,
     ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
       'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
-      'tpq-usage-credits-models', 'tpq-usage-credits-note'])
+      'tpq-usage-credits-modelpick', 'tpq-usage-credits-models', 'tpq-usage-credits-note'])
   check('T015 014 总量比值行未变', collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
   ok('T015 014 五行仍在（ratio/window/detail/estimate/note）',
     ['data-usage-credits-ratio', 'data-usage-credits-window', 'data-usage-credits-detail',
@@ -5525,10 +5526,11 @@ function withBasis(basis, ratioOverrides = {}) {
     '按 2026-11-14 当日实测比值计算，每日刷新一次（' + expectedClock(computedAt) + '）')
   ok('T017 zh daily 时间是两位数 HH:MM', /（\d{2}:\d{2}）$/.test(collectText(daily).join('')), collectText(daily).join(''))
   const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
-  check('T017 zh 块内顺序：classes → estimate → daily → models',
+  check('T017 zh 块内顺序：classes → estimate → daily → modelpick → models',
     seq, ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
       'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
-      'tpq-usage-credits-daily', 'tpq-usage-credits-models', 'tpq-usage-credits-note'])
+      'tpq-usage-credits-daily', 'tpq-usage-credits-modelpick', 'tpq-usage-credits-models',
+      'tpq-usage-credits-note'])
   ok('T017 zh daily 与卡片、模型块同屏不互相顶掉',
     findNodes(section, 'tpq-usage-credits-classes').length === 1
     && findNodes(section, 'tpq-usage-credits-models').length === 1)
@@ -5625,6 +5627,303 @@ function withBasis(basis, ratioOverrides = {}) {
     '每 Credit：输入 5 · 缓存命中 6 · 输出 7 · 缓存写入 8')
   check('T017 卡片三格未受模型行影响', creditsClassCells(card).map(creditsCellTexts),
     [['缓存命中', '10', 'tokens'], ['未命中输入', '20', 'tokens'], ['输出', '30', 'tokens']])
+}
+
+/* ===== 019 单模型容量测算（INTERFACE §2 / §3 / §4.2）=====
+ * 数据形状：ratio.models[] 里可选 capacity（宿主权威折算值）；没有 capacity 的旧宿主退回
+ * tokensPerCredit × 总 Credits。这里两种形状都造，测试不联网、不依赖宿主路由。
+ * ========================================================================== */
+
+/** 019 的模型夹具：A 走 capacity（三段 class + cacheWrite 0），B 走旧宿主比值（四段 class 全有）。 */
+const PICK_MODEL_A = {
+  id: 'qwen3-max-2026-09-01',
+  provider: 'qwen',
+  model: 'qwen3-max',
+  tokens: 1000,
+  calls: 5,
+  tokensPerCredit: 35305.2,
+  capacity: {
+    tokens: 81000,
+    classes: { input: 22000, cacheRead: 56000, output: 3000, cacheWrite: 0 },
+  },
+}
+const PICK_MODEL_B = {
+  id: 'deepseek-v4.1',
+  provider: 'deepseek',
+  model: 'deepseek-v4.1',
+  tokens: 350000000,
+  calls: 800,
+  tokensPerCredit: 9411.9,
+  classes: {
+    // 四类 perCredit 之和必须等于 tokensPerCredit：真宿主两路同源，夹具不能自相矛盾。
+    input: { tokens: 1, perCredit: 3000 },
+    cacheRead: { tokens: 1, perCredit: 4000 },
+    output: { tokens: 1, perCredit: 2000 },
+    cacheWrite: { tokens: 1, perCredit: 411.9 },
+  },
+}
+
+function makeModelPickSnapshot(models, overrides = {}) {
+  return makeCreditsBreakdownSnapshot({ ...overrides, ratio: { ...(overrides.ratio ?? {}), models } })
+}
+
+function modelPickOf(node) {
+  return nodesWithProp(node, 'data-usage-credits-modelpick')[0]
+}
+function modelPickChips(node) {
+  return nodesWithProp(node, 'data-usage-credits-modelpick-chip')
+}
+function modelPickCardOf(node) {
+  return nodesWithProp(node, 'data-usage-credits-modelpick-card')[0]
+}
+function modelPickCellsOf(card) {
+  return nodesWithProp(card, 'data-usage-credits-modelpick-class')
+}
+/* 把屏幕上「2.40亿 / 3295.2万 / 3,000」还原成数值，用于验证「总值 = 四格之和」。 */
+function tokenTextNumber(text) {
+  const value = String(text)
+  if (value.endsWith('亿')) return Number(value.slice(0, -1)) * 1e8
+  if (value.endsWith('万')) return Number(value.slice(0, -1)) * 1e4
+  return Number(value.replace(/,/g, ''))
+}
+
+/* ① 静态契约：__internals 两个纯函数、data 钩子、COPY 四键、CSS 五件、窄屏两列。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T019 __internals 暴露 usageModelCapacityOf / usageModelPickLabel',
+    typeof internals.usageModelCapacityOf === 'function'
+    && typeof internals.usageModelPickLabel === 'function')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T019 四个 data 钩子落地（块 / chip / 卡片 / 分项格）',
+    source.includes('"data-usage-credits-modelpick": "1"')
+    && source.includes('"data-usage-credits-modelpick-chip": "1"')
+    && source.includes('"data-usage-credits-modelpick-card": "1"')
+    && source.includes('"data-usage-credits-modelpick-class": key'))
+  ok('T019 chip 用 data-model=id、选中态 data-selected + aria-pressed 同源',
+    source.includes('"data-model": entry.id')
+    && source.includes('"data-selected": isSelected ? "1" : "0"')
+    && source.includes('"aria-pressed": isSelected ? "true" : "false"'))
+  ok('T019 COPY zh 四键逐字',
+    source.includes('usageCreditsModelPickTitle: "如果只用这一个模型"')
+    && source.includes('usageCreditsModelPickHint: "按 {model} 本账期实测比值，把全部 {total} Credits 都花在它上面（折算参考，非官方口径）"')
+    && source.includes('usageCreditsModelPickCard: "折算可用 tokens"')
+    && source.includes('usageCreditsModelPickNote: "该模型的比值分子是本机用量、分母是账号级已用 Credits；四类分项各自取整后相加等于上方总量。"'))
+  ok('T019 COPY en 四键逐字',
+    source.includes('usageCreditsModelPickTitle: "If you used only this model"')
+    && source.includes('usageCreditsModelPickHint: "Using the measured ratio of {model} for this cycle and spending all {total} credits on it (derived, not official)"')
+    && source.includes('usageCreditsModelPickCard: "Derived capacity"')
+    && source.includes('usageCreditsModelPickNote: "The ratio uses local tokens over the account-level used credits; the four class figures are rounded separately and add up to the total above."'))
+  const pickCssStart = source.indexOf('.tpq-usage-credits-modelpick{')
+  const pickCssEnd = source.indexOf('.tpq-usage-credits-models{max-height', pickCssStart)
+  const pickCss = pickCssStart >= 0 && pickCssEnd > pickCssStart ? source.slice(pickCssStart, pickCssEnd) : ''
+  ok('T019 CSS 块容器纵向 flex、gap 8、min-width 0',
+    pickCss.includes('.tpq-usage-credits-modelpick{display:flex;flex-direction:column;gap:8px;min-width:0}'))
+  ok('T019 CSS 标题 11px / label-secondary、提示 11px/1.5 tertiary',
+    /\.tpq-usage-credits-modelpick-title\{[^}]*font-size:11px;[^}]*color:var\(--dsw-alias-label-secondary,inherit\)/.test(pickCss)
+    && /\.tpq-usage-credits-modelpick-hint\{[^}]*font-size:11px;line-height:1\.5;[\s\S]{0,80}label-tertiary/.test(pickCss))
+  ok('T019 CSS chip 胶囊（999px 圆角 / 可换行 / 单行省略 / 11px）',
+    pickCss.includes('.tpq-usage-credits-modelpick-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0}')
+    && /\.tpq-usage-credits-modelpick-chip\{[\s\S]{0,400}text-overflow:ellipsis;white-space:nowrap;cursor:pointer;[\s\S]{0,120}border-radius:999px/.test(pickCss))
+  ok('T019 CSS 选中态用 bg-layer-3 + label-primary，底色不用品牌色',
+    /\.tpq-usage-credits-modelpick-chip\[data-selected="1"\]\{[\s\S]{0,160}background:var\(--dsw-alias-bg-layer-3,rgba\(128,128,128,\.18\)\);[\s\S]{0,160}label-primary/.test(pickCss)
+    && pickCss.includes('outline:2px solid var(--dsw-alias-brand-primary,#4176e6)')
+    && /background:var\(--dsw-alias-brand-primary/.test(pickCss) === false)
+  ok('T019 CSS 卡片并入宿主体系（layer-2 底 / border-l2 / 10px 圆角 / 10px 12px 内边距）',
+    /\.tpq-usage-credits-modelpick-card\{display:flex;flex-direction:column;gap:6px;padding:10px 12px;[\s\S]{0,80}border-radius:10px;background:var\(--dsw-alias-bg-layer-2,rgba\(128,128,128,\.10\)\);[\s\S]{0,80}border:1px solid var\(--dsw-alias-border-l2,rgba\(128,128,128,\.18\)\);min-width:0\}/.test(pickCss))
+  ok('T019 CSS 总值 22px/600 tabular、三列 grid gap 8、分项值 14px/600',
+    /\.tpq-usage-credits-modelpick-value\{[^}]*font-size:22px;font-weight:600;[\s\S]{0,160}label-primary[\s\S]{0,120}lining-nums tabular-nums/.test(pickCss)
+    && pickCss.includes('.tpq-usage-credits-modelpick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0}')
+    && /\.tpq-usage-credits-modelpick-cell-value\{[^}]*font-size:14px;font-weight:600;/.test(pickCss))
+  ok('T019 CSS 不出现禁用色（#fff / #e6e9ef / color:#1f232b）',
+    pickCss.includes('#fff') === false && pickCss.includes('#e6e9ef') === false
+    && pickCss.includes('color:#1f232b') === false)
+  ok('T019 CSS 窄屏两列',
+    /\.tpq-usage-credits-modelpick-grid\{grid-template-columns:1fr 1fr\}/.test(source.slice(source.indexOf('@media (max-width:520px)'))))
+}
+
+/* ② 纯函数 usageModelCapacityOf：容量来源、0 值、缺类、旧宿主、非有限全矩阵。 */
+{
+  const internals = (await mountUsage()).api.__internals
+  const capacityOf = internals.usageModelCapacityOf
+  check('T019 非普通对象一律 null',
+    [null, undefined, 'x', 42, [], [PICK_MODEL_A]].map((item) => capacityOf(item, 80000)),
+    [null, null, null, null, null, null])
+  const hostCapacity = capacityOf(PICK_MODEL_A, 80000)
+  check('T019 有 capacity 时 tokens 用宿主值（不乘 total）', hostCapacity.tokens, 81000)
+  check('T019 capacity.classes 四类原样透传（cacheWrite 0 也算有值）',
+    [hostCapacity.classes.input, hostCapacity.classes.cacheRead, hostCapacity.classes.output, hostCapacity.classes.cacheWrite],
+    [22000, 56000, 3000, 0])
+  const derivedConsistent = capacityOf(PICK_MODEL_B, 80000)
+  ok('T019 旧宿主两路同源：tokensPerCredit × total = 四类 perCredit × total 之和',
+    Math.abs(derivedConsistent.tokens - Object.values(derivedConsistent.classes).reduce((sum, value) => sum + value, 0)) < 1e-6)
+  const priority = capacityOf({
+    id: 'p', model: 'p', tokensPerCredit: 999,
+    capacity: { tokens: 100, classes: { input: 1, cacheRead: 2, output: 3, cacheWrite: 4 } },
+  }, 10)
+  check('T019 capacity.tokens 优先于 tokensPerCredit × total', [priority.tokens, priority.classes.input], [100, 1])
+  check('T019 capacity.tokens 为 0 是真实值（不回落、不当缺字段）',
+    capacityOf({ id: 'z', model: 'z', tokensPerCredit: 999, capacity: { tokens: 0 } }, 10),
+    { tokens: 0, classes: null })
+  check('T019 capacity.tokens 非有限时回落 tokensPerCredit × total',
+    capacityOf({ id: 'n', model: 'n', tokensPerCredit: 2, capacity: { tokens: 'x' } }, 10).tokens, 20)
+  const partialClasses = capacityOf({
+    id: 'q', model: 'q', capacity: { tokens: 500, classes: { input: 1, cacheRead: 2, output: 3 } },
+  }, 80000)
+  check('T019 capacity.classes 缺一类 → classes=null 但 tokens 仍在', [partialClasses.tokens, partialClasses.classes], [500, null])
+  const objectCells = capacityOf({
+    id: 'o', model: 'o', capacity: { tokens: 500, classes: { input: { tokens: 10 }, cacheRead: { tokens: 20 }, output: { tokens: 30 }, cacheWrite: { tokens: 40 } } },
+  }, 80000)
+  check('T019 capacity.classes 的 {tokens} 对象形状也认',
+    [objectCells.classes.input, objectCells.classes.cacheWrite], [10, 40])
+  const oldHost = capacityOf(PICK_MODEL_B, 80000)
+  check('T019 旧宿主（无 capacity）用 tokensPerCredit × total，不取整', oldHost.tokens, 9411.9 * 80000)
+  check('T019 旧宿主 classes 用 perCredit × total 四类全算',
+    [oldHost.classes.input, oldHost.classes.cacheRead, oldHost.classes.output, oldHost.classes.cacheWrite],
+    [240000000, 320000000, 160000000, 32952000])
+  const missingWrite = capacityOf({
+    id: 'm', model: 'm', tokensPerCredit: 2,
+    classes: { input: { perCredit: 1 }, cacheRead: { perCredit: 1 }, output: { perCredit: 1 } },
+  }, 10)
+  check('T019 旧宿主缺 cacheWrite → classes=null、tokens 仍在', [missingWrite.tokens, missingWrite.classes], [20, null])
+  check('T019 旧宿主 perCredit 为 null 当缺字段（不把 null 当 0）',
+    capacityOf({ id: 'l', model: 'l', tokensPerCredit: 2, classes: { input: { perCredit: null }, cacheRead: { perCredit: 1 }, output: { perCredit: 1 }, cacheWrite: { perCredit: 1 } } }, 10).classes,
+    null)
+  check('T019 tokensPerCredit 为 null 且无 capacity → null',
+    capacityOf({ id: 'l', model: 'l', tokensPerCredit: null }, 80000), null)
+  check('T019 total 非有限且无 capacity.tokens → null',
+    [capacityOf({ id: 't', model: 't', tokensPerCredit: 2 }, NaN),
+      capacityOf({ id: 't', model: 't', tokensPerCredit: 2 }, 'x'),
+      capacityOf(PICK_MODEL_B, NaN)], [null, null, null])
+  const finiteCapacityBadTotal = capacityOf({ id: 'k', model: 'k', capacity: { tokens: 777, classes: { input: 1, cacheRead: 2, output: 3, cacheWrite: 4 } } }, 'x')
+  check('T019 total 非有限但 capacity.tokens 有限 → 仍出数',
+    [finiteCapacityBadTotal.tokens, finiteCapacityBadTotal.classes.output], [777, 3])
+  check('T019 小数不取整（1/3 token 比值也照实乘）',
+    capacityOf({ id: 'f', model: 'f', tokensPerCredit: 1 / 3 }, 3).tokens, 1)
+}
+
+/* ③ 纯函数 usageModelPickLabel：同模型消歧、缺 model 回落 id。 */
+{
+  const internals = (await mountUsage()).api.__internals
+  const label = internals.usageModelPickLabel
+  check('T019 chip 默认用 model 名', label(PICK_MODEL_A, [PICK_MODEL_A, PICK_MODEL_B]), 'qwen3-max')
+  check('T019 同名模型补 provider 前缀消歧',
+    label(PICK_MODEL_A, [PICK_MODEL_A, { id: 'x', provider: 'deepseek', model: 'qwen3-max' }]), 'qwen/qwen3-max')
+  check('T019 同名且缺 provider 记 unknown',
+    label({ id: 'x', model: 'qwen3-max' }, [{ id: 'x', model: 'qwen3-max' }, { id: 'y', provider: 'q', model: 'qwen3-max' }]), 'unknown/qwen3-max')
+  check('T019 model 为空串 → 回落 id', label({ id: 'fallback-id', model: '  ' }, [{ id: 'fallback-id', model: '' }]), 'fallback-id')
+  check('T019 非数组 models 不炸', label({ id: 'only', model: 'only-model' }, null), 'only-model')
+}
+
+/* ④ 组件渲染：默认第一项、chip 数、卡片数字、三格顺序、cacheWrite 0 不出现。 */
+{
+  const { bundle, tree } = await mountBreakdown(makeModelPickSnapshot([PICK_MODEL_A, PICK_MODEL_B]))
+  const section = creditsSectionOf(tree)
+  const pick = modelPickOf(section)
+  ok('T019 容量测算块出现在换算块内', pick !== undefined)
+  check('T019 chip 数 = 可用模型数', modelPickChips(pick).length, 2)
+  check('T019 chip 文案是 model 名', modelPickChips(pick).map((chip) => collectText(chip).join('')), ['qwen3-max', 'deepseek-v4.1'])
+  check('T019 chip 的 data-model / title 都是 id 全名',
+    [modelPickChips(pick)[0].props['data-model'], modelPickChips(pick)[0].props.title],
+    ['qwen3-max-2026-09-01', 'qwen3-max-2026-09-01'])
+  check('T019 默认选中第一项（data-selected/aria-pressed 同源）',
+    modelPickChips(pick).map((chip) => [chip.props['data-selected'], chip.props['aria-pressed']]),
+    [['1', 'true'], ['0', 'false']])
+  check('T019 块标题逐字', collectText(findNodes(pick, 'tpq-usage-credits-modelpick-title')[0]).join(''), '如果只用这一个模型')
+  check('T019 提示行把 {model}/{total} 换成选中模型与总 Credits',
+    collectText(findNodes(pick, 'tpq-usage-credits-modelpick-hint')[0]).join(''),
+    '按 qwen3-max 本账期实测比值，把全部 80000 Credits 都花在它上面（折算参考，非官方口径）')
+  const card = modelPickCardOf(pick)
+  check('T019 卡片标题逐字', collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), '折算可用 tokens')
+  check('T019 卡片总值 = capacity.tokens 的 formatTokens + 单位',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '8.1万tokens')
+  check('T019 卡片三格顺序固定 input → cacheRead → output（cacheWrite 0 不占格）',
+    modelPickCellsOf(card).map((cell) => cell.props['data-usage-credits-modelpick-class']),
+    ['input', 'cacheRead', 'output'])
+  check('T019 三格 label / value / unit 逐格逐字',
+    modelPickCellsOf(card).map((cell) => collectText(cell)),
+    [['输入', '2.2万', 'tokens'], ['缓存命中', '5.6万', 'tokens'], ['输出', '3,000', 'tokens']])
+  check('T019 块内脚注逐字', collectText(findNodes(pick, 'tpq-usage-credits-modelpick-note')[0]).join(''),
+    '该模型的比值分子是本机用量、分母是账号级已用 Credits；四类分项各自取整后相加等于上方总量。')
+  ok('T019 卡片子树不含 Credits / 百分比', !/Credits|%/.test(collectText(card).join('')), collectText(card).join('|'))
+  check('T019 插入顺序：estimate → modelpick → models',
+    (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
+      .filter((name) => ['tpq-usage-credits-estimate', 'tpq-usage-credits-modelpick', 'tpq-usage-credits-models'].includes(name)),
+    ['tpq-usage-credits-estimate', 'tpq-usage-credits-modelpick', 'tpq-usage-credits-models'])
+  const requestsBefore = creditsRequests().length
+
+  /* 点第二个 chip：选中态换人、卡片数字、格数与提示行全部跟过去。 */
+  modelPickChips(pick)[1].props.onClick()
+  const nextTree = bundle.renderUsage()
+  const nextPick = modelPickOf(creditsSectionOf(nextTree))
+  check('T019 点 chip 后选中态切换', modelPickChips(nextPick).map((chip) => chip.props['data-selected']), ['0', '1'])
+  const nextCard = modelPickCardOf(nextPick)
+  check('T019 点 chip 后总值换成该模型（旧宿主比值）',
+    collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-total')[0]).join(''), '7.53亿tokens')
+  check('T019 点 chip 后提示行的 {model} 跟着换',
+    collectText(findNodes(nextPick, 'tpq-usage-credits-modelpick-hint')[0]).join(''),
+    '按 deepseek-v4.1 本账期实测比值，把全部 80000 Credits 都花在它上面（折算参考，非官方口径）')
+  check('T019 cacheWrite 有值才追加第四格，四格顺序 input → cacheRead → output → cacheWrite',
+    modelPickCellsOf(nextCard).map((cell) => cell.props['data-usage-credits-modelpick-class']),
+    ['input', 'cacheRead', 'output', 'cacheWrite'])
+  check('T019 四格逐格逐字',
+    modelPickCellsOf(nextCard).map((cell) => collectText(cell)),
+    [['输入', '2.40亿', 'tokens'], ['缓存命中', '3.20亿', 'tokens'], ['输出', '1.60亿', 'tokens'], ['缓存写入', '3295.2万', 'tokens']])
+  const cellSum = modelPickCellsOf(nextCard)
+    .map((cell) => tokenTextNumber(collectText(cell)[1]))
+    .reduce((sum, value) => sum + value, 0)
+  check('T019 卡片总值 = 四格之和（渲染文本还原成数值再比对）',
+    Math.round(cellSum), Math.round(9411.9 * 80000))
+  check('T019 切换 chip 不发新请求（纯前端选择）', creditsRequests().length, requestsBefore)
+  ok('T019 选中态是 id 字符串：再渲染一次仍停在同一模型',
+    modelPickChips(modelPickOf(creditsSectionOf(bundle.renderUsage()))).map((chip) => chip.props['data-selected']), ['0', '1'])
+}
+
+/* ⑤ 旧宿主只有 tokensPerCredit：照样出块；classes=null 时不画分项 grid。 */
+{
+  const { tree } = await mountBreakdown(makeModelPickSnapshot([
+    { id: 'old-1', provider: 'p', model: 'old-model', tokens: 10, calls: 1, tokensPerCredit: 0.5 },
+  ]))
+  const pick = modelPickOf(creditsSectionOf(tree))
+  ok('T019 无 capacity 的旧宿主也渲染容量测算', pick !== undefined)
+  const card = modelPickCardOf(pick)
+  check('T019 旧宿主总值 = tokensPerCredit × total',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '4.0万tokens')
+  check('T019 没有 classes 时不画分项 grid', modelPickCellsOf(card).length, 0)
+  ok('T019 没有 classes 时 grid 节点不出现（卡片仍在）',
+    nodesWithProp(card, 'data-usage-credits-modelpick-card').length === 1
+      && findNodes(card, 'tpq-usage-credits-modelpick-grid').length === 0)
+}
+
+/* ⑥ 英文界面：文案与数字量纲都切到 en。 */
+{
+  const { tree } = await mountBreakdown(makeModelPickSnapshot([PICK_MODEL_A]), { lang: 'en-US' })
+  const pick = modelPickOf(creditsSectionOf(tree))
+  check('T019 en 标题 / 卡片标题 / 提示行',
+    [collectText(findNodes(pick, 'tpq-usage-credits-modelpick-title')[0]).join(''),
+      collectText(findNodes(modelPickCardOf(pick), 'tpq-usage-credits-modelpick-card-label')[0]).join(''),
+      collectText(findNodes(pick, 'tpq-usage-credits-modelpick-hint')[0]).join('')],
+    ['If you used only this model', 'Derived capacity',
+      'Using the measured ratio of qwen3-max for this cycle and spending all 80000 credits on it (derived, not official)'])
+  check('T019 en 数字用 K/M 量纲', collectText(findNodes(modelPickCardOf(pick), 'tpq-usage-credits-modelpick-total')[0]).join(''), '81Ktokens')
+  ok('T019 en 下无中文残留', !/[一-龥]/.test(collectText(pick).join('')), collectText(pick).join('|'))
+}
+
+/* ⑦ 退化：没有可算模型 / 全部算不出 → 整块不渲染（旧页面逐字段不变）。 */
+{
+  const empty = await mountBreakdown(makeModelPickSnapshot([]))
+  check('T019 models 为空数组 → 整块消失', modelPickOf(creditsSectionOf(empty.tree)), undefined)
+  const unusable = await mountBreakdown(makeModelPickSnapshot([
+    { id: 'bad-1', model: 'bad-1', tokensPerCredit: null },
+    { id: 'bad-2', model: 'bad-2' },
+    null,
+  ]))
+  check('T019 全部模型算不出容量 → 整块消失', modelPickOf(creditsSectionOf(unusable.tree)), undefined)
+  const mixed = await mountBreakdown(makeModelPickSnapshot([null, PICK_MODEL_A, { id: 'bad', model: 'bad', tokensPerCredit: 'x' }]))
+  const mixedPick = modelPickOf(creditsSectionOf(mixed.tree))
+  check('T019 混合入参只保留可算的那一项（chip 数 = 1）', modelPickChips(mixedPick).length, 1)
+  const noModels = await mountBreakdown(makeCreditsSnapshot())
+  check('T019 旧快照没有 ratio.models → 整块消失', modelPickOf(creditsSectionOf(noModels.tree)), undefined)
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

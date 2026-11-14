@@ -43,7 +43,7 @@ const {
   ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
   buildUsageSnapshot, runUsageSync,
   buildOfficialUsageSnapshot, buildCreditsTokenSnapshot, creditsCycleOf, creditsTokenRatioOf,
-  creditsClassRatios, creditsModelRatios, creditsDailyCycleKey, creditsDailySnapshotOf, creditsDailyReusable,
+  creditsClassRatios, creditsModelRatios, modelsWithCapacity, creditsDailyCycleKey, creditsDailySnapshotOf, creditsDailyReusable,
   readCreditsDaily, writeCreditsDaily, resolveCreditsDaily, composeCreditsToken,
   resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
   sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
@@ -4042,6 +4042,163 @@ function recursiveKeys(value, out = []) {
     [c1 === c2, c1.ratio.basis?.cached, readCreditsDaily(integrationFile) !== null],
     [true, false, true])
   check('017 集成：并发结束后 state.inflight 已释放', state.inflight, null)
+}
+
+{
+  // 019：每模型 capacity —— 四类取整后相加，缺额度总量时不造字段。
+  const NOW = new Date(2026, 10, 14, 12, 0, 0).getTime()
+  const USED = 37196.8802
+  const TOTAL = 80000
+  const CARD = {
+    id: 'token-plan-console',
+    label: '千问控制台',
+    unit: 'Credits',
+    total: TOTAL,
+    used: USED,
+    usedPercent: 46.4961,
+    meters: [{
+      key: 'monthly', label: '本月', labelEn: 'Monthly', unit: 'Credits',
+      total: TOTAL, used: USED, usedPercent: 46.4961,
+      resetAt: new Date(2026, 11, 1, 0, 0, 0).getTime(),
+    }],
+  }
+  const CYCLE = creditsCycleOf(CARD, NOW)
+  const OFFICIAL_TOTALS = {
+    tokens: 2122918870,
+    input: 2112709710,
+    cacheRead: 2039167232,
+    output: 10209160,
+  }
+  const official = {
+    generatedAt: NOW,
+    range: { kind: 'custom', days: 14, from: '2026-11-01', to: '2026-11-14' },
+    granularity: 'day',
+    totals: OFFICIAL_TOTALS,
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+  }
+
+  check('019 __internals：modelsWithCapacity 是函数', typeof modelsWithCapacity, 'function')
+
+  const base = [
+    {
+      id: 'm1',
+      classes: {
+        input: { tokens: 1, perCredit: 0.28 },
+        cacheRead: { tokens: 2, perCredit: 0.7 },
+        output: { tokens: 3, perCredit: 0.05 },
+        cacheWrite: { tokens: 4, perCredit: 0 },
+      },
+    },
+    {
+      id: 'm2',
+      classes: {
+        input: { perCredit: 1.111 },
+        cacheRead: { perCredit: 2.222 },
+        output: { perCredit: 3.333 },
+        cacheWrite: { perCredit: 4.444 },
+      },
+    },
+  ]
+  const baseBefore = JSON.stringify(base)
+  const capped = modelsWithCapacity(base, TOTAL)
+  check('019 双模型：四类各自取整',
+    capped.map(item => item.capacity.classes),
+    [
+      { input: 22400, cacheRead: 56000, output: 4000, cacheWrite: 0 },
+      { input: 88880, cacheRead: 177760, output: 266640, cacheWrite: 355520 },
+    ])
+  check('019 双模型：capacity.tokens 等于四类取整值之和',
+    capped.map(item => item.capacity.tokens), [82400, 888800])
+  ok('019 双模型：tokens 与四类和逐项自洽',
+    capped.every(item => item.capacity.tokens
+      === Object.values(item.capacity.classes).reduce((sum, n) => sum + n, 0)))
+  check('019 双模型：原数组未被修改', JSON.stringify(base), baseBefore)
+  check('019 双模型：返回浅拷贝而不是原对象',
+    [capped[0] === base[0], capped[1] === base[1]], [false, false])
+  check('019 双模型：capacity.classes 四键顺序固定',
+    Object.keys(capped[0].capacity.classes), ['input', 'cacheRead', 'output', 'cacheWrite'])
+
+  for (const total of [0, -1, NaN, Infinity, undefined, '80000']) {
+    const legacy = modelsWithCapacity(base, total)
+    check('019 total=' + String(total) + '：无 capacity、长度与顺序不变',
+      [legacy.length, legacy.map(item => item.id), legacy.map(item => Object.hasOwn(item, 'capacity')), JSON.stringify(legacy)],
+      [2, ['m1', 'm2'], [false, false], baseBefore])
+  }
+
+  check('019 models 非数组 → []',
+    [modelsWithCapacity(null, TOTAL), modelsWithCapacity(undefined, TOTAL),
+      modelsWithCapacity({}, TOTAL), modelsWithCapacity('x', TOTAL)],
+    [[], [], [], []])
+
+  const dirty = modelsWithCapacity([null, 'str', 42, [], { id: 'ok', classes: { input: { perCredit: 1 } } }], TOTAL)
+  check('019 脏元素：非普通对象按空项处理、不抛错、不补 capacity',
+    [dirty.length, dirty.slice(0, 4)], [5, [{}, {}, {}, {}]])
+  check('019 脏元素：普通对象照算',
+    [dirty[4].id, dirty[4].capacity],
+    ['ok', { tokens: 80000, classes: { input: 80000, cacheRead: 0, output: 0, cacheWrite: 0 } }])
+
+  const dirtyPerCredit = modelsWithCapacity([{
+    id: 'x',
+    classes: {
+      input: { perCredit: -5 },
+      cacheRead: { perCredit: NaN },
+      output: {},
+      cacheWrite: { perCredit: 1.234 },
+    },
+  }], TOTAL)
+  check('019 perCredit 负数/NaN/缺失按 0，总和仍等于四类之和',
+    [dirtyPerCredit[0].capacity.classes, dirtyPerCredit[0].capacity.tokens],
+    [{ input: 0, cacheRead: 0, output: 0, cacheWrite: 98720 }, 98720])
+
+  const localModels = [
+    {
+      id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max',
+      totals: { input: 500000, cacheRead: 300000, output: 150000, cacheWrite: 50000, tokens: 1000000, calls: 3 },
+    },
+    {
+      id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1',
+      totals: { tokens: 500000, calls: 2 },
+    },
+  ]
+  const localTotals = { totals: { tokens: 2080883520 }, models: localModels }
+  const composed = composeCreditsToken({ card: CARD, official, localTotals, now: NOW })
+  const used = CYCLE.used
+  const firstExpected = {
+    input: Math.round(500000 / used * TOTAL),
+    cacheRead: Math.round(300000 / used * TOTAL),
+    output: Math.round(150000 / used * TOTAL),
+    cacheWrite: Math.round(50000 / used * TOTAL),
+  }
+  const first = composed.ratio.models[0]
+  check('019 compose：models[0].capacity 与手算一致',
+    [first.id, first.capacity.classes, first.capacity.tokens],
+    ['qwen/qwen3-max', firstExpected,
+      firstExpected.input + firstExpected.cacheRead + firstExpected.output + firstExpected.cacheWrite])
+  check('019 compose：只有 tokens 的模型四类分项为 0',
+    composed.ratio.models[1].capacity,
+    { tokens: 0, classes: { input: 0, cacheRead: 0, output: 0, cacheWrite: 0 } })
+
+  const noLocal = composeCreditsToken({ card: CARD, official, localTotals: null, now: NOW })
+  check('019 compose：无本机模型 → models []', noLocal.ratio.models, [])
+
+  const dailyAlt = creditsDailySnapshotOf({
+    cycle: { ...CYCLE, used: 10000 },
+    officialTokens: OFFICIAL_TOTALS.tokens,
+    officialTotals: OFFICIAL_TOTALS,
+    computedAt: NOW,
+  })
+  const withDaily = composeCreditsToken({
+    card: CARD, official, localTotals, now: NOW,
+    daily: { ...dailyAlt, cached: true },
+  })
+  check('019 compose：有 daily 时 capacity 仍用 cycle.total（不是 daily creditsUsed）',
+    [withDaily.ratio.models[0].capacity.classes, withDaily.ratio.models[0].capacity.tokens],
+    [
+      { input: 4000000, cacheRead: 2400000, output: 1200000, cacheWrite: 400000 },
+      8000000,
+    ])
 }
 
 // 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。

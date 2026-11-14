@@ -55,6 +55,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **用量构成复核第二轮（012 复核 2，对修复提交再跑一遍 OpenCodeReview）**：上一轮改完又审了一次，
+  7 条结论全部处理，其中 1 条是真 bug、2 条是上一轮引入的新问题：
+  **（1，high）内联浮层的定位补偿原来读 `svgElement.offsetLeft`** —— `.tpq-usage-scroll` 的子节点是
+  `<svg>`，`SVGSVGElement` 不实现 `offsetLeft`，真机上恒为 `undefined` → 居中留白补偿永远算成 0，
+  只有横向滚动量生效（少柱子、宽卡片的场景里浮层会偏出小半屏）。改成两份 `getBoundingClientRect()` 相减：
+  两个 rect 都是实时视口坐标，居中留白与滚动位移都已含在差值里。
+  **（2，medium）上一轮的 `aria-describedby` 是重复描述**：柱子的 `aria-label`（`usageBucketTitle`）本来
+  就含区间、总量、四类分项与调用次数，再挂浮层会把同一个桶念两遍。浮层改为 `aria-hidden="true"` 纯视觉呈现，
+  去掉 `id` 与 `aria-describedby`（柱子 `aria-label` 是唯一数字来源）。
+  **（3，medium）导出却没测试**：`usageTipAnchorOf` / `usageTipInlineOffsetX` / `usageHitRateBase` 三个纯函数
+  补了边界断言（null / 空串 / 数组 / 布尔 / 非数矩形 → 兜底，不返回 NaN；命中率分母三项归一）。
+  （4）归一化收成唯一的 `usageFiniteToken(value)`，占比、后缀、命中率分子与分母都调它，不再三处手抄同一段判断；
+  （5）`usageTipAnchorOf` 只认 `typeof === "number"`（`Number(null)` / `Number("")` 都是 0，会把浮层钉到视口左上角）；
+  （6）`role="group"` 会把轴标与峰值标签也暴露给读屏，两处 `<text>` 标 `aria-hidden`（数字与柱子的 `aria-label` 重复）；
+  （7）模型行 key 有 `id` 就用 `id`（按 tokens 降序重排时不再整列重挂载），缺 `id` 才退到带 `#` 前缀的序号，
+  空 id 的行同时省略空 `title`。顺带把 `tipIndex` 从柱子树 memo 依赖里去掉——浮层不进无障碍树之后
+  指针移动连柱子都不用重画了。
+  对外行为与画面均无变化（只是无障碍树与内联定位更正确，截图不受影响）。测试：客户端 875→884（T013 再 +9 条），
+  guards 静态矩阵 377→384（第 13 节再 +7 条），宿主仍 855 条。第二轮记录见 `specs/012-usage-composition/INTERFACE.md` §11。
+
 - **用量构成的健壮性与可读性复核（012 复核，OpenCodeReview 结论）**：客户端 012 那批代码过了一遍
   OpenCodeReview（10 条结论，9 条落在 `lib/client.js`），按严重度修了 8 条。**对外行为只变一处**：
   占比子行统一由 `usageShareText` / `usagePercentSuffix` 在值 ≤ 0 时返回空串——之前总量卡只有「缓存写入」单点判 0，
@@ -62,11 +82,11 @@ All notable changes to this project are documented here. The format follows
   命中率分母抽成 `usageHitRateBase(totals)`，总量卡与模型行共用一份（原来总量卡手抄了一遍三次 `Number.isFinite` 归一）；
   命中率纯函数的 0 分母分支随之只剩一处；`weekly` 判定改成 `data !== null && data !== undefined && ...`（空快照不再解引用）；
   模型行对 `id` / `totals` 先判类型、`key` 改用下标（外部数据缺字段不再抛错，也不产生重复 key）；
-  柱子树整体 `React.useMemo`（90 桶时指针每动一次不再重建约 540 个闭包，依赖里只放 `tipIndex` 而不是指针坐标）；
+  柱子树整体 `React.useMemo`（90 桶时指针每动一次不再重建约 540 个闭包，依赖只放几何与文案、不放指针坐标）；
   3D 透明命中区改成向左半柱宽、向上一个 `ISO_DEPTH` 扩张（原写法往右扩，左侧可见面反而点不中）；
   柱组两个子节点补上 `key`（缺 key 时每柱每帧一条 React warning）；
   图表 `<svg>` 的 `role` 从 `img` 改成 `group`（`img` 是 Children-Presentational，会把新加的每柱 `tabIndex` / `aria-label` 从无障碍树里剪掉），
-  浮层补稳定 `id` 并给当前命中柱挂 `aria-describedby`；浮层规则自带 `--tpq-font`（portal 到 `body` 后拿不到 `.tpq` 上的字体变量，原来会回落宿主正文字体）；
+  浮层规则自带 `--tpq-font`（portal 到 `body` 后拿不到 `.tpq` 上的字体变量，原来会回落宿主正文字体）；
   浮层锚定坐标收进 `usageTipAnchorOf`、内联模式补 `usageTipInlineOffsetX`（滚动与 svg 居中两个位移）。
   另外记两处**不改**的已知项：`canPortal` 在图表内重算与浮层宽高保守估计（011 已记录的偏差），
   以及既有约 20 处 `font-variant-numeric` 用了逗号分隔（无效声明，但改动会重拍全部历史截图，本次不批量动）。

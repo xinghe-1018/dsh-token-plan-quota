@@ -175,9 +175,11 @@ check-refs OK（69 活文档）、check-submission OK（category=usage）。
 | 5 | low / performance | 每根柱 `pointermove` 都新建 hover 对象 → 90 桶时每次移动重建约 540 个闭包 | 柱子树整体 `React.useMemo`，依赖只放 `tipIndex`（跨柱才重建） |
 | 6 | medium / bug | 浮层 `var(--tpq-font)` 在 portal 到 `body` 后失效 | `.tpq-usage-tip` 规则自带 `--tpq-font` |
 | 7 | medium / bug | 透明命中 rect 作为数组子节点缺 `key` | 加 `key: "hit"` |
-| 8 | medium / bug | 外层 `<svg role="img">` 是 Children-Presentational，剪掉每柱 `tabIndex`/`aria-label` | svg 改 `role="group"`；浮层加 `USAGE_TIP_ID`，命中柱挂 `aria-describedby` |
+| 8 | medium / bug | 外层 `<svg role="img">` 是 Children-Presentational，剪掉每柱 `tabIndex`/`aria-label` | svg 改 `role="group"`（浮层 id / `aria-describedby` 那半在第二轮被撤回，见 §12） |
 | 9 | low / bug | 3D 命中区往右扩（`barWidth + ISO_DEPTH`），左侧可见面反而不接指针 | 改 `x - barWidth/2`、`width: barWidth*1.5`、高度补 `ISO_DEPTH` |
 | 10 | low / bug | 占比 0 只有 cacheWrite 单点判断，其余三类印「占 0%」 | 0 值守卫收进 `usageShareText` / `usagePercentSuffix` |
+
+> §11 的计数（client 875 / guards 377）是**第一轮**的终态；第二轮又修了 7 条，终态见 §12（client 884 / guards 384）。
 
 **不改的两条**（复核已判定为 011 记录的既有偏差，本次不动）：`canPortal` 在图表内重算（011 §7 偏差 #4）、
 `USAGE_TIP_W/H` 保守估计（011 §7 偏差）。另发现既有 CSS 约 20 处 `font-variant-numeric` 用逗号分隔（无效声明，
@@ -190,8 +192,44 @@ check-refs OK（69 活文档）、check-submission OK（category=usage）。
 guards **377**（360→377，第 13 节 17 条），全 0 failed；check-manifest OK（0.5.0、出站 8）、
 check-docs OK（配置键 25、数据源 8、计数一致）、check-refs OK（69 活文档）、check-submission OK（category=usage）。
 
+截图复验：`--tpq-font` 落进浮层规则后字高有变化（浮层 154→151 px），011/012 那两张悬停图与代码不再一致，
+已按 ⑭ 场景重拍中英各一张（`docs/images/usage-tooltip-2d.png` 114,564→117,010 B、
+`docs/images/en/usage-tooltip-2d.png` 106,455→108,351 B，1280×860 DPR 1；锚柱 2026-10-22 / 1,403,000 tokens，
+浮层 rect [948,486]–[1096,637]，四边在视口 8px 夹紧内，⑭ 的 DOM 断言全部照旧通过）。
+本机补充：本次会话工作区是 `~/.dsh` 本身，Chromium 沙箱在带 DSH 保护标记 ACL 的目录下起子进程会
+`Target crashed`（连 `data:` 页也起不来），临时注入 `--no-sandbox` 才拍成；该注入未进仓库，出图后即回滚。
+
 守卫可失败性实证（临时副本 `~/.dsh/tmp/proof-013b`，逐条改回旧写法、每改一次复原后基线 875／377 全绿）：
 把 3D 命中区 `x` 改回 `x` → client T013 1 条红 + guards 第 13 节 1 条红；去掉 `"aria-describedby"` → 各 1 条红；
 `usageShareText` 去掉 `value <= 0` → client 6 条红（0／负数／NaN／字符串四个直测 + 模型行 + 总量卡）与 guards 1 条红；
 把浮层规则里的 `--tpq-font` 改名 → client 与 guards 各 1 条红。四处都证明新断言不是空转。
+
+## 12. 复核第二轮（2026-11-14，对修复提交再跑一遍）
+
+工具同 §11，只是把范围收窄到修复提交本身：
+`ocr review --commit 64610e6 --format json --audience agent --effort medium --max-tools 50
+--exclude test/**,scripts/**,specs/**,docs/**,*.md`。耗时 16m22s、2.3M tokens、66 次工具调用
+（stdout 又是 `status failed` + 会话文件 `Access is denied`，落盘 JSON 为 complete、7 条 comments，
+以 JSON 为准——两次都这样，是本机 ocr 收尾写会话目录的偶发权限问题，与评审结果无关）。
+7 条**全部落在 `lib/client.js`**，全部处理：
+
+| # | 级别 / 类别 | 结论 | 处置 |
+|---|---|---|---|
+| 1 | **high** / bug | 内联浮层补偿读 `svgElement.offsetLeft`，而 `.tpq-usage-scroll` 的子节点是 `SVGSVGElement`（不实现 offsetLeft）→ 真机恒 `undefined`，居中补偿永远是 0 | 改两份 `getBoundingClientRect().left` 相减（差已含居中留白与滚动位移），并对容器与矩形都做函数存在性检查，非数回 0 |
+| 2 | medium / bug | 上一轮加的 `aria-describedby` 与柱子 `aria-label` 内容重复，读屏把同一桶念两遍 | 浮层改 `aria-hidden="true"` 纯视觉；删 `USAGE_TIP_ID` 与 `aria-describedby`，`aria-label` 是唯一数字来源 |
+| 3 | medium / test | 导出的三个纯函数（`usageTipAnchorOf` / `usageTipInlineOffsetX` / `usageHitRateBase`）没有测试 | T013 补 9 条：null / 空串 / 数组 / 布尔 / 非数矩形 → 兜底不返 NaN；SVG 与容器矩形相减；`usageFiniteToken` 边界 |
+| 4 | low / maintainability | 「number 且有限否则 0」的归一化出现三份手抄 | 收成模块级 `usageFiniteToken(value)`，占比 / 后缀 / 命中率分子与分母都调它（并导出到 `__internals`） |
+| 5 | low / bug | `usageTipAnchorOf` 用 `Number()` 强转，`Number(null)` / `Number("")` 都是 0 且通过 `isFinite` | 只认 `typeof value === "number"`，其余（含数字字符串）一律回兜底 |
+| 6 | low / bug | `role="group"` 会把轴标与峰值标签也交给读屏（与柱子 `aria-label` 重复） | 两处 `<text>` 标 `aria-hidden="true"` |
+| 7 | low / bug | 模型行 key 退成纯序号，降序重排时整列重挂载；空 id 行仍挂空 `title` | key 有 id 用 `"model-" + id`、缺 id 才 `"model-#" + index`；`title` 空时给 `undefined` |
+
+顺带（由 #2 派生）：`tipIndex` 从柱子树 `useMemo` 依赖里去掉——浮层不再进无障碍树后，
+指针移动只重画浮层，柱子连重建都不需要。
+
+对外行为与截图均无变化（改的是无障碍树与内联定位正确性）。门禁：host **855**（不变）/ client **884**
+（875→884）/ guards **384**（377→384），全 0 failed；check-manifest OK（0.5.0、出站 8）、
+check-docs OK（配置键 25、数据源 8、计数一致）、check-refs OK（69 活文档）、check-submission OK（category=usage）。
+
+第二轮可失败性实证：把 `usageTipInlineOffsetX` 改回读 `offsetLeft`、把 `usageTipAnchorOf` 改回 `Number(value)`、
+去掉两个 `aria-hidden`、把 rowKey 改回纯序号——四处改动各自都会让 client 或 guards 至少 1 条变红。
 

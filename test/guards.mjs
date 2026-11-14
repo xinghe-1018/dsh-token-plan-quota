@@ -1161,5 +1161,74 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
 }
+
+/* 013（012 复核）：OpenCodeReview 结论里「功能测试看不见、只有源码形状能钉住」的那几处修复。
+ * 为什么值得进静态矩阵：命中区几何、无障碍角色、0 值占比纪律都是「改回旧写法测试照样绿」的地方，
+ * 而它们的坏法都只在真机 / 读屏里显形。这里按源码形状逐条钉住，并保留可失败性实证。 */
+{
+  const src = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  // 1) 0 值占比：守卫收进两个拼串函数（usagePercentText 自己仍要能返回 "0%"）。
+  const shareFn = src.slice(src.indexOf('function usageShareText'), src.indexOf('function usagePercentSuffix'))
+  const suffixFn = src.slice(src.indexOf('function usagePercentSuffix'), src.indexOf('function usageHitRateBase'))
+  ok('013 占比与后缀都对 value <= 0 短路（不再由调用点各判一遍）',
+    shareFn.includes('value <= 0') && suffixFn.includes('value <= 0'))
+  ok('013 usagePercentText 仍能输出 "0%"（0 值纪律在调用方，不破坏纯函数语义）',
+    src.includes('return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)) + "%"'))
+
+  // 2) 命中率分母只有一份实现，总量卡与模型行都走它。
+  const baseFn = src.slice(src.indexOf('function usageHitRateBase'), src.indexOf('function usageHitRateText'))
+  ok('013 命中率分母抽成 usageHitRateBase（三项归一到有限数）',
+    baseFn.includes('source.input') && baseFn.includes('source.cacheRead') && baseFn.includes('source.cacheWrite'))
+  const cardRegion = src.slice(src.indexOf('const hitRatePercent'), src.indexOf('const hitRatePercent') + 240)
+  ok('013 总量卡命中率走 usagePercentText + usageHitRateBase（不再手写分母）',
+    cardRegion.includes('usagePercentText(totals.cacheRead, usageHitRateBase(totals))'))
+  ok('013 模型行命中率走 usageHitRateText（同一份分母）',
+    src.includes('const hitRate = usageHitRateText(copy, totals)'))
+
+  // 3) 无障碍：svg 不能用 role="img"（Children-Presentational 会把可聚焦柱子剪掉）。
+  ok('013 图表 <svg> 用 role=group（aria-label 仍在）',
+    /className: "tpq-usage-chart tpq-usage-svg",[\s\S]{0,400}role: "group"/.test(src))
+  ok('013 浮层有稳定 id 常量并挂到节点上',
+    src.includes('USAGE_TIP_ID = "tpq-usage-tip"') && src.includes('id: USAGE_TIP_ID'))
+  ok('013 浮层 id 只挂给当前命中柱的 aria-describedby',
+    src.includes('"aria-describedby": tipIndex === index ? USAGE_TIP_ID : undefined'))
+
+  // 4) 3D 命中区必须往左上扩（正面 + 半柱宽 + 一个 ISO_DEPTH），且子节点都有 key。
+  ok('013 3D 命中区向左半柱宽、向上一个 ISO_DEPTH',
+    src.includes('x: threeD ? x - barWidth / 2 : x') && src.includes('y: threeD ? TOP_H - ISO_DEPTH : TOP_H'))
+  ok('013 3D 命中区宽 1.5 柱宽、高补一个 ISO_DEPTH',
+    src.includes('width: threeD ? barWidth * 1.5 : barWidth')
+      && src.includes('height: threeD ? PLOT_H + ISO_DEPTH : PLOT_H'))
+  ok('013 柱组两个子节点都有 key（缺 key = 每柱每次渲染一条 React warning）',
+    src.includes('key: "hit"') && src.includes('key: "bar-" + index'))
+
+  // 5) 健壮性：空快照不解引用、模型脏数据不炸、柱子子树缓存。
+  ok('013 weekly 判定在 data 为空时也安全（三重防御）',
+    src.includes('data !== null && data !== undefined && data.granularity === "week"'))
+  ok('013 模型行的 id / totals 都先判类型（外部数据缺字段不许炸）',
+    src.includes('typeof entry.id === "string"') && src.includes('typeof entry.totals === "object"')
+      && src.includes('"model-" + String(index)'))
+  ok('013 柱子树走 useMemo，且空区间的早退在 hook 之后（hook 数量恒定）',
+    src.indexOf('React.useMemo(function buildBars()') > 0
+      && src.indexOf('React.useMemo(function buildBars()') < src.indexOf('if (buckets.length === 0) return null'))
+
+  // 6) 浮层 portal 到 body 后拿不到 .tpq 上的字体变量，规则里要自带一份。
+  const tipRuleStart = src.indexOf('.tpq-usage-tip{')
+  const tipRule = tipRuleStart < 0 ? '' : src.slice(tipRuleStart, src.indexOf('}', tipRuleStart) + 1)
+  ok('013 浮层规则自带 --tpq-font（portal 离开 .tpq 后字体不回落）',
+    tipRule.includes('--tpq-font:') && tipRule.includes('font-family:var(--tpq-font)'))
+
+  // 7) 内联浮层的坐标补偿与新的纯函数也要能被测试直接打。
+  ok('013 内联浮层补偿滚动与居中位移（usageTipInlineOffsetX 算位移、x 加上它）',
+    src.includes('function usageTipInlineOffsetX')
+      && src.includes('const offsetX = usageTipInlineOffsetX(scrollRef.current)')
+      && src.includes('x: localCenter + offsetX'))
+  const internalsStart013 = src.lastIndexOf('__internals = {')
+  const internals013 = src.slice(internalsStart013, src.indexOf('exports.apply', internalsStart013))
+  ok('013 __internals 追加 usageHitRateBase 与两个浮层坐标纯函数',
+    ['usageHitRateBase', 'usageTipAnchorOf', 'usageTipInlineOffsetX']
+      .every(name => new RegExp('\\b' + name + '\\b').test(internals013)))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

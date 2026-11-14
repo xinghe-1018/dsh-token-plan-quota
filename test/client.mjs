@@ -14,7 +14,7 @@ function check(label, actual, expected) {
   if (JSON.stringify(actual) === JSON.stringify(expected)) passed += 1
   else {
     failed += 1
-    console.log(`FAIL ${label}\n  expected ${JSON.stringify(expected)}\n  actual   ${JSON.stringify(expected === undefined ? actual : actual)}`)
+    console.log(`FAIL ${label}\n  expected ${JSON.stringify(expected)}\n  actual   ${JSON.stringify(actual)}`)
   }
 }
 function ok(label, condition, context) {
@@ -4441,6 +4441,104 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   resetHooks()
   const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
   ok('T012 错误态不渲染比例口径脚注', !text.includes('占比与命中率都是本机实测'), text.slice(0, 300))
+}
+
+/* ======================================================== T013（012 复核）
+ *
+ * OpenCodeReview 对 011/012 增量的复核结论里，能在测试里钉住的部分都在这里回归：
+ * 0 值占比、命中率分母共享、图表与浮层的无障碍钩子、3D 命中区几何、模型行脏数据、浮层字体变量。
+ */
+
+/* #10 / #2：占比白名单段的 0 值纪律与命中率分母共享。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  const internals = bundle.api.__internals
+  const shareOf = { usageShareOf: '占 {percent}' }
+  check('T013 占比 0 / 负数 / 非数一律空串（不印「占 0%」）',
+    [internals.usageShareText(shareOf, 0, 1000), internals.usageShareText(shareOf, -5, 1000),
+      internals.usageShareText(shareOf, NaN, 1000), internals.usageShareText(shareOf, '12', 1000),
+      internals.usagePercentSuffix(0, 1000), internals.usagePercentSuffix('12', 1000)],
+    ['', '', '', '', '', ''])
+  check('T013 非 0 占比照旧',
+    [internals.usageShareText(shareOf, 571, 1000), internals.usagePercentSuffix(571, 1000)],
+    ['占 57.1%', ' (57.1%)'])
+  check('T013 命中率分母是 input + cacheRead + cacheWrite 的归一和（总量卡与模型行共用）',
+    [internals.usageHitRateBase({ input: 100, cacheRead: 40, cacheWrite: 10 }),
+      internals.usageHitRateBase({ input: 100, cacheRead: NaN, cacheWrite: '10' }),
+      internals.usageHitRateBase(null)],
+    [150, 100, 0])
+  check('T013 命中率文本走同一个分母',
+    internals.usageHitRateText({ usageHitRate: '命中率 {percent}' }, { input: 100, cacheRead: 40, cacheWrite: 10 }),
+    '命中率 26.7%')
+}
+
+/* #8：图表 role 与浮层 id / aria-describedby（描述只挂在当前命中柱上）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  resetHooks()
+  globalThis.window.innerWidth = 800
+  globalThis.window.innerHeight = 600
+  let tree = await settle(bundle.renderUsage, 4)
+  const svg = findNodes(tree, 'tpq-usage-svg')[0]
+  check('T013 图表 <svg> 用 role=group（role=img 会剪掉可聚焦柱子）', svg?.props?.role, 'group')
+  check('T013 图表仍有可访问名称', svg?.props?.['aria-label'], '每日用量')
+  tree = hoverPointer(bundle, tree, 2, 100, 120)
+  check('T013 浮层带稳定 id', tipOf(tree)?.props?.id, 'tpq-usage-tip')
+  check('T013 只有命中柱把浮层挂进 aria-describedby',
+    [barOf(tree, 2)?.props?.['aria-describedby'], barOf(tree, 1)?.props?.['aria-describedby']],
+    ['tpq-usage-tip', undefined])
+  barOf(tree, 2).props.onPointerLeave()
+  tree = bundle.renderUsage()
+  check('T013 浮层关闭后 aria-describedby 也摘掉', barOf(tree, 2)?.props?.['aria-describedby'], undefined)
+}
+
+/* #9：3D 命中区要盖住「正面 + 向左半柱宽 + 向上一个 ISO_DEPTH」的可见足迹。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  bundle.handle.setMode('3d')
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  const bar = barOf(tree, 2)
+  const hits = findNodes(bar, 'tpq-usage-hit')
+  check('T013 3D 柱仍带透明命中矩形', hits.length, 1)
+  const hit = hits[0].props
+  const frontXs = String(findNodes(bar, 'tpq-usage-face-front')[0]?.props?.points ?? '')
+    .split(' ').map((point) => Number(String(point).split(',')[0]))
+  const minX = Math.min(...frontXs)
+  const barWidth = Math.max(...frontXs) - minX
+  check('T013 3D 命中区往左上扩：x 减半柱宽、y 抬一个 ISO_DEPTH、宽 1.5 柱宽、高补一个 ISO_DEPTH',
+    [hit.x, hit.y, hit.width, hit.height],
+    [minX - barWidth / 2, 26 - 7, barWidth * 1.5, 120 + 7])
+}
+
+/* #3：模型数组是外部数据 —— 缺 id / 缺 totals 的条目也要渲染，坏一条不许把面板打成错误态。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, models: [{}, null, { id: 'm2', model: 'm2', totals: null }] })),
+  })
+  resetHooks()
+  let tree = null
+  try {
+    tree = await settle(bundle.renderUsage, 5)
+  } catch {
+    tree = null
+  }
+  ok('T013 模型行缺 id / 缺 totals 时渲染不抛', tree !== null)
+  if (tree !== null) {
+    const rows = findNodes(tree, 'tpq-usage-model')
+    check('T013 三条脏模型仍各渲染一行', rows.length, 3)
+    ok('T013 缺模型名的行印 — 而不是 undefined',
+      collectText(rows[0]).join('').startsWith('—'), collectText(rows[0]).join('').slice(0, 40))
+  }
+}
+
+/* #6：浮层 portal 到 body 之后拿不到 .tpq 上的字体变量，规则里要自带一份。 */
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('.tpq-usage-tip{')
+  const rule = start < 0 ? '' : source.slice(start, source.indexOf('}', start) + 1)
+  ok('T013 浮层规则自带 --tpq-font（portal 离开 .tpq 后仍是同一套字体）',
+    rule.includes('--tpq-font:') && rule.includes('font-family:var(--tpq-font)'), rule.slice(0, 220))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

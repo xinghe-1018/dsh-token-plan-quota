@@ -392,6 +392,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/usage-2d.png',
   'docs/images/usage-range-2d.png',
   'docs/images/usage-month-2d.png',
+    'docs/images/usage-tooltip-2d.png',
   'docs/images/usage-official-2d.png',
     'docs/images/usage-3d.png',
     'docs/images/en/badge-follows-model.gif',
@@ -403,6 +404,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/en/usage-2d.png',
   'docs/images/en/usage-range-2d.png',
   'docs/images/en/usage-month-2d.png',
+    'docs/images/en/usage-tooltip-2d.png',
   'docs/images/en/usage-official-2d.png',
     'docs/images/en/usage-3d.png',
   ]

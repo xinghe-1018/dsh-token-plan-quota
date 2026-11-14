@@ -237,6 +237,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Query by calendar month: October 2026 as a whole month, one bar per day](docs/images/en/usage-month-2d.png)
 
+![Hover tooltip: any bar reports that day's or week's token detail](docs/images/en/usage-tooltip-2d.png)
+
 ![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
 
 - **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
@@ -277,6 +279,10 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
+- **Hover any bar** to see that bucket's detail: the date (weekly buckets read `start – end`) and the bucket's
+  total tokens, then the four buckets and the call count. Works in both 2D and 3D; touch tap and keyboard
+  `Tab` focus open it too (`Esc`, clicking elsewhere or scrolling close it). The tooltip reports absolute
+  tokens only - no derived percentages, no Credits.
 - When the data is not available it says so: no `sessionPersistence` → falls back to "since this process started"
   (resets on restart); backfill still running → a thin progress bar and "backfilling (N/M sessions)"; statistics
   turned off → the screen states that, instead of pretending "cannot measure" means zero.
@@ -571,8 +577,8 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 855 assertions, offline
-node test/client.mjs                # 695 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 299 assertions: behaviour matrices of the gates themselves
+node test/client.mjs                # 793 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 330 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -580,7 +586,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 855/695 tests plus 299 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 855/793 tests plus 330 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

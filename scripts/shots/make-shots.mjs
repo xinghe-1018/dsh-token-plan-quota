@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -23,12 +23,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -160,12 +160,36 @@ function prevMonthOf(now) {
   return localDayKey(new Date(today.getFullYear(), today.getMonth() - 1, 1)).slice(0, 7)
 }
 
+/**
+ * `lib/client.js` 的 `formatTokens` 紧凑量纲在本脚本里的镜像（zh 万/亿，en B/M/K）。
+ *
+ * 只给 ⑭ 的浮层断言用。INTERFACE §2.2/§6 规定 tokens 行是
+ * `formatTokens(totals.tokens) + usageTokensUnit`，所以断言必须按**同一套量纲**比对
+ * （zh「140.3万」、en「1.40M」），而不是比对原始整数 1,403,000 —— 浮层本来就不印原始整数。
+ * 客户端换了量纲这里会红，那正是截图契约要拦的漂移；反之若这里写死字符串，
+ * 客户端改口径时只会得到一句看不懂的"图不对"。
+ */
+function compactTokens(value, langKey) {
+  const abs = Math.abs(value)
+  if (langKey === 'zh') {
+    if (abs >= 1e8) return (value / 1e8).toFixed(2) + '亿'
+    if (abs >= 1e4) return (value / 1e4).toFixed(1) + '万'
+    if (abs >= 1000) return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+    return String(Math.round(value * 100) / 100)
+  }
+  if (abs >= 1e9) return (value / 1e9).toFixed(2) + 'B'
+  if (abs >= 1e6) return (value / 1e6).toFixed(2) + 'M'
+  if (abs >= 1e4) return Math.round(value / 1e3) + 'K'
+  if (abs >= 1e3) return (value / 1e3).toFixed(1) + 'K'
+  return String(Math.round(value * 100) / 100)
+}
+
 /* ------------------------------------------------------------------ 主流程 */
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -720,8 +744,8 @@ async function main() {
   }
 
   /* ---------------------------- ⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12, 13].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月）')
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬⑭ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -1104,6 +1128,132 @@ async function main() {
       writeFileSync(monthNotesPath, await page.shot({}))
       console.log('  QA 脚注（不进 docs/）：' + monthNotesPath)
       console.log('  按月查询：' + month + '（' + expectedBars + ' 个桶，总分 ' + monthBig + '）')
+    }
+
+    /*
+     * ⑭ 柱子悬停（spec 011）：把**真鼠标**移到某根柱上，浮层要报出该桶的 tokens 明细。
+     *
+     * 这张图证明的是「柱 ↔ 桶」的对应关系，所以不能"随便找根柱子 hover 一下"：
+     *  - 月份与锚柱取自 fixture 的常量（USAGE_TOOLTIP_BAR_*），不随真实时钟走，
+     *    同一张 docs 图每次重拍的字节才可复现；
+     *  - 浮层总量按 formatTokens 的紧凑量纲（zh 140.3万 / en 1.40M）比对，
+     *    INTERFACE §2.2 规定它印的就是这个串，不是原始整数；
+     *  - 位置、条数、禁用词（%/Credits）逐项断言，最后才拍整视口。
+     * 任一条不成立就抛错：拍一张"浮层首行是别的日期"的图，等于把悬停的证据换成一张普通柱图。
+     */
+    if (args.shots.includes(14)) {
+      const month = USAGE_TOOLTIP_BAR_MONTH
+      const expectedMonth = builtUsage({ month }).usage
+      const anchor = usageTooltipBar(expectedMonth)
+      const expectedBars = expectedMonth.buckets.length
+      const expectedIndex = expectedMonth.buckets.findIndex(one => one.from === USAGE_TOOLTIP_BAR_DATE)
+      if (expectedIndex < 0) throw new Error('fixture 的 ' + month + ' 里没有 ' + USAGE_TOOLTIP_BAR_DATE + ' 的桶，不拍')
+      const tokensNeedle = compactTokens(anchor.totals.tokens, langKey)
+      const needTip = { input: compactTokens(anchor.totals.input, langKey), output: compactTokens(anchor.totals.output, langKey), cacheRead: compactTokens(anchor.totals.cacheRead, langKey), cacheWrite: compactTokens(anchor.totals.cacheWrite, langKey), calls: compactTokens(anchor.totals.calls, langKey) }
+
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+      // 回页顶：⑬ 可能刚为 QA 脚注滚到了底，柱子不在视口里就 hover 不到、也拍不到。
+      const scrollTop = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; let sc = root; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; box.scrollTop = 0; return Math.round(box.scrollTop) })()")
+      if (scrollTop === null) throw new Error('量不到用量统计屏的滚动容器，不拍')
+      await sleep(250)
+
+      // 月份视图用产品路径切：chip → 月份框 → 查询。直接调内部状态证明不了"用户点得开"。
+      // 但 ⑬ 结束时月份行可能已经展开，再点一次 chip 会把它收起 —— 所以先看输入框在不在。
+      const monthRowState = await page.evaluate("(() => { if (document.querySelector('[data-usage-month-input]') !== null) return 'open'; const b = document.querySelector('[data-usage-preset=month]'); if (b === null) return 'nochip'; b.click(); return 'clicked' })()")
+      if (monthRowState === 'nochip') throw new Error('找不到「月份」chip（[data-usage-preset=month]），不拍')
+      await page.waitFor("document.querySelector('[data-usage-month-input]') !== null", { timeoutMs: 8_000, label: '⑭ 月份行' })
+      const filledMonth = await page.evaluate("(() => { const el = document.querySelector('[data-usage-month-input]'); if (el === null) return null; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(el, " + JSON.stringify(month) + "); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return el.value })()")
+      if (filledMonth !== month) throw new Error('⑭ 月份输入框没接受 ' + month + '（实际 ' + filledMonth + '），不拍')
+      const appliedMonth14 = await page.evaluate("(() => { const b = document.querySelector('[data-usage-month-apply]'); if (b === null) return false; b.click(); return true })()")
+      if (appliedMonth14 !== true) throw new Error('找不到月份查询按钮（data-usage-month-apply），不拍')
+      const waitMonth14 = "(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return false; const bars = root.querySelectorAll('rect.tpq-usage-rect').length; const big = root.querySelector('.tpq-usage-big'); return bars === " + expectedBars + " && big !== null && (big.textContent || '').trim().length > 0 })()"
+      await page.waitFor(waitMonth14, { timeoutMs: 25_000, label: '⑭ 按月数据（' + expectedBars + ' 根柱）' })
+      await sleep(500)
+
+      // 标题回显（口径同 ⑬：zh 认「YYYY 年 M 月」与补零两种，en 认 YYYY-MM）。
+      const monthParts = month.split('-')
+      const monthNeedles = langKey === 'zh' ? [monthParts[0] + '年', String(Number(monthParts[1])) + '月'] : [month]
+      let monthHeadAll = ''
+      let monthHeadOk = false
+      for (let attempt = 0; attempt < 40 && monthHeadOk !== true; attempt += 1) {
+        const head = await headText()
+        monthHeadAll = ((head.title || '') + ' ' + (head.range || '')).trim()
+        const compact = monthHeadAll.split(' ').join('')
+        monthHeadOk = monthNeedles.every(needle => compact.includes(needle))
+        if (monthHeadOk !== true) await sleep(200)
+      }
+      if (monthHeadOk !== true) throw new Error('⑭ 标题/区间副标题没有回显 ' + month + '（期望含 ' + JSON.stringify(monthNeedles) + '，实际：' + monthHeadAll + '），不拍')
+
+      /*
+       * 前置条件与 ⑬ 相同：同屏同取景，官方对照块也必须先就绪（它在 860 折叠线下、不进图，
+       * 但少这道断言就分不清"图里恰好没露到"和"官方根本没取到"）。
+       */
+      await officialReady('柱子悬停')
+
+      /*
+       * 脚注口径同 ⑬：.tpq-usage-notes 排在官方对照块之后，从页顶拍时整个在折叠线下、图里看不到。
+       * 这里只断言它存在且文案对（不落 QA 图）；否则实现回退把脚注删了，⑭ 会静默通过。
+       */
+      const notesProbe14 = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; const notes = root.querySelector('.tpq-usage-notes'); const r = notes === null ? null : notes.getBoundingClientRect(); return { lines: notes === null ? [] : Array.prototype.map.call(notes.querySelectorAll('p'), function (p) { return (p.textContent || '').trim() }), rect: r === null ? null : { top: Math.round(r.top), bottom: Math.round(r.bottom) }, vh: innerHeight } })()")
+      if (notesProbe14 === null || notesProbe14.rect === null) throw new Error('⑭ 悬停屏没有脚注（.tpq-usage-notes 缺失），不拍')
+      const localOnlyNeedle14 = langKey === 'zh' ? '仅统计本机' : 'Only calls made by this DSH instance'
+      if (!notesProbe14.lines.some(function (t) { return t.indexOf(localOnlyNeedle14) >= 0 })) {
+        throw new Error('⑭ 脚注缺「' + localOnlyNeedle14 + '」这句（实际：' + notesProbe14.lines.join(' / ') + '），不拍')
+      }
+
+      /*
+       * 锚柱的测试钩子（INTERFACE §5）：命中区必须是 <g data-usage-bar>，带 index/from/to、
+       * role="img"、tabindex=0 与非空 aria-label（键盘 Tab 与读屏走同一份文案）。
+       */
+      const barSelector = '[data-usage-bar][data-usage-bar-from="' + USAGE_TOOLTIP_BAR_DATE + '"]'
+      await page.waitFor('document.querySelector(' + JSON.stringify(barSelector) + ') !== null', { timeoutMs: 8_000, label: '⑭ 锚柱（' + USAGE_TOOLTIP_BAR_DATE + '）' })
+      const barHooks = await page.evaluate("(() => { const g = document.querySelector(" + JSON.stringify(barSelector) + "); if (g === null) return null; const r = g.getBoundingClientRect(); return { index: g.getAttribute('data-usage-bar-index'), from: g.getAttribute('data-usage-bar-from'), to: g.getAttribute('data-usage-bar-to'), role: g.getAttribute('role'), tabIndex: g.getAttribute('tabindex'), aria: g.getAttribute('aria-label'), rect: { x: r.x, y: r.y, width: r.width, height: r.height } } })()")
+      if (barHooks === null) throw new Error('⑭ 找不到锚柱 ' + barSelector + '，不拍')
+      if (barHooks.from !== USAGE_TOOLTIP_BAR_DATE || barHooks.to !== USAGE_TOOLTIP_BAR_DATE) throw new Error('⑭ 锚柱的 data-usage-bar-from/to 不是 ' + USAGE_TOOLTIP_BAR_DATE + '（' + barHooks.from + ' / ' + barHooks.to + '），不拍')
+      if (barHooks.index !== String(expectedIndex)) throw new Error('⑭ 锚柱 index 是 ' + barHooks.index + '，fixture 里该桶序号是 ' + expectedIndex + '，不拍')
+      if (barHooks.role !== 'img' || barHooks.tabIndex !== '0') throw new Error('⑭ 锚柱的 role/tabindex 不对（' + barHooks.role + ' / ' + barHooks.tabIndex + '），键盘不可达，不拍')
+      if (typeof barHooks.aria !== 'string' || barHooks.aria === '' || barHooks.aria.indexOf(USAGE_TOOLTIP_BAR_DATE) < 0 || barHooks.aria.indexOf(tokensNeedle) < 0) {
+        throw new Error('⑭ 锚柱 aria-label 不含日期或 tokens（' + barHooks.aria + '），不拍')
+      }
+      const barRect = barHooks.rect
+      if (!(barRect.width > 0 && barRect.height > 0)) throw new Error('⑭ 锚柱矩形为空（' + JSON.stringify(barRect) + '），不拍')
+      const centerX = barRect.x + barRect.width / 2
+      const centerY = barRect.y + barRect.height / 2
+      const vw14 = await page.evaluate('innerWidth')
+      const vh14 = await page.evaluate('innerHeight')
+      if (!(centerX > 0 && centerY > 0 && centerX < vw14 && centerY < vh14)) {
+        throw new Error('⑭ 锚柱中心不在视口内（' + Math.round(centerX) + ',' + Math.round(centerY) + ' / ' + vw14 + '×' + vh14 + '），不拍')
+      }
+
+      await page.moveMouse(centerX, centerY)
+      await page.waitFor("document.querySelector('[data-usage-tip]') !== null", { timeoutMs: 6_000, label: '⑭ 悬停浮层' })
+      await sleep(300)
+      const tip = await page.evaluate("(() => { const tips = document.querySelectorAll('[data-usage-tip]'); const tip = tips.length > 0 ? tips[0] : null; const txt = sel => { const n = tip === null ? null : tip.querySelector(sel); return n === null ? null : (n.textContent || '').trim() }; const r = tip === null ? null : tip.getBoundingClientRect(); const root = document.querySelector('.tpq-usage'); const notes = root === null ? null : root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = root === null ? '' : (root.innerText || '').split(notesText).join(''); return { count: tips.length, notesLen: notesText.trim().length, index: tip === null ? null : tip.getAttribute('data-usage-tip-index'), role: tip === null ? null : tip.getAttribute('role'), range: txt('[data-usage-tip-range]'), tokens: txt('[data-usage-tip-tokens]'), input: txt('[data-usage-tip-input]'), output: txt('[data-usage-tip-output]'), cacheRead: txt('[data-usage-tip-cache-read]'), cacheWrite: txt('[data-usage-tip-cache-write]'), calls: txt('[data-usage-tip-calls]'), rect: r === null ? null : { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width), height: Math.round(r.height) }, vw: innerWidth, vh: innerHeight, percent: body.indexOf('%') >= 0, credits: body.indexOf('Credits') >= 0 } })()")
+      if (tip === null || tip.rect === null) throw new Error('⑭ 悬停后量不到浮层，不拍')
+      if (!(tip.notesLen > 0)) throw new Error('⑭ 浮层探针量不到脚注文本（.tpq-usage-notes 为空），%/Credits 的剔除口径不成立，不拍')
+      if (tip.count !== 1) throw new Error('⑭ 同时存在 ' + tip.count + ' 个浮层（INTERFACE §2.2：最多一个），不拍')
+      if (tip.role !== 'tooltip') throw new Error('⑭ 浮层 role 不是 tooltip（' + tip.role + '），不拍')
+      if (tip.index !== String(expectedIndex)) throw new Error('⑭ 浮层 data-usage-tip-index 是 ' + tip.index + '，期望 ' + expectedIndex + '，不拍')
+      if (typeof tip.range !== 'string' || tip.range.indexOf(USAGE_TOOLTIP_BAR_DATE) < 0) throw new Error('⑭ 浮层首行不是 ' + USAGE_TOOLTIP_BAR_DATE + '（' + tip.range + '），不拍')
+      if (typeof tip.tokens !== 'string' || tip.tokens.indexOf(tokensNeedle) < 0) throw new Error('⑭ 浮层 tokens 行不含 ' + tokensNeedle + '（' + tip.tokens + '），不拍')
+      const rowNeedles = { input: [tip.input, needTip.input], output: [tip.output, needTip.output], cacheRead: [tip.cacheRead, needTip.cacheRead], cacheWrite: [tip.cacheWrite, needTip.cacheWrite], calls: [tip.calls, needTip.calls] }
+      for (const [key, [actual, expected]] of Object.entries(rowNeedles)) {
+        if (typeof actual !== 'string' || actual === '') throw new Error('⑭ 浮层缺 ' + key + ' 行，不拍')
+        if (actual.indexOf(expected) < 0) throw new Error('⑭ 浮层 ' + key + ' 行不含 ' + expected + '（' + actual + '），不拍')
+      }
+      // SC-004：浮层与视口四边都留 ≥8px（夹紧逻辑的可见证据）。
+      if (tip.rect.left < 8 || tip.rect.top < 8 || tip.rect.right > tip.vw - 8 || tip.rect.bottom > tip.vh - 8) {
+        throw new Error('⑭ 浮层没有完整落在视口内（' + JSON.stringify(tip.rect) + ' / 视口 ' + tip.vw + '×' + tip.vh + '），不拍')
+      }
+      if (tip.percent === true) throw new Error('⑭ 浮层所在屏出现百分比（%），不拍')
+      if (tip.credits === true) throw new Error('⑭ 浮层所在屏（脚注以外）出现 Credits，不拍')
+      if (langKey === 'en' && /\p{Script=Han}/u.test((tip.range || '') + (tip.tokens || ''))) throw new Error('⑭ 英文套浮层里混了中文（' + tip.range + ' / ' + tip.tokens + '），不拍')
+
+      console.log('  ⑭ 锚柱 ' + USAGE_TOOLTIP_BAR_DATE + '：' + anchor.totals.tokens + ' tokens（界面写作 ' + tokensNeedle + '）；浮层 ' + JSON.stringify(tip.rect) + '；视口 ' + tip.vw + '×' + tip.vh)
+      save('usage-tooltip-2d.png', await page.shot({}))
+      // 移开指针：后面的步骤别带着浮层走，也别让"浮层没关掉"被当成关闭通路坏了。
+      await page.moveMouse(0, 0)
+      await page.waitFor("document.querySelector('[data-usage-tip]') === null", { timeoutMs: 5_000, label: '⑭ 移开后浮层消失' })
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

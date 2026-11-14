@@ -201,6 +201,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![按自然月查询：2026 年 10 月整月，一天一根柱](docs/images/usage-month-2d.png)
 
+![悬停提示：任意一根柱上显示该日/该周的 tokens 明细](docs/images/usage-tooltip-2d.png)
+
 ![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
 
 - **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
@@ -228,6 +230,9 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   绝不把「取不到」画成 0。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
+- **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
+  下面四类拆分与调用次数。2D / 3D 都支持；触屏点按、键盘 `Tab` 聚焦同样会弹出（`Esc`、点别处、
+  滚动都会收起）。浮层只报绝对 token，不派生百分比，也不折算 Credits。
 - 统计不到的时候会明说：宿主没有 `sessionPersistence` → 退回「本进程启动以来」（重启归零）；历史还没回填完 →
   顶部细进度条与「正在回填（N/M 会话）」；关掉统计 → 屏内直接写已关闭，不把「统计不到」伪装成 0。
 - **重启后不用先聊一句**：索引在第一次查询时就同步从磁盘读回来（以前要等启动 20 秒后的首轮同步，
@@ -488,15 +493,15 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 ```bash
 npm run check                      # 下面七步一次跑完
 node test/host.mjs                 # 855 项，离线
-node test/client.mjs               # 695 项，假 React/DOM/fetch
-node test/guards.mjs               # 299 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/client.mjs               # 793 项，假 React/DOM/fetch
+node test/guards.mjs               # 330 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 855/695 项 + guards 299 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 855/793 项 + guards 330 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

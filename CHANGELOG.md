@@ -10,6 +10,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **柱子悬停看用量明细（011）**：统计屏的每根柱子现在是一个可命中的 `<g>`（2D 的 rect、3D 的三面 polygon 都在里面），
+  鼠标移上去（`pointerenter` / `pointermove`）就在旁边浮出一张提示：首行是该桶日期（日桶 `2026-10-22`，
+  周桶 `2026-09-01 – 2026-09-07`）与 `formatTokens` 后的 tokens 总量，下面逐行是 input / output /
+  cacheRead / cacheWrite 与调用次数。2D 与 3D 共用同一份桶数据与同一份文案，换投影不换数字。
+  浮层同一时刻只有一个，位置跟指针偏移 12px、量完尺寸后夹在视口四边 8px 内（右下放不下就翻到左/上）；
+  `pointer-events: none` 所以不挡柱子的后续命中。关闭通路：`pointerleave`、`pointerdown`（触屏点按会先显示，
+  但不 `preventDefault`）、`Esc`、在别处按指针、滚动（捕获阶段）与窗口失焦；`focus` / `blur` 让键盘 `Tab`
+  与读屏可用，柱子的 `aria-label` 与浮层文案同源（`usageBucketTitle`）。数据变化或 2D↔3D 切换会清空悬停态。
+  浮层只报**绝对 token**：不出现百分比、不出现 Credits、不做估算。宿主侧零改动（`test/host.mjs` 仍 855 条全绿），
+  客户端断言 695→793、guards 静态矩阵 299→330（第 11 节 31 条：钩子 12 个、与 `aria-label` 同源、
+  源码里不再有 `createElement("title"`、剥注释后无 %/Credits/硬编码中文、COPY 键数 zh/en 各 134、
+  配置键仍 25、出站主机仍 8）。测试钩子 `data-usage-bar*` / `data-usage-tip*` 共 13 个。
+  截图 ⑭ 落 `docs/images/usage-tooltip-2d.png` 与 `docs/images/en/usage-tooltip-2d.png`（2026-10 月视图、
+  固定悬停 22 号柱 1,403,000 tokens）。方案见 `specs/011-bar-tooltip/`，接口契约见该目录的 `INTERFACE.md`。
+
 - **按自然月查用量（010）**：统计屏的预设行再多一个「按月」——展开一个月份框（`YYYY-MM`），选 2026-10 就只看这个月，
   一天一根柱。宿主新增 `GET /token-plan-quota/usage?month=YYYY-MM`（本地时区，1 号至月末，**恒为日桶**），
   当前月结束日夹到今天，响应里的 `range` 报夹紧后的真值；工具 `token_plan_quota` 的 `usage` / `usage-official`

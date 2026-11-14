@@ -78,7 +78,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 `--lang` 决定浏览器语言，而插件界面文案跟着 `document.documentElement.lang` 走，所以中英各跑一次就是两套图。
 新版 `dsh web` 启动时会打印一条带 `?token=…` 的地址（首次访问 303 换 cookie）；**把整条地址原样传给 `--url`**
 即可，脚本会自己接 `fixture` 参数（直接传裸端口会被 401 挡在门外）。
-`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11,13`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
+`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11,13,14`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
 不进 `docs/`，所以不在默认集合里）。产物：
 
 | # | 文件 | 证明什么 |
@@ -95,6 +95,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 10 | `usage-range-2d.png` | 自定义起止日期：日期行可见、chip 停在「自定义」、桶恰好铺满 `[from, to]` |
 | 11 | `usage-official-2d.png` | 官方账号侧对照：官方/本机/差额三格数字与本机细分，与各自 fixture 逐个相等 |
 | 13 | `usage-month-2d.png` | 按月份查询：月份行可见、chip 停在「月份」、桶恰好是整月（如 31 天 31 根柱）、标题回显该月 |
+| 14 | `usage-tooltip-2d.png` | 柱子悬停：浮层报出该桶日期与 tokens 明细，位置夹在视口内 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -168,6 +169,19 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 与补零的「YYYY 年 0M 月」两种写法，en 认「YYYY-MM」），柱数必须等于 fixture 该月的 `buckets`；
 chip 必须停在「月份」，整屏无 `%` / `Credits`（脚注除外）。
 
+⑭ 是 011 的柱子悬停，固定拍 **2026-10 的 22 号**那根柱：fixture 的逐日公式与真实时钟无关，`fixture.mjs`
+导出 `USAGE_TOOLTIP_BAR_MONTH` / `_DATE` / `_TOKENS` 三个常量（tokens = 1,403,000，界面写作「140.3万」/「1.40M」），
+断言、文档与图共用同一个真值，重拍才是字节可复现的。打开路径与 ⑬ 相同（chip → 月份框 → 查询），
+柱子定位靠测试钩子 `[data-usage-bar][data-usage-bar-from="2026-10-22"]`，命中区还得带 `role="img"`、
+`tabindex="0"` 与非空 `aria-label`（读屏和键盘走同一份文案）。然后**真发 `Input.dispatchMouseEvent` 的 `mouseMoved`**
+到柱心——`element.hover()` 只走 JS 派发路径，证明不了指针事件能唤起浮层。浮层出现后逐项断言：
+`[data-usage-tip]` 恰好 1 个且 `role="tooltip"`、`data-usage-tip-index` 等于该桶序号、`[data-usage-tip-range]`
+含 `2026-10-22`、`[data-usage-tip-tokens]` 含上面那个量纲串、四类拆分与调用五行分别含 fixture 量纲串、
+浮层四边都在视口内（≥8px）、整屏（脚注除外）无 `%` 与 `Credits`、英文套不混中文。前置同 ⑬：先过
+官方对照就绪断言；脚注在 860 折叠线下，⑭ 不断言其可见（也不落 QA 图），只断言 `.tpq-usage-notes`
+存在且含「仅统计本机」，并确认剔除脚注后的文本非空，才做 `%` / `Credits` 探针。⑬ 收尾时可能为 QA 脚注
+滚到了底，⑭ 先把滚动容器拉回顶部再点月份 chip，否则柱子不在视口里、hover 与截图都会落空。
+
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的
 `totals.tokens`，差额按官方 − 本机带符号比对 `data-sign`（`pos` / `neg` / `zero`）；下方细分用官方 totals 的
@@ -176,7 +190,7 @@ input / cacheRead / output，三个数字必须在一行里对得上（顺序不
 整屏仍不许出现 `%`；"Credits" 只允许出现在脚注（那句脚注原文就写着不折算 Credits）。
 
 取景：1280×860 装不下「页头 + 总卡 + 柱图 + 模型榜 + 官方块」（到官方块底边约 940–1020px），所以分两种口径——
-⑧⑨⑩⑬ 保持从页顶拍（标题、区间、日期行 / 月份行是它们的证据），官方块只露到三格数字；⑪ 单独滚到
+⑧⑨⑩⑬⑭ 保持从页顶拍（标题、区间、日期行 / 月份行是它们的证据），官方块只露到三格数字；⑪ 单独滚到
 「柱图卡顶 → 官方块 + 说明段 + 脚注」的取景，整块完整进图，且顶边吸到 `.tpq-usage` 子块边界，
 不把一行字切一半（`frameUsage()`：块底贴视口底 16px，再往上找最近的子块边界）。
 

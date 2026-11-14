@@ -373,6 +373,15 @@ export class PageHandle {
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
   }
 
+  /**
+   * 只发 mouseMoved：悬停类断言（011 柱子浮层）靠它。
+   * 不能只 dispatch `pointerover`/JS 事件 —— 那证明不了"真指针移过去会弹出"，
+   * 而 011 的浮层正是挂在真 pointer 事件上的。
+   */
+  async moveMouse(x, y) {
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 })
+  }
+
   /** 真鼠标点击（CDP Input，不是 element.click()：面板拖拽监听的是 pointer 事件）。 */
   async click(x, y) {
     for (const type of ['mousePressed', 'mouseReleased']) {

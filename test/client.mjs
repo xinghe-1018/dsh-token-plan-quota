@@ -4594,5 +4594,96 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
     rule.includes('--tpq-font:') && rule.includes('font-family:var(--tpq-font)'), rule.slice(0, 220))
 }
 
+/* ============================================================ 013 T101–T103 整页滚动视口
+ * 用户反馈：内容 1183px 被 860px 的宿主 main 区裁掉，整屏没有垂直滚动条。
+ * 契约（specs/013.../INTERFACE.md §2）：错误态短路与正常态两个 return 点都包成
+ * .tpq-usage-viewport > .tpq-usage；内层 class / 顺序 / max-width 排版不动。 */
+{
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  /* T101 静态钩子：截图/探针定位、读屏识别、键盘可滚。 */
+  ok('T101 源码带 data-usage-scroll 钩子', code.includes('"data-usage-scroll": "1"'))
+  ok('T101 视口 role 是 region（读屏能识别为区域）', code.includes('role: "region",'))
+  ok('T101 视口 tabIndex: 0（可聚焦后键盘滚）', code.includes('tabIndex: 0,'))
+  ok('T101 视口 aria-label 取 copy.usageTitle', code.includes('"aria-label": copy.usageTitle,'))
+  check('T101 usageViewport 定义 1 处 + 两个 return 点调用 = 3 处',
+    (code.match(/usageViewport\(/g) ?? []).length, 3)
+  check('T101 两个 return 点都走 helper（无遗留裸根节点）',
+    (code.match(/return usageViewport\(copy, blocks\);/g) ?? []).length, 2)
+  ok('T101 不再有裸返回 <div className="tpq-usage"> 的 return 点',
+    !/return React\.createElement\("div", \{ className: "tpq-usage" \}, blocks\);/.test(code))
+
+  /* T102 CSS 六件 + 焦点环 + 细滚动条；不写 scrollbar-gutter:stable（会让 920px 列位移）。 */
+  const viewportStart = code.indexOf('.tpq-usage-viewport{')
+  const viewportRule = viewportStart < 0 ? '' : code.slice(viewportStart, code.indexOf('}', viewportStart) + 1)
+  ok('T102 视口规则存在且排在 .tpq-usage 之后（只换「谁来滚」，不改内层排版）',
+    viewportStart > code.indexOf('.tpq-usage{'), viewportRule.slice(0, 240))
+  const cssBits = [
+    ['height:100%', 'height:100%'],
+    ['overflow-y:auto', 'overflow-y:auto'],
+    ['overflow-x:hidden', 'overflow-x:hidden'],
+    ['overscroll-behavior:contain', 'overscroll-behavior:contain'],
+    ['scrollbar-width:thin', 'scrollbar-width:thin'],
+  ]
+  for (const [name, needle] of cssBits) ok('T102 视口规则含 ' + name, viewportRule.includes(needle), viewportRule.slice(0, 300))
+  ok('T102 视口规则不写 scrollbar-gutter（避免挤压居中列）', !viewportRule.includes('scrollbar-gutter'))
+  ok('T102 滚动条 thumb 圆角 + 主题色变量',
+    /\.tpq-usage-viewport::-webkit-scrollbar-thumb\{[^}]*border-radius:4px[^}]*background:var\(--dsw-alias-border-l2/.test(code))
+  ok('T102 滚动条宽度 8px', /\.tpq-usage-viewport::-webkit-scrollbar\{width:8px\}/.test(code))
+  ok('T102 视口焦点环 2px 品牌色、内偏移（不顶开内容）',
+    /\.tpq-usage-viewport:focus-visible\{[^}]*outline:2px solid var\(--dsw-alias-brand-primary[^}]*outline-offset:-2px/.test(code))
+}
+
+/* T103 两种 return 态都在假 DOM 里渲染出 .tpq-usage-viewport > .tpq-usage。 */
+function viewportOf(tree) {
+  if (tree === null || tree === undefined || typeof tree !== 'object') return null
+  return String(tree.props?.className ?? '').split(/\s+/).includes('tpq-usage-viewport') ? tree : null
+}
+{
+  /* 正常态（数据态）：视口是最外层，内层 .tpq-usage 才是既有排版根，三张卡都在它里面。 */
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  const viewport = viewportOf(tree)
+  ok('T103 正常态最外层是 .tpq-usage-viewport', viewport !== null,
+    JSON.stringify(tree?.props?.className ?? null))
+  const inner = viewport?.children?.[0]
+  check('T103 正常态视口只有一个内层子节点（不多包一层）', viewport?.children?.length, 1)
+  check('T103 正常态内层仍是 .tpq-usage（class 与顺序不变）', inner?.props?.className, 'tpq-usage')
+  check('T103 正常态内层节点仍是页面内容根（3 张数据卡都在里面）',
+    findNodes(inner, 'tpq-usage-card').length, 3)
+  check('T103 正常态 data-usage-scroll=1', viewport?.props?.['data-usage-scroll'], '1')
+  check('T103 正常态 role=region + tabIndex=0', [viewport?.props?.role, viewport?.props?.tabIndex], ['region', 0])
+  check('T103 正常态 aria-label=屏幕标题（zh）', viewport?.props?.['aria-label'], 'Token 计划用量')
+}
+{
+  /* 错误态短路：同样包一层，否则错误屏在 375px 下也会被裁。 */
+  const failing = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    return { ok: false, status: 500, json: async () => ({}) }
+  }
+  const bundle = await mountUsage({ fetchImpl: failing })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  const viewport = viewportOf(tree)
+  ok('T103 错误态最外层也是 .tpq-usage-viewport', viewport !== null,
+    JSON.stringify(tree?.props?.className ?? null))
+  const inner = viewport?.children?.[0]
+  check('T103 错误态内层仍是 .tpq-usage', inner?.props?.className, 'tpq-usage')
+  check('T103 错误态视口只有一个内层子节点', viewport?.children?.length, 1)
+  ok('T103 错误态内容（错误标题 + 重试按钮）都在内层里',
+    collectText(inner).join(' ').includes('用量数据没取到') && findNodes(inner, 'tpq-usage-retry').length === 1,
+    collectText(inner).join(' ').slice(0, 160))
+  check('T103 错误态 aria-label 仍非空', viewport?.props?.['aria-label'], 'Token 计划用量')
+}
+{
+  /* 英文界面 aria-label 跟随 COPY.usageTitle（不是写死中文）。 */
+  const bundle = await mountUsage({ lang: 'en-US' })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 4)
+  const label = viewportOf(tree)?.props?.['aria-label']
+  ok('T103 en 界面 aria-label 跟随英文标题且不含中文',
+    typeof label === 'string' && label.length > 0 && !/[\u4e00-\u9fff]/.test(label), String(label))
+}
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed')
 process.exit(failed === 0 ? 0 : 1)

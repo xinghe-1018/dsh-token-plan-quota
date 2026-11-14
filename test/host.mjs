@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import zlib from 'node:zlib'
 import { __internals, apply, observeStream, parsePolicyKey } from '../lib/index.js'
+import { assertUsageIndexShape } from '../lib/usage-stats.js'
 
 // 离线不变量（宪法 VI）：本套件不得联网。DSH_HOME 指向 tmpdir 只挡住了 .credentials.yaml 与 .env，
 // **进程环境层没挡**——shell（尤其 CI 注入了 secret）只要有 DEEPSEEK_API_KEY /
@@ -3110,6 +3111,194 @@ function recursiveKeys(value, out = []) {
     check('010 工具：usage-official 混用 → ok=false', [toolOfficialMix.ok, toolOfficialMix.error], [false, 'usage-bad-range'])
   } finally {
     Date.now = realDateNow
+  }
+}
+
+/* ============================================ 15. 013 模型归属跨片继承（T201–T205）
+ *
+ * 反例现场：增量折叠只读 lastSeq+1 之后的切片，切片里没有 request/header 时
+ * provider/model 上下文丢失，整片记成 unknown。修复后上下文随 sessions[id] 落盘，
+ * 下一片从上一片继承。全部离线（假 persistence + tmp 日志 fixture）。
+ */
+{
+  resetInstanceState()
+  const modelConfig = effectiveConfig({ usageBackfillDays: 365, sources: [] }, ctxStub)
+
+  // T201：两片增量，第二片只有 assistant/message，模型沿用第一片的 header
+  {
+    const persistence = makeFakePersistence({
+      'sess-model-two': {
+        revision: 'rev-1',
+        events: [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW + 1000, { inputTokens: 10, outputTokens: 2 })],
+      },
+    })
+    const index = emptyUsageIndex()
+    const first = await syncUsageIndex({ persistence, index, config: modelConfig, now: USAGE_NOW })
+    check('013 T201：首片模型归位',
+      [Object.keys(index.days[USAGE_DAY].models), index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls],
+      [['qwen-token-plan-cn/qwen3.8-flash'], 1])
+    check('013 T201：首片把最近模型写进索引',
+      [index.sessions['sess-model-two'].lastProvider, index.sessions['sess-model-two'].lastModel],
+      ['qwen-token-plan-cn', 'qwen3.8-flash'])
+    check('013 T201：首片 unknownModel=0', [first.unknownModel, index.stats.unknownModel], [0, 0])
+
+    persistence.sessions[0].revision = 'rev-2'
+    persistence.sessions[0].events.push(usageEvent(3, USAGE_NOW + 2000, { inputTokens: 5, outputTokens: 1 }))
+    const second = await syncUsageIndex({ persistence, index, config: modelConfig, now: USAGE_NOW })
+    check('013 T201：第二片沿用上一片的模型（不是 unknown）',
+      [Object.keys(index.days[USAGE_DAY].models), index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls],
+      [['qwen-token-plan-cn/qwen3.8-flash'], 2])
+    check('013 T201：第二片 unknownModel=0', [second.unknownModel, index.stats.unknownModel], [0, 0])
+    check('013 T201：第二片读起点是 lastSeq+1', persistence.reads[persistence.reads.length - 1].offset, 3)
+    check('013 T201：第二片不改写已记下的模型',
+      [index.sessions['sess-model-two'].lastProvider, index.sessions['sess-model-two'].lastModel],
+      ['qwen-token-plan-cn', 'qwen3.8-flash'])
+  }
+
+  // T202：三片 —— 片 2 无 header 沿用片 1，片 3 带新 header 换模型
+  {
+    const persistence = makeFakePersistence({
+      'sess-model-three': {
+        revision: 'rev-1',
+        events: [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW + 1000, { inputTokens: 10, outputTokens: 2 })],
+      },
+    })
+    const index = emptyUsageIndex()
+    await syncUsageIndex({ persistence, index, config: modelConfig, now: USAGE_NOW })
+
+    persistence.sessions[0].revision = 'rev-2'
+    persistence.sessions[0].events.push(usageEvent(3, USAGE_NOW + 2000, { inputTokens: 10, outputTokens: 2 }))
+    const middle = await syncUsageIndex({ persistence, index, config: modelConfig, now: USAGE_NOW })
+    check('013 T202：无 header 的中间片沿用片 1 模型',
+      index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls, 2)
+    check('013 T202：中间片 unknownModel=0', [middle.unknownModel, index.stats.unknownModel], [0, 0])
+
+    persistence.sessions[0].revision = 'rev-3'
+    persistence.sessions[0].events.push(
+      headerEvent(4, USAGE_NOW + 3000, 'deepseek', 'deepseek-v4.1-flash-1017'),
+      usageEvent(5, USAGE_NOW + 4000, { inputTokens: 7, outputTokens: 3 }),
+    )
+    const switched = await syncUsageIndex({ persistence, index, config: modelConfig, now: USAGE_NOW })
+    check('013 T202：片 3 的新 header 换模型',
+      [index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls,
+        index.days[USAGE_DAY].models['deepseek/deepseek-v4.1-flash-1017'].calls],
+      [2, 1])
+    check('013 T202：换模型后索引记新模型',
+      [index.sessions['sess-model-three'].lastProvider, index.sessions['sess-model-three'].lastModel],
+      ['deepseek', 'deepseek-v4.1-flash-1017'])
+    check('013 T202：三片全程 unknownModel=0', [switched.unknownModel, index.stats.unknownModel], [0, 0])
+  }
+
+  // T203：兜底目录扫描同样继承（没有 persistence，只能读磁盘日志）
+  {
+    const HAS_ZSTD = typeof zlib.zstdCompressSync === 'function' && typeof zlib.zstdDecompressSync === 'function'
+    if (HAS_ZSTD) {
+      const root = join(TEST_HOME, 'usage-model-fallback')
+      rmSync(root, { recursive: true, force: true })
+      const writeFallbackLog = events => {
+        const dir = join(root, 'p', 'hidden-model')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'session.v4.jsonl.zstd'),
+          zlib.zstdCompressSync(Buffer.from(events.map(event => JSON.stringify(event)).join('\n') + '\n', 'utf8')))
+      }
+      const firstEvents = [headerEvent(1, USAGE_NOW), usageEvent(2, USAGE_NOW + 1000, { inputTokens: 10, outputTokens: 2 })]
+      writeFallbackLog(firstEvents)
+      const index = emptyUsageIndex()
+      const first = await syncUsageIndex({ index, config: modelConfig, sessionsDir: root, now: USAGE_NOW })
+      check('013 T203：兜底首片救回并归位模型',
+        [first.rescued, Object.keys(index.days[USAGE_DAY].models), index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls],
+        [1, ['qwen-token-plan-cn/qwen3.8-flash'], 1])
+      check('013 T203：兜底首片写下最近模型',
+        [index.sessions['hidden-model'].lastProvider, index.sessions['hidden-model'].lastModel],
+        ['qwen-token-plan-cn', 'qwen3.8-flash'])
+
+      writeFallbackLog(firstEvents.concat(usageEvent(3, USAGE_NOW + 2000, { inputTokens: 5, outputTokens: 1 })))
+      const second = await syncUsageIndex({ index, config: modelConfig, sessionsDir: root, now: USAGE_NOW })
+      check('013 T203：兜底第二片沿用上一片模型',
+        [second.rescued, index.days[USAGE_DAY].models['qwen-token-plan-cn/qwen3.8-flash'].calls],
+        [1, 2])
+      check('013 T203：兜底第二片 unknownModel=0', [second.unknownModel, index.stats.unknownModel], [0, 0])
+    } else {
+      ok('013 T203：本机 Node 无 zstd（兜底模型继承用例跳过）', true)
+    }
+  }
+
+  // T204：schema 守卫 + v1 索引迁移
+  {
+    const shapeError = value => {
+      try { assertUsageIndexShape(value); return '' } catch (error) { return String(error && error.message ? error.message : error) }
+    }
+    const paired = emptyUsageIndex()
+    paired.sessions['sess-shape'] = { revision: 'r', lastSeq: 1, cut: 0, lastProvider: 'p', lastModel: 'm' }
+    check('013 T204：两键齐全且非空 → 放行', shapeError(paired), '')
+    const badProvider = structuredClone(paired)
+    badProvider.sessions['sess-shape'].lastProvider = ''
+    ok('013 T204：lastProvider 空串 → 抛非空字符串错',
+      /sessions\[sess-shape\]\.lastProvider 不是非空字符串/.test(shapeError(badProvider)))
+    const badModel = structuredClone(paired)
+    badModel.sessions['sess-shape'].lastModel = '   '
+    ok('013 T204：lastModel 只有空白 → 抛非空字符串错',
+      /sessions\[sess-shape\]\.lastModel 不是非空字符串/.test(shapeError(badModel)))
+    const badType = structuredClone(paired)
+    badType.sessions['sess-shape'].lastProvider = 42
+    ok('013 T204：lastProvider 非字符串 → 抛非空字符串错',
+      /sessions\[sess-shape\]\.lastProvider 不是非空字符串/.test(shapeError(badType)))
+    const onlyProvider = structuredClone(paired)
+    delete onlyProvider.sessions['sess-shape'].lastModel
+    ok('013 T204：只出现一个键 → 抛必须同时存在',
+      /lastProvider 与 lastModel 必须同时存在/.test(shapeError(onlyProvider)))
+
+    const legacy = { version: 1, updatedAt: 0, sessions: { legacy: { revision: 'r', lastSeq: 1, cut: 0 } }, days: {}, stats: { unknownModel: 0, skippedOld: 0 } }
+    ok('013 T204：version 1 → schema 报版本错', /version 不是 2/.test(shapeError(legacy)))
+    const legacyPath = join(TEST_HOME, 'usage-index-v1.json')
+    writeFileSync(legacyPath, JSON.stringify(legacy), 'utf8')
+    const loaded = loadUsageIndex(legacyPath)
+    check('013 T204：v1 文件加载 → 空索引（version 2）',
+      [loaded.version, Object.keys(loaded.sessions).length, Object.keys(loaded.days).length, loaded.updatedAt], [2, 0, 0, 0])
+    ok('013 T204：v1 加载生成 .bad- 备份',
+      readdirSync(TEST_HOME).some(name => name.startsWith('usage-index-v1.json.bad-')))
+    ok('013 T204：v1 内容没进内存', !JSON.stringify(loaded).includes('legacy'))
+  }
+
+  // T205：foldUsageEvents 的默认值 / 空 header 语义
+  {
+    const noHeaderIndex = emptyUsageIndex()
+    const noHeader = foldUsageEvents(noHeaderIndex, [usageEvent(1, USAGE_NOW, { inputTokens: 1, outputTokens: 0 })], 1, 0,
+      { retentionDays: 365, now: USAGE_NOW })
+    check('013 T205：无 header 且无默认值 → provider/model 为空串', [noHeader.provider, noHeader.model], ['', ''])
+    check('013 T205：无上下文仍记 unknown 并累加',
+      [noHeader.unknownModel, noHeaderIndex.stats.unknownModel, noHeaderIndex.days[USAGE_DAY].models['unknown/unknown'].calls], [1, 1, 1])
+
+    const seededIndex = emptyUsageIndex()
+    const seeded = foldUsageEvents(seededIndex, [usageEvent(1, USAGE_NOW, { inputTokens: 2, outputTokens: 0 })], 1, 0,
+      { retentionDays: 365, now: USAGE_NOW, modelDefaults: { provider: ' qwen-token-plan-cn ', model: ' qwen3.8-flash ' } })
+    check('013 T205：默认值在片首播种且 trim', [seeded.provider, seeded.model], ['qwen-token-plan-cn', 'qwen3.8-flash'])
+    check('013 T205：默认值让本片不记 unknown',
+      [seeded.unknownModel, seededIndex.stats.unknownModel, Object.keys(seededIndex.days[USAGE_DAY].models)],
+      [0, 0, ['qwen-token-plan-cn/qwen3.8-flash']])
+
+    const blankIndex = emptyUsageIndex()
+    const blank = foldUsageEvents(blankIndex, [
+      headerEvent(1, USAGE_NOW, '', ''),
+      usageEvent(2, USAGE_NOW + 1000, { inputTokens: 3, outputTokens: 0 }),
+    ], 1, 0, { retentionDays: 365, now: USAGE_NOW, modelDefaults: { provider: 'p', model: 'm' } })
+    check('013 T205：空串 header 不覆盖默认值', [blank.provider, blank.model], ['p', 'm'])
+
+    const partialIndex = emptyUsageIndex()
+    const partial = foldUsageEvents(partialIndex, [
+      headerEvent(1, USAGE_NOW, 'deepseek', ''),
+      usageEvent(2, USAGE_NOW + 1000, { inputTokens: 3, outputTokens: 0 }),
+    ], 1, 0, { retentionDays: 365, now: USAGE_NOW, modelDefaults: { provider: 'p', model: 'm' } })
+    check('013 T205：只有一半的 header 不覆盖默认值', [partial.provider, partial.model], ['p', 'm'])
+
+    const overrideIndex = emptyUsageIndex()
+    const override = foldUsageEvents(overrideIndex, [
+      headerEvent(1, USAGE_NOW, 'deepseek', 'deepseek-v4.1-flash-1017'),
+      usageEvent(2, USAGE_NOW + 1000, { inputTokens: 4, outputTokens: 0 }),
+    ], 1, 0, { retentionDays: 365, now: USAGE_NOW, modelDefaults: { provider: 'p', model: 'm' } })
+    check('013 T205：片内合法 header 覆盖默认值',
+      [override.provider, override.model, Object.keys(overrideIndex.days[USAGE_DAY].models)],
+      ['deepseek', 'deepseek-v4.1-flash-1017', ['deepseek/deepseek-v4.1-flash-1017']])
   }
 }
 

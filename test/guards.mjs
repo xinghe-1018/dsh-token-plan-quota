@@ -26,7 +26,7 @@ import { compareHosts, deriveHostsFromCode } from '../scripts/outbound-hosts.mjs
 import { repoPathFromUrl } from '../scripts/repo-path.mjs'
 import { shouldSkipDir, skipDirNames } from '../scripts/walk-skip.mjs'
 import { __internals } from '../lib/index.js'
-import { assertUsageIndexShape, emptyUsageIndex, loadUsageIndex, saveUsageIndex } from '../lib/usage-stats.js'
+import { USAGE_INDEX_VERSION, assertUsageIndexShape, emptyUsageIndex, foldUsageEvents, loadUsageIndex, saveUsageIndex } from '../lib/usage-stats.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -536,8 +536,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   withStats.stats.cookies = 'SECRET-TEXT'
   rejects('用量索引 schema：stats 里夹带 Cookie 报错', () => assertUsageIndexShape(withStats), /白名单外的键 cookies/)
   const wrongVersion = structuredClone(filled)
-  wrongVersion.version = 2
-  rejects('用量索引 schema：version 不是 1 报错（不猜未来 schema）', () => assertUsageIndexShape(wrongVersion), /version 不是 1/)
+  wrongVersion.version = 3
+  rejects('用量索引 schema：version 不是 2 报错（013 升版：不猜未来 schema）', () => assertUsageIndexShape(wrongVersion), /version 不是 2/)
   rejects('用量索引 schema：不是对象报错', () => assertUsageIndexShape('SECRET-TEXT'), /不是对象/)
   const badCounter = structuredClone(filled)
   badCounter.days['2026-11-12'].input = Number.NaN
@@ -1255,5 +1255,97 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       .every(name => new RegExp('\\b' + name + '\\b').test(internals013)))
 }
 
+/* 用量统计屏整页滚动 + 未知模型归属（specs/013）：两处坏法都只在真机上显形 ——
+ * 视口漏包一层，测试全绿但内容被宿主 overflow:hidden 裁掉；增量折叠丢了 header 上下文，
+ * 数字照样出只是模型名变成「未知」。这里把结构、CSS、折叠语义与文档口径逐条钉住。 */
+{
+  const src = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const usageSrc = readFileSync(join(ROOT, 'lib', 'usage-stats.js'), 'utf8')
+
+  // 1) 滚动视口结构：helper 统一产出，两个 return 点都走它（漏一个 = 错误态被裁）。
+  ok('013 滚动：视口钩子齐全（data-usage-scroll / role=region / tabIndex 0 / aria-label）',
+    src.includes('"data-usage-scroll": "1"') && src.includes('role: "region"')
+      && src.includes('tabIndex: 0') && src.includes('"aria-label": copy.usageTitle'))
+  ok('013 滚动：usageViewport 统一产出视口（1 处定义 + 2 处调用 = 3 次）',
+    src.includes('function usageViewport(copy, blocks)')
+      && (src.match(/usageViewport\(copy, blocks\)/g) || []).length === 3)
+  ok('013 滚动：错误态与正常态都 return usageViewport(copy, blocks)',
+    (src.match(/return usageViewport\(copy, blocks\);/g) || []).length === 2)
+  ok('013 滚动：两态都不再有裸的 .tpq-usage 根节点（绕过视口就是被裁）',
+    !src.includes('return <div className="tpq-usage">')
+      && !src.includes('return React.createElement("div", { className: "tpq-usage" }'))
+
+  // 2) 视口 CSS：撑满宿主座位 + 纵向可滚 + 细滚动条；不写 gutter（会让 920px 居中列位移）。
+  const viewportStart = src.indexOf('.tpq-usage-viewport{')
+  const viewportRule = viewportStart < 0 ? '' : src.slice(viewportStart, src.indexOf('}', viewportStart) + 1)
+  for (const declaration of ['height:100%', 'min-height:0', 'overflow-y:auto', 'overflow-x:hidden',
+    'overscroll-behavior:contain', 'scrollbar-width:thin']) {
+    ok('013 滚动：视口 CSS 含 ' + declaration, viewportRule.includes(declaration))
+  }
+  ok('013 滚动：视口不写 scrollbar-gutter（920px 居中列不位移）', !viewportRule.includes('scrollbar-gutter'))
+  ok('013 滚动：聚焦环与细滚动条（focus-visible outline + 8px thumb + 主题变量）',
+    /\.tpq-usage-viewport:focus-visible\{[^}]*outline/.test(src)
+      && src.includes('.tpq-usage-viewport::-webkit-scrollbar{width:8px}')
+      && /\.tpq-usage-viewport::-webkit-scrollbar-thumb\{[^}]*--dsw-alias-border-l2/.test(src))
+  ok('013 滚动：模型排行卡内滚动仍在（252px + thin + contain），两层互不吃掉',
+    src.includes('max-height:252px') && /\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(src))
+
+  // 3) 索引 v2：版本、两键白名单、两条同步路径都继承上一片的模型。
+  ok('013 索引：版本升到 2（空索引也带 2）', USAGE_INDEX_VERSION === 2 && emptyUsageIndex().version === 2)
+  ok('013 索引：会话条目白名单多了 lastProvider / lastModel',
+    usageSrc.includes("'lastProvider'") && usageSrc.includes("'lastModel'"))
+  ok('013 索引：列表增量与兜底扫描都从上一片继承模型（两处传参）',
+    (usageSrc.match(/modelDefaults: inheritedModelDefaults\(previous\)/g) || []).length === 2)
+
+  // 4) 折叠语义：header 只出现一次，下一片没 header 也要归到同一个模型。
+  const foldNow = Date.UTC(2026, 10, 10, 4)
+  const foldIndex = emptyUsageIndex()
+  const headerFold = foldUsageEvents(foldIndex, [{ seq: 0, time: foldNow, type: 'request/header',
+    data: { header: { config: { provider: 'qwen-token-plan-cn', model: 'deepseek-v4.1-flash' } } } }], 0, 0, { now: foldNow })
+  ok('013 折叠：header 片把 provider/model 返回给调用方',
+    headerFold.provider === 'qwen-token-plan-cn' && headerFold.model === 'deepseek-v4.1-flash')
+  const messageFold = foldUsageEvents(foldIndex, [{ seq: 1, time: foldNow, type: 'assistant/message',
+    data: { usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1 } } }], 1, 0,
+  { now: foldNow, modelDefaults: { provider: headerFold.provider, model: headerFold.model } })
+  const foldDay = foldIndex.days[Object.keys(foldIndex.days)[0]] ?? { models: {} }
+  ok('013 折叠：下一片没有 header 也记在继承的模型上（不再产生 unknown）',
+    messageFold.unknownModel === 0
+      && Object.keys(foldDay.models).includes('qwen-token-plan-cn/deepseek-v4.1-flash'))
+  const plainFold = foldUsageEvents(emptyUsageIndex(), [{ seq: 0, time: foldNow, type: 'assistant/message',
+    data: { usage: { inputTokens: 1 } } }], 0, 0, { now: foldNow })
+  ok('013 折叠：既无 header 又无继承时才记 unknown/unknown（唯一 unknown 来源）',
+    plainFold.unknownModel === 1 && plainFold.provider === '' && plainFold.model === '')
+  const loneProvider = emptyUsageIndex()
+  loneProvider.sessions['sess-1'] = { revision: 'r', lastSeq: 0, cut: 0, lastProvider: 'qwen-token-plan-cn' }
+  rejects('013 索引：lastProvider 单独出现报错（要么都有、要么都没有）',
+    () => assertUsageIndexShape(loneProvider), /lastProvider 与 lastModel 必须同时存在/)
+  const blankModel = emptyUsageIndex()
+  blankModel.sessions['sess-1'] = { revision: 'r', lastSeq: 0, cut: 0, lastProvider: 'qwen-token-plan-cn', lastModel: '   ' }
+  rejects('013 索引：lastModel 是空白串报错（不写空串进索引）',
+    () => assertUsageIndexShape(blankModel), /lastModel 不是非空字符串/)
+
+  // 5) 越界面：013 不改配置键、不加出站主机。
+  ok('013 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('013 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8
+      && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+  // 6) 文档与规格：整页滚动与模型归属的口径必须写进对外描述，否则下一个人会把视口当冗余删掉。
+  const readme013 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn013 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('013 文档：中文 README 写了整页可上下滚动',
+    readme013.includes('整页可上下滚动') && readme013.includes('data-usage-scroll'))
+  ok('013 文档：中文 README 写了模型名沿用会话 header 的真值',
+    readme013.includes('上一次声明') && readme013.includes('不猜'))
+  ok('013 文档：英文 README 写了整页滚动与 header 归属',
+    /scrolls as one page/i.test(readmeEn013) && /never declare a header/i.test(readmeEn013))
+  const changelog013 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('013 CHANGELOG：Unreleased 段记了整页滚动与未知模型归位（含 013 编号）',
+    /## \[Unreleased\]/.test(changelog013) && changelog013.includes('013')
+      && changelog013.includes('整页滚动') && changelog013.includes('未知模型'))
+  ok('013 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '013-scroll-and-model-attribution', name))))
+}
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

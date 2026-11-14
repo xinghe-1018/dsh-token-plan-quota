@@ -44,6 +44,14 @@ All notable changes to this project are documented here. The format follows
   模块内只剩 chips 与结果卡，022 的「按实测占比折算」小字与口径脚注不再出现；主数字仍按 022 estimate、
   无价目回落 019 capacity，数据口径不变。零新路由、零新配置键、零新出站主机、零第三方依赖。
   测试：宿主 1073 不变、客户端 1384 → 1394、guards 615 → 624（新增第 23 节静态矩阵）。方案见 `specs/023-single-model-module/`。
+- **撤掉面板上的说明性脚注（024）**：不再在屏上解释口径，只留数据。删除六个 i18n 键（中英各一份）——
+  `usageCreditsNote`（换算卡脚注）、`usageCreditsModelsNote`（模型行脚注）、`usageRatioNote`（占比与命中率公式）、
+  `usageNoteDelay` / `usageNoteCacheWrite` / `usageNoteNoCredits`（滞后 5 分钟 / cacheWrite / 不折算 Credits 三句），
+  COPY 158 → 152；同时删掉官方对照条下方的四项数字行（`p.tpq-usage-official-split`：输入 / 缓存命中 / 输出）
+  与三条 CSS（`.tpq-usage-credits-note`、`.tpq-usage-credits-models-note`、选择器组里的 `.tpq-usage-official-split`）。
+  整页脚注块改为「有内容才建」，现在只剩来源行 / 本机实测提示 / 补扫说明。该改动按用户要求取代 012 的
+  「公式必须上屏」与 006 的官方四项细分行；数据口径、路由、配置键、出站主机与依赖全部不变。
+  测试：宿主 1073 不变、客户端 1394 → 1391、guards 624 → 631（新增第 24 节静态矩阵）。方案见 `specs/024-drop-explanatory-notes/`。
 - **每 Credit 三格卡片与按日折算基准（017）**：016 的「每 Credit 分项」一行改成**三格卡片**
   （`section.tpq-usage-credits-classes`、`data-usage-credits-classes="1"`）：标题 zh「1 Credit 折合」/ en
   「One credit is worth」，三格固定顺序 **缓存命中 / 未命中输入 / 输出**，每格 = 标签 + **20px** 数值 + 单位

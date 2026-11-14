@@ -253,8 +253,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 - **Composition at a glance**: besides the four absolute values, the total card shows each bucket's **share of the
   range total** and the **cache hit rate** (cache hit ÷ (input + cache hit + cache write), one decimal; `—` when
   the denominator is 0). Every model row carries the same four shares plus its hit rate. These describe usage
-  composition, not remaining quota and certainly not a quota ratio; the footnote spells out both formulas and
-  says so.
+  composition, not remaining quota and certainly not a quota ratio. The formulas are no longer on screen (024);
+  they live in this section and in the specs.
 - The data comes from the **host's own session events** (`sessionPersistence`), folded offline into a
   per-local-day index: the first run walks the existing sessions (measured here: 217 session directories, ~200 MB of
   logs, ~20 s to decode and fold), after which it syncs incrementally every 5 minutes, so the numbers are at most
@@ -295,8 +295,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   because mixing the two calibers understates the ratio. The cycle is the current monthly meter (falling back to the
   7-day window) and is **independent of the range selector above**: Credits only have one reading per cycle, and
   splitting them across a range would be an estimate. It is a **blended average for this cycle** - model mix and cache
-  hit rate change it - so the footnote says outright that it is **not a fixed exchange rate**, and the "allowance in
-  tokens" line is marked as derived, not official. When the official detail is clamped to a later start, or the
+  hit rate change it - so it is **not a fixed exchange rate** (the on-screen note saying so was dropped in 024), and the
+  "allowance in tokens" line is marked as derived, not official. When the official detail is clamped to a later start, or the
   allowance, reset time or a monthly/weekly meter is missing, the block shows **no ratio** and says why; it never
   borrows a partial range or this instance's numbers.
 - **A three-cell per-credit card, plus a per-model ratio**: the "One credit is worth" card (the title follows the UI
@@ -311,8 +311,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   **Per-model ratio** =
   local tokens for that model / credits used this cycle, which is a **contribution** figure: official data is not split
   by model and no per-model price is published, and splitting credits by token share would make every row equal the
-  overall ratio (false precision). The footnote therefore states that official data is not split by model and that rows
-  sum to roughly the local total, which differs slightly from the official account total. Each model row then splits
+  overall ratio (false precision); rows sum to roughly the local total, which differs slightly from the official account
+  total. That on-screen note was dropped in 024. Each model row then splits
   again: for that model, input / cache hit / output tokens each divided by the same account-level denominator, so the
   screen answers "one credit buys this model this many input / cache-hit / output tokens"; the three add up to the row
   total, and the denominator is still the cycle credits used (account-level), not a per-model allowance. When classes
@@ -646,8 +646,8 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 1073 assertions, offline
-node test/client.mjs                # 1394 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 624 assertions: behaviour matrices of the gates themselves
+node test/client.mjs                # 1391 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 631 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -655,7 +655,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
-config table, 8 sources, 8 declared outbound hosts, 1073/1394 tests plus 624 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 1073/1391 tests plus 631 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

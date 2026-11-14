@@ -8,7 +8,7 @@
  */
 import { createHmac } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
@@ -43,7 +43,8 @@ const {
   ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
   buildUsageSnapshot, runUsageSync,
   buildOfficialUsageSnapshot, buildCreditsTokenSnapshot, creditsCycleOf, creditsTokenRatioOf,
-  creditsClassRatios, creditsModelRatios, composeCreditsToken,
+  creditsClassRatios, creditsModelRatios, creditsDailyCycleKey, creditsDailySnapshotOf, creditsDailyReusable,
+  readCreditsDaily, writeCreditsDaily, resolveCreditsDaily, composeCreditsToken,
   resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
   sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
   officialChunkRequest, officialEarliestDayKey, officialErrorHint, DECLARED_HOSTS,
@@ -3790,6 +3791,257 @@ function recursiveKeys(value, out = []) {
     realRow.classes.input.perCredit % 1 !== 0
       && realRow.classes.cacheRead.perCredit % 1 !== 0
       && realRow.classes.output.perCredit % 1 !== 0)
+}
+
+// ---------------------------------------------------------------------------
+// 017：折算基础按自然日快照（同日复用、跨日/跨账期重算、fresh 强制重算）。
+// 快照只存官方计数与比值；不联网、不读真实 ~/.dsh（文件都落在 TEST_HOME）。
+// ---------------------------------------------------------------------------
+{
+  const NOW = new Date(2026, 10, 14, 12, 0, 0).getTime()
+  const NEXT_DAY = new Date(2026, 10, 15, 12, 0, 0).getTime()
+  const USED = 37196.8802
+  const OFFICIAL_TOTALS = {
+    tokens: 2122918870,
+    input: 2112709710,
+    cacheRead: 2039167232,
+    output: 10209160,
+  }
+  const CARD = {
+    id: 'token-plan-console',
+    label: '千问控制台',
+    unit: 'Credits',
+    total: 80000,
+    used: USED,
+    usedPercent: 46.4961,
+    meters: [{
+      key: 'monthly', label: '本月', labelEn: 'Monthly', unit: 'Credits',
+      total: 80000, used: USED, usedPercent: 46.4961,
+      resetAt: new Date(2026, 11, 1, 0, 0, 0).getTime(),
+    }],
+  }
+  const CYCLE = creditsCycleOf(CARD, NOW)
+  const officialFull = {
+    generatedAt: NOW,
+    range: { kind: 'custom', days: 14, from: '2026-11-01', to: '2026-11-14' },
+    granularity: 'day',
+    totals: OFFICIAL_TOTALS,
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+  }
+  const localFull = {
+    totals: { tokens: 2080883520 },
+    models: [
+      { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { input: 500000, cacheRead: 300000, output: 150000, cacheWrite: 50000, tokens: 1000000, calls: 3 } },
+      { id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', totals: { tokens: 500000, calls: 2 } },
+    ],
+  }
+
+  check('017 DEFAULTS：creditsDailyPath 默认落点', DEFAULTS.creditsDailyPath, '$DSH_HOME/token-plan-quota.credits-daily.json')
+  check('017 DEFAULTS：配置键 25 → 26', Object.keys(DEFAULTS).length, 26)
+
+  // 纯函数：快照形状与数值。
+  const SNAP = creditsDailySnapshotOf({
+    cycle: CYCLE,
+    officialTokens: OFFICIAL_TOTALS.tokens,
+    officialTotals: OFFICIAL_TOTALS,
+    computedAt: NOW,
+  })
+  check('017 creditsDailyCycleKey：key|from|resetDay', creditsDailyCycleKey(CYCLE), 'monthly|2026-11-01|2026-11-30')
+  check('017 creditsDailyCycleKey：非法账期 → null',
+    [creditsDailyCycleKey(null), creditsDailyCycleKey({ ok: false }), creditsDailyCycleKey({ ...CYCLE, from: '' })],
+    [null, null, null])
+  check('017 creditsDailySnapshotOf：version/cycleKey/day/computedAt',
+    [SNAP.version, SNAP.cycleKey, SNAP.day, SNAP.computedAt],
+    [1, 'monthly|2026-11-01|2026-11-30', '2026-11-14', NOW])
+  check('017 creditsDailySnapshotOf：官方计数原样保留',
+    [SNAP.tokensOfficial, SNAP.creditsTotal, SNAP.creditsUsed],
+    [OFFICIAL_TOTALS.tokens, 80000, USED])
+  check('017 creditsDailySnapshotOf：tokensPerCredit 不取整', SNAP.tokensPerCredit, OFFICIAL_TOTALS.tokens / USED)
+  check('017 creditsDailySnapshotOf：capacityTokens 取整', SNAP.capacityTokens,
+    Math.round(OFFICIAL_TOTALS.tokens / USED * 80000))
+  check('017 creditsDailySnapshotOf：三类 tokens / perCredit 与纯函数一致',
+    SNAP.classes, creditsClassRatios(OFFICIAL_TOTALS, USED))
+  check('017 creditsDailySnapshotOf：账期不可除 → null',
+    [creditsDailySnapshotOf({ cycle: { ...CYCLE, used: 0 }, officialTokens: 1, officialTotals: OFFICIAL_TOTALS, computedAt: NOW }),
+      creditsDailySnapshotOf({ cycle: CYCLE, officialTokens: 0, officialTotals: OFFICIAL_TOTALS, computedAt: NOW }),
+      creditsDailySnapshotOf({ cycle: CYCLE, officialTokens: 1, officialTotals: OFFICIAL_TOTALS, computedAt: undefined })],
+    [null, null, null])
+
+  check('017 creditsDailyReusable：同日同账期可复用', creditsDailyReusable(SNAP, CYCLE, '2026-11-14'), true)
+  check('017 creditsDailyReusable：跨日不可复用', creditsDailyReusable(SNAP, CYCLE, '2026-11-15'), false)
+  check('017 creditsDailyReusable：跨账期不可复用', creditsDailyReusable(SNAP, { ...CYCLE, resetDay: '2026-12-31' }, '2026-11-14'), false)
+  check('017 creditsDailyReusable：错版本/坏形状不可复用',
+    [creditsDailyReusable({ ...SNAP, version: 2 }, CYCLE, '2026-11-14'),
+      creditsDailyReusable({ ...SNAP, tokensPerCredit: NaN }, CYCLE, '2026-11-14'),
+      creditsDailyReusable(null, CYCLE, '2026-11-14')],
+    [false, false, false])
+
+  // 文件读写：原子写、坏 JSON 静默、写失败静默。
+  const dir = join(TEST_HOME, '017-daily')
+  const file = join(dir, 'credits-daily.json')
+  mkdirSync(dir, { recursive: true })
+  check('017 readCreditsDaily：不存在 → null', readCreditsDaily(file), null)
+  check('017 writeCreditsDaily：合法快照落盘', writeCreditsDaily(file, SNAP), true)
+  check('017 read/write 往返逐字段一致', readCreditsDaily(file), SNAP)
+  ok('017 writeCreditsDaily：无 .tmp 残留',
+    readdirSync(dir).every(name => !name.includes('.tmp-')))
+  writeFileSync(file, '{ broken json', 'utf8')
+  check('017 readCreditsDaily：坏 JSON → null（不抛）', readCreditsDaily(file), null)
+  check('017 writeCreditsDaily：非法快照不落盘', writeCreditsDaily(file, { ...SNAP, version: 2 }), false)
+  const blocker = join(dir, 'blocker')
+  writeFileSync(blocker, 'x', 'utf8')
+  check('017 writeCreditsDaily：目录不可建 → false（不抛）',
+    writeCreditsDaily(join(blocker, 'daily.json'), SNAP), false)
+
+  // compose：daily 四项数值全用快照；旧字段保持实时。
+  const dailyAlt = creditsDailySnapshotOf({
+    cycle: { ...CYCLE, used: 10000 },
+    officialTokens: OFFICIAL_TOTALS.tokens,
+    officialTotals: OFFICIAL_TOTALS,
+    computedAt: NOW,
+  })
+  const withDaily = composeCreditsToken({
+    card: CARD, official: officialFull, localTotals: localFull, now: NOW,
+    daily: { ...dailyAlt, cached: true },
+  })
+  check('017 compose：daily 可用且带 basis',
+    [withDaily.available, withDaily.ratio.basis],
+    [true, { day: '2026-11-14', computedAt: NOW, cycleKey: 'monthly|2026-11-01|2026-11-30', cached: true, policy: 'daily' }])
+  check('017 compose：tokensPerCredit / capacityTokens 用快照',
+    [withDaily.ratio.tokensPerCredit, withDaily.ratio.capacityTokens],
+    [dailyAlt.tokensPerCredit, dailyAlt.capacityTokens])
+  ok('017 compose：80000 × tokensPerCredit ≈ capacityTokens（±1）',
+    Math.abs(withDaily.ratio.tokensPerCredit * 80000 - withDaily.ratio.capacityTokens) <= 1)
+  check('017 compose：三类 perCredit 用快照、capacity 按实时总量取整',
+    ['uncachedInput', 'cacheRead', 'output'].map(key => [
+      withDaily.ratio.classes[key].perCredit,
+      withDaily.ratio.classes[key].capacity,
+      withDaily.ratio.classes[key].capacity === Math.round(dailyAlt.classes[key].perCredit * 80000),
+    ]),
+    ['uncachedInput', 'cacheRead', 'output'].map(key => [
+      dailyAlt.classes[key].perCredit, Math.round(dailyAlt.classes[key].perCredit * 80000), true,
+    ]))
+  check('017 compose：模型行 perCredit 也用快照 creditsUsed',
+    [withDaily.ratio.models[0].tokensPerCredit, withDaily.ratio.models[0].classes.input.perCredit],
+    [1000000 / dailyAlt.creditsUsed, 500000 / dailyAlt.creditsUsed])
+  check('017 compose：credits/tokens 仍是实时读数',
+    [withDaily.credits.used, withDaily.tokens.official],
+    [USED, OFFICIAL_TOTALS.tokens])
+
+  const legacy = composeCreditsToken({ card: CARD, official: officialFull, localTotals: localFull, now: NOW })
+  check('017 compose：无 daily 不出现 basis', 'basis' in legacy.ratio, false)
+  check('017 compose：无 daily 三类仍是 tokens/perCredit 两键',
+    Object.keys(legacy.ratio.classes.uncachedInput), ['tokens', 'perCredit'])
+  check('017 compose：无 daily 数值与旧公式逐项一致',
+    [legacy.ratio.tokensPerCredit, legacy.ratio.capacityTokens,
+      legacy.ratio.classes, legacy.ratio.models[0].tokensPerCredit],
+    [OFFICIAL_TOTALS.tokens / USED, Math.round(OFFICIAL_TOTALS.tokens / USED * 80000),
+      creditsClassRatios(OFFICIAL_TOTALS, USED), 1000000 / USED])
+
+  // resolveCreditsDaily：同日复用 / fresh 强制 / 跨日重算 / 坏文件回退 / 写失败回退。
+  const resolvedFile = join(dir, 'resolved.json')
+  const first = resolveCreditsDaily({ file: resolvedFile, cycle: CYCLE, official: officialFull, now: NOW })
+  check('017 resolve：首次计算并落盘（cached:false）',
+    [first?.cached, first?.day, first?.tokensPerCredit, readCreditsDaily(resolvedFile) !== null],
+    [false, '2026-11-14', SNAP.tokensPerCredit, true])
+  const second = resolveCreditsDaily({ file: resolvedFile, cycle: CYCLE, official: officialFull, now: NOW })
+  check('017 resolve：同日第二次复用（cached:true）且数值逐位一致',
+    [second?.cached, second?.tokensPerCredit, second?.capacityTokens],
+    [true, first.tokensPerCredit, first.capacityTokens])
+  // fresh 的验收含「文件确实被重写」：先把 mtime 拨旧，fresh 后必须变新（不靠同毫秒碰运气）。
+  const oldMtime = new Date(NOW - 86_400_000)
+  utimesSync(resolvedFile, oldMtime, oldMtime)
+  const freshened = resolveCreditsDaily({
+    file: resolvedFile, cycle: CYCLE, official: officialFull, fresh: true, now: NOW + 60_000,
+  })
+  check('017 resolve：fresh 强制重算（cached:false）', [freshened?.cached, freshened?.computedAt],
+    [false, NOW + 60_000])
+  ok('017 resolve：fresh 重写快照文件（mtime 更新）',
+    statSync(resolvedFile).mtimeMs > oldMtime.getTime())
+  const cycleNext = creditsCycleOf(CARD, NEXT_DAY)
+  const crossed = resolveCreditsDaily({ file: resolvedFile, cycle: cycleNext, official: officialFull, now: NEXT_DAY })
+  check('017 resolve：跨日重算且 day 变新日期', [crossed?.cached, crossed?.day], [false, '2026-11-15'])
+  writeFileSync(resolvedFile, 'not json at all', 'utf8')
+  const recovered = resolveCreditsDaily({ file: resolvedFile, cycle: CYCLE, official: officialFull, now: NOW })
+  check('017 resolve：坏 JSON 回落 cached:false 并重写', [recovered?.cached, readCreditsDaily(resolvedFile) !== null], [false, true])
+  check('017 resolve：官方失败 → null（不写盘）',
+    resolveCreditsDaily({ file: join(dir, 'never.json'), cycle: CYCLE, official: { error: 'official-unavailable' }, now: NOW }), null)
+  const clampedFile = join(dir, 'clamped.json')
+  check('017 resolve：官方明细被夹紧 → null（残缺口径不落盘）',
+    [resolveCreditsDaily({ file: clampedFile, cycle: CYCLE, official: { ...officialFull, coverage: { clampedFrom: '2026-11-03' } }, now: NOW }),
+      existsSync(clampedFile)],
+    [null, false])
+  check('017 resolve：写盘失败 → null（退回旧链路）',
+    resolveCreditsDaily({ file: join(blocker, 'daily.json'), cycle: CYCLE, official: officialFull, now: NOW }), null)
+
+  // 端到端：buildCreditsTokenSnapshot 通过 state.sources + officialCache 注入假数据（不联网）。
+  // 用真实“今天”生成账期，避免测试随日历漂移；只断言相对关系。
+  const REAL_NOW = Date.now()
+  const realReset = new Date(new Date(REAL_NOW).getFullYear(), new Date(REAL_NOW).getMonth() + 1, 1, 0, 0, 0).getTime()
+  const REAL_CARD = {
+    ...CARD,
+    meters: [{ ...CARD.meters[0], resetAt: realReset }],
+  }
+  const realCycle = creditsCycleOf(REAL_CARD, REAL_NOW)
+  const realNextDate = new Date(REAL_NOW)
+  realNextDate.setDate(realNextDate.getDate() + 1)
+  realNextDate.setHours(12, 0, 0, 0)
+  const REAL_NEXT = realNextDate.getTime()
+  const realCycleNext = creditsCycleOf(REAL_CARD, REAL_NEXT)
+  const integrationFile = join(TEST_HOME, '017-integration-daily.json')
+  const integrationConfig = effectiveConfig({
+    sources: ['token-plan-console'],
+    autoDetect: false,
+    usageStats: false,
+    creditsDailyPath: integrationFile,
+    officialUsageMinutes: 5,
+  }, ctxStub)
+  const officialPayload = (from, to, days) => ({
+    generatedAt: REAL_NOW,
+    range: { kind: 'custom', days, from, to },
+    granularity: 'day',
+    totals: OFFICIAL_TOTALS,
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+  })
+  resetInstanceState()
+  invalidateSources()
+  officialCache.clear()
+  state.sources.set('token-plan-console', { at: Date.now(), card: REAL_CARD })
+  officialCache.set(realCycle.from + '|' + realCycle.to,
+    { at: Date.now(), payload: officialPayload(realCycle.from, realCycle.to, realCycle.elapsedDays) })
+  const i1 = await buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NOW })
+  const i2 = await buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NOW })
+  check('017 集成：首日计算并写盘（cached:false）',
+    [i1.available, i1.ratio.basis?.cached, i1.ratio.basis?.day, readCreditsDaily(integrationFile) !== null],
+    [true, false, dayKey(REAL_NOW), true])
+  check('017 集成：同日复用（cached:true）且比值逐位一致',
+    [i2.ratio.basis?.cached, i2.ratio.tokensPerCredit, i2.ratio.capacityTokens],
+    [true, i1.ratio.tokensPerCredit, i1.ratio.capacityTokens])
+  officialCache.set(realCycleNext.from + '|' + realCycleNext.to,
+    { at: Date.now(), payload: officialPayload(realCycleNext.from, realCycleNext.to, realCycleNext.elapsedDays) })
+  const i3 = await buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NEXT })
+  check('017 集成：跨日重算且 basis.day 变新日期',
+    [i3.ratio.basis?.cached, i3.ratio.basis?.day], [false, dayKey(REAL_NEXT)])
+  const [i4, i5] = await Promise.all([
+    buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NEXT }),
+    buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NEXT }),
+  ])
+  check('017 集成：并发共享同一次计算（单飞）', i4 === i5, true)
+  // 首日并发才是真正会「两次都算、两次都写」的窗口：清掉文件后同时发两个非 fresh 请求，
+  // 两者必须拿到同一个对象（共享 promise），且文件由这一轮写入。
+  rmSync(integrationFile, { force: true })
+  const [c1, c2] = await Promise.all([
+    buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NEXT }),
+    buildCreditsTokenSnapshot(integrationConfig, ctxStub, { now: REAL_NEXT }),
+  ])
+  check('017 集成：并发首日只算一次并落盘',
+    [c1 === c2, c1.ratio.basis?.cached, readCreditsDaily(integrationFile) !== null],
+    [true, false, true])
+  check('017 集成：并发结束后 state.inflight 已释放', state.inflight, null)
 }
 
 // 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。

@@ -1692,7 +1692,7 @@ function findChip(node) {
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [153, 153])
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [155, 155])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -5099,7 +5099,8 @@ async function mountBreakdown(credits, options = {}) {
   const bundle = await mountUsage()
   const internals = bundle.api.__internals
   ok('T015 __internals 暴露分项行与模型块纯函数',
-    typeof internals.usageCreditsClassesLine === 'function'
+    typeof internals.usageCreditsClassesCard === 'function'
+    && typeof internals.usageCreditsDailyLine === 'function'
     && typeof internals.usageCreditsModelsBlock === 'function')
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok('T015 三个 data 钩子与 data-model 落地',
@@ -5107,8 +5108,10 @@ async function mountBreakdown(credits, options = {}) {
     && source.includes('"data-usage-credits-models": "1"')
     && source.includes('"data-usage-credits-model": "1"')
     && source.includes('"data-model": id'))
-  ok('T015 COPY 四个新键 + 改写脚注都带分项口径',
-    source.includes('usageCreditsClasses: "每 Credit 的分项（tokens）："')
+  ok('T015/T017 COPY 分项卡与脚注都带分项口径',
+    source.includes('usageCreditsClasses: "1 Credit 折合"')
+    && source.includes('usageCreditsClassesUnit: "tokens"')
+    && source.includes('usageCreditsDaily: "按 {day} 当日实测比值计算，每日刷新一次（{time}）"')
     && source.includes('usageCreditsClassUncached: "未命中输入"')
     && source.includes('usageCreditsModelsTitle: "每个模型各自的比值"')
     && source.includes('usageCreditsModelsNote: "模型行 = 本机该模型 tokens')
@@ -5116,8 +5119,23 @@ async function mountBreakdown(credits, options = {}) {
   const cssStart = source.indexOf('.tpq-usage-credits-classes{')
   const cssEnd = source.indexOf('@media (max-width:520px)', cssStart)
   const creditsCss = cssStart >= 0 && cssEnd > cssStart ? source.slice(cssStart, cssEnd) : ''
-  ok('T015 CSS 分项行 12px 弱化色',
-    /\.tpq-usage-credits-classes\{[^}]*font-size:12px;[\s\S]{0,160}label-secondary/.test(creditsCss))
+  ok('T015/T017 CSS 分项卡：并入宿主卡片体系（layer-2 底 / border-l2 描边 / 10px 圆角 / 10px 12px 内边距 / 无外距）',
+    /\.tpq-usage-credits-classes\{background:var\(--dsw-alias-bg-layer-2,rgba\(128,128,128,\.10\)\);[\s\S]{0,80}border:1px solid var\(--dsw-alias-border-l2,rgba\(128,128,128,\.18\)\);border-radius:10px;padding:10px 12px;min-width:0\}/.test(creditsCss)
+    && !/\.tpq-usage-credits-classes\{[^}]*margin:/.test(creditsCss)
+    && !/\.tpq-usage-credits-classes\{[^}]*#fff|#e6e9ef/.test(creditsCss))
+  ok('T017 CSS 卡片标题 11px / 三列 grid gap 8 / 每格纵向 flex',
+    /\.tpq-usage-credits-classes-title\{[^}]*font-size:11px;/.test(creditsCss)
+    && /\.tpq-usage-credits-classes-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\);gap:8px;/.test(creditsCss)
+    && /\.tpq-usage-credits-class\{display:flex;flex-direction:column;gap:2px;min-width:0\}/.test(creditsCss))
+  ok('T017 CSS value 20px/600 tabular、label 11px、unit 10.5px（value 走 label-primary，不硬编码颜色）',
+    /\.tpq-usage-credits-class-value\{font-size:20px;font-weight:600;[\s\S]{0,120}color:var\(--dsw-alias-label-primary,inherit\);[\s\S]{0,120}lining-nums tabular-nums/.test(creditsCss)
+    && !/\.tpq-usage-credits-class-value\{[^}]*#1f232b/.test(creditsCss)
+    && /\.tpq-usage-credits-class-label\{font-size:11px;/.test(creditsCss)
+    && /\.tpq-usage-credits-class-unit\{font-size:10\.5px;/.test(creditsCss))
+  ok('T017 CSS 窄屏三格折两列',
+    /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(source.slice(source.indexOf('@media (max-width:520px)'))))
+  ok('T017 CSS 按日提示 11px 弱化色',
+    /\.tpq-usage-credits-daily\{[^}]*font-size:11px;[\s\S]{0,120}label-tertiary/.test(creditsCss))
   ok('T015 CSS 模型块定高内滚（252px / auto / contain / thin / scrollbar-color）',
     /\.tpq-usage-credits-models\{[^}]*max-height:252px;[\s\S]{0,120}overflow-y:auto;[\s\S]{0,160}overscroll-behavior:contain;[\s\S]{0,160}scrollbar-width:thin;[\s\S]{0,200}scrollbar-color:var\(--dsw-alias-border-l2/.test(creditsCss))
   ok('T015 CSS 细滚动条 8px + thumb 圆角 + 焦点环',
@@ -5130,7 +5148,7 @@ async function mountBreakdown(credits, options = {}) {
     && /\.tpq-usage-credits-model-name\{[^}]*overflow:hidden;text-overflow:ellipsis;[\s\S]{0,80}white-space:nowrap/.test(creditsCss)
     && /\.tpq-usage-credits-model-tokens,\.tpq-usage-credits-model-ratio\{[^}]*white-space:nowrap;[\s\S]{0,120}tabular-nums/.test(creditsCss)
     && /\.tpq-usage-credits-models-note\{[^}]*font-size:10.5px/.test(creditsCss))
-  const fnStart = source.indexOf('function usageCreditsClassesLine')
+  const fnStart = source.indexOf('function usageCreditsClassesCard')
   const fnEnd = source.indexOf('function usageCreditsSection')
   const fnRegion = fnStart >= 0 && fnEnd > fnStart ? source.slice(fnStart, fnEnd) : ''
   const codeOnly = fnRegion.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
@@ -5141,13 +5159,21 @@ async function mountBreakdown(credits, options = {}) {
 {
   const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot())
   const section = creditsSectionOf(tree)
-  const classesLine = nodesWithProp(section, 'data-usage-credits-classes')[0]
-  ok('T015 zh 分项行存在且 class 正确',
-    classesLine !== undefined && String(classesLine.props.className).includes('tpq-usage-credits-classes'))
-  check('T015 zh 分项行逐字（formatTokens 口径：5.5万 / 1,977 / 274.46）',
-    collectText(classesLine).join(''),
-    '每 Credit 的分项（tokens）：缓存命中 5.5万 · 未命中输入 1,977 · 输出 274.46')
-  ok('T015 zh 分项行不出现百分比', !collectText(classesLine).join('').includes('%'))
+  const classesCard = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  ok('T015/T017 zh 分项卡片存在且 class 正确',
+    classesCard !== undefined && String(classesCard.props.className).includes('tpq-usage-credits-classes'))
+  check('T017 zh 卡片标题', collectText(findNodes(classesCard, 'tpq-usage-credits-classes-title')[0]).join(''), '1 Credit 折合')
+  const zhCells = findNodes(classesCard, 'tpq-usage-credits-class')
+  check('T017 zh 三格顺序固定（缓存命中 / 未命中输入 / 输出）',
+    zhCells.map((cell) => cell.props['data-usage-credits-class']), ['cacheRead', 'uncachedInput', 'output'])
+  check('T017 zh 三格逐字（label / value / unit；formatTokens 口径）',
+    zhCells.map((cell) => [
+      collectText(findNodes(cell, 'tpq-usage-credits-class-label')[0]).join(''),
+      collectText(findNodes(cell, 'tpq-usage-credits-class-value')[0]).join(''),
+      collectText(findNodes(cell, 'tpq-usage-credits-class-unit')[0]).join(''),
+    ]),
+    [['缓存命中', '5.5万', 'tokens'], ['未命中输入', '1,977', 'tokens'], ['输出', '274.46', 'tokens']])
+  ok('T015 zh 分项卡片不出现百分比', !collectText(classesCard).join('').includes('%'))
   const modelsBlock = nodesWithProp(section, 'data-usage-credits-models')[0]
   ok('T015 zh 模型块存在', modelsBlock !== undefined)
   check('T015 模型块 tabIndex / role / aria-label',
@@ -5196,9 +5222,15 @@ async function mountBreakdown(credits, options = {}) {
 {
   const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot(), { lang: 'en-US' })
   const section = creditsSectionOf(tree)
-  check('T015 en 分项行逐字（55K / 2.0K / 274.46）',
-    collectText(nodesWithProp(section, 'data-usage-credits-classes')[0]).join(''),
-    'Per credit by class (tokens): cache hit 55K · uncached input 2.0K · output 274.46')
+  const enCard = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  check('T017 en 卡片标题', collectText(findNodes(enCard, 'tpq-usage-credits-classes-title')[0]).join(''), 'One credit is worth')
+  check('T017 en 三格逐字（55K / 2.0K / 274.46）',
+    findNodes(enCard, 'tpq-usage-credits-class').map((cell) => [
+      collectText(findNodes(cell, 'tpq-usage-credits-class-label')[0]).join(''),
+      collectText(findNodes(cell, 'tpq-usage-credits-class-value')[0]).join(''),
+      collectText(findNodes(cell, 'tpq-usage-credits-class-unit')[0]).join(''),
+    ]),
+    [['cache hit', '55K', 'tokens'], ['uncached input', '2.0K', 'tokens'], ['output', '274.46', 'tokens']])
   const modelsBlock = nodesWithProp(section, 'data-usage-credits-models')[0]
   check('T015 en 模型块 aria-label 用英文标题',
     [modelsBlock.props['aria-label'], collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-title')[0]).join('')],
@@ -5407,6 +5439,185 @@ async function mountModelClasses(models, options = {}) {
     [findNodes(section, 'tpq-usage-credits-models-title').length, findNodes(section, 'tpq-usage-credits-models-note').length], [1, 1])
   ok('T016 回归：每行第二行最多一条（不重复渲染）',
     rows.every((row) => findNodes(row, 'tpq-usage-credits-model-classes').length === 1))
+}
+
+/* ===== 017 分项小卡片 + 折算按日提示（INTERFACE §4-§5）=====
+ * 卡片取代 015 的一行文字：三格 label / value / unit 分离，value 20px。
+ * daily 只在 ratio.basis 同时有 day 与 computedAt 时出现，时间按读者本地时区 HH:MM。
+ * 假 React 没有布局引擎，375px 溢出由 CSS 契约（minmax(0,1fr) / min-width:0 / anywhere / 窄屏两列）
+ * 在静态断言里钉住，实际几何另由 headless Edge 自检。 */
+function creditsClassCells(card) {
+  return findNodes(card, 'tpq-usage-credits-class')
+}
+
+function creditsCellTexts(cell) {
+  return ['label', 'value', 'unit'].map((kind) =>
+    collectText(findNodes(cell, 'tpq-usage-credits-class-' + kind)[0]).join(''))
+}
+
+function expectedClock(ms) {
+  const at = new Date(ms)
+  return String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0')
+}
+
+function withBasis(basis, ratioOverrides = {}) {
+  return makeCreditsBreakdownSnapshot({ ratio: { ...ratioOverrides, basis } })
+}
+
+/* ① 静态契约：结构钩子、三格键名、daily 钩子、卡内无 % / Credits / 货币符号。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T017 __internals 暴露卡片与按日提示纯函数',
+    typeof internals.usageCreditsClassesCard === 'function'
+    && typeof internals.usageCreditsDailyLine === 'function')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T017 三格键名与 daily 钩子落地',
+    source.includes('"data-usage-credits-class": key')
+    && source.includes('cellOf("cacheRead"')
+    && source.includes('cellOf("uncachedInput"')
+    && source.includes('cellOf("output"')
+    && source.includes('"data-usage-credits-daily": "1"')
+    && source.includes('tpq-usage-credits-classes-title'))
+  ok('T017 卡内三件套 class 名落地',
+    source.includes('"tpq-usage-credits-class-label"')
+    && source.includes('"tpq-usage-credits-class-value"')
+    && source.includes('"tpq-usage-credits-class-unit"'))
+  const cardStart = source.indexOf('function usageCreditsClassesCard')
+  const cardEnd = source.indexOf('function usageCreditsDailyLine', cardStart)
+  const cardCode = cardStart >= 0 && cardEnd > cardStart
+    ? source.slice(cardStart, cardEnd).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    : ''
+  ok('T017 卡片渲染段（剥注释后）无 % 字面量 / 硬编码 Credits / 货币符号，文案全部来自 COPY',
+    cardCode !== ''
+    && !cardCode.includes('"%"') && !cardCode.includes("'%'")
+    && !/"Credits[ "']/.test(cardCode) && !/¥|\$/.test(cardCode)
+    && cardCode.includes('copy.usageCreditsClasses')
+    && cardCode.includes('copy.usageCreditsClassesUnit'), cardCode.slice(0, 200))
+}
+
+/* ② 中文就绪态：标题、三格逐字、daily 文本与位置。 */
+{
+  const computedAt = Date.UTC(2026, 10, 14, 12, 5)
+  const { tree } = await mountBreakdown(withBasis({
+    day: '2026-11-14', computedAt, cycleKey: 'monthly|2026-11-01|2026-11-30', cached: true, policy: 'daily',
+  }))
+  const section = creditsSectionOf(tree)
+  const card = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  check('T017 zh 卡片标题', collectText(findNodes(card, 'tpq-usage-credits-classes-title')[0]).join(''), '1 Credit 折合')
+  const cells = creditsClassCells(card)
+  check('T017 zh 三格顺序固定', cells.map((cell) => cell.props['data-usage-credits-class']),
+    ['cacheRead', 'uncachedInput', 'output'])
+  check('T017 zh 三格逐字（label / value / unit）', cells.map(creditsCellTexts),
+    [['缓存命中', '5.5万', 'tokens'], ['未命中输入', '1,977', 'tokens'], ['输出', '274.46', 'tokens']])
+  ok('T017 zh 卡内无百分比 / Credits / 货币符号',
+    !/%|Credits|¥|\$/.test(collectText(card).join('')), collectText(card).join(''))
+  const daily = nodesWithProp(section, 'data-usage-credits-daily')[0]
+  check('T017 zh daily 逐字（时间按本地 HH:MM）',
+    collectText(daily).join(''),
+    '按 2026-11-14 当日实测比值计算，每日刷新一次（' + expectedClock(computedAt) + '）')
+  ok('T017 zh daily 时间是两位数 HH:MM', /（\d{2}:\d{2}）$/.test(collectText(daily).join('')), collectText(daily).join(''))
+  const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
+  check('T017 zh 块内顺序：classes → estimate → daily → models',
+    seq, ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
+      'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
+      'tpq-usage-credits-daily', 'tpq-usage-credits-models', 'tpq-usage-credits-note'])
+  ok('T017 zh daily 与卡片、模型块同屏不互相顶掉',
+    findNodes(section, 'tpq-usage-credits-classes').length === 1
+    && findNodes(section, 'tpq-usage-credits-models').length === 1)
+}
+
+/* ③ 英文就绪态：标题 / daily 模板 / 全 ASCII 无万·亿·中文。 */
+{
+  const computedAt = Date.UTC(2026, 2, 2, 1, 7)
+  const { tree } = await mountBreakdown(withBasis({
+    day: '2026-03-02', computedAt, cycleKey: 'monthly|2026-03-01|2026-03-31', cached: false, policy: 'daily',
+  }), { lang: 'en-US' })
+  const section = creditsSectionOf(tree)
+  const card = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  check('T017 en 卡片标题', collectText(findNodes(card, 'tpq-usage-credits-classes-title')[0]).join(''), 'One credit is worth')
+  check('T017 en 三格逐字', creditsClassCells(card).map(creditsCellTexts),
+    [['cache hit', '55K', 'tokens'], ['uncached input', '2.0K', 'tokens'], ['output', '274.46', 'tokens']])
+  const daily = nodesWithProp(section, 'data-usage-credits-daily')[0]
+  check('T017 en daily 逐字',
+    collectText(daily).join(''),
+    'Computed from the measured ratio on 2026-03-02; refreshed once per day (' + expectedClock(computedAt) + ')')
+  ok('T017 en daily / 卡片无中文与万/亿',
+    !/[\u3400-\u9fff]|万|亿/.test(collectText(card).join('') + collectText(daily).join('')))
+}
+
+/* ④ daily 两路：basis 缺失/不完整一律不渲染；旧形状整块缺席。 */
+{
+  const cases = [
+    ['无 basis（015 旧响应）', undefined],
+    ['basis 是 null', null],
+    ['basis 是字符串', 'nope'],
+    ['basis 是数组', []],
+    ['basis 空对象', {}],
+    ['basis 缺 day', { computedAt: Date.UTC(2026, 10, 14, 12, 5) }],
+    ['basis day 空串', { day: '  ', computedAt: Date.UTC(2026, 10, 14, 12, 5) }],
+    ['basis day 非字符串', { day: 20261114, computedAt: Date.UTC(2026, 10, 14, 12, 5) }],
+    ['basis 缺 computedAt', { day: '2026-11-14' }],
+    ['basis computedAt 非有限', { day: '2026-11-14', computedAt: NaN }],
+  ]
+  for (const [label, basis] of cases) {
+    const credits = basis === undefined ? makeCreditsBreakdownSnapshot() : withBasis(basis)
+    const { tree } = await mountBreakdown(credits)
+    const section = creditsSectionOf(tree)
+    check('T017 daily ' + label + '：不渲染', nodesWithProp(section, 'data-usage-credits-daily').length, 0)
+    check('T017 daily ' + label + '：卡片照旧', nodesWithProp(section, 'data-usage-credits-classes').length, 1)
+    check('T017 daily ' + label + '：折算行照旧', nodesWithProp(section, 'data-usage-credits-estimate').length, 1)
+  }
+}
+
+/* ⑤ 卡片闸门：缺一 / 非对象 / 非有限 / perCredit=null 都不渲染空壳；0 是真实值照实印。 */
+{
+  const cases = [
+    ['classes 缺 output', { cacheRead: { perCredit: 1 }, uncachedInput: { perCredit: 2 } }],
+    ['classes 缺 cacheRead', { uncachedInput: { perCredit: 2 }, output: { perCredit: 3 } }],
+    ['classes 缺 uncachedInput', { cacheRead: { perCredit: 1 }, output: { perCredit: 3 } }],
+    ['output perCredit=NaN', { cacheRead: { perCredit: 1 }, uncachedInput: { perCredit: 2 }, output: { perCredit: NaN } }],
+    ['cacheRead perCredit=Infinity', { cacheRead: { perCredit: Infinity }, uncachedInput: { perCredit: 2 }, output: { perCredit: 3 } }],
+    ['output perCredit=null（不是 0）', { cacheRead: { perCredit: 1 }, uncachedInput: { perCredit: 2 }, output: { perCredit: null } }],
+    ['cell 不是对象', { cacheRead: 1, uncachedInput: 2, output: 3 }],
+    ['classes 是数组', []],
+    ['classes 是字符串', 'nope'],
+  ]
+  for (const [label, classes] of cases) {
+    const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot({ ratio: { classes } }))
+    const section = creditsSectionOf(tree)
+    check('T017 闸门 ' + label + '：整卡不渲染', nodesWithProp(section, 'data-usage-credits-classes').length, 0)
+    check('T017 闸门 ' + label + '：不留空标题', findNodes(section, 'tpq-usage-credits-classes-title').length, 0)
+    check('T017 闸门 ' + label + '：折算行仍在', nodesWithProp(section, 'data-usage-credits-estimate').length, 1)
+  }
+  const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot({ ratio: { classes: {
+    cacheRead: { perCredit: 0 }, uncachedInput: { perCredit: 0 }, output: { perCredit: 0.5 },
+  } } }))
+  const card = nodesWithProp(creditsSectionOf(tree), 'data-usage-credits-classes')[0]
+  check('T017 0 是真实值：照实印 0（不隐藏、不写成 —）', creditsClassCells(card).map(creditsCellTexts),
+    [['缓存命中', '0', 'tokens'], ['未命中输入', '0', 'tokens'], ['输出', '0.5', 'tokens']])
+}
+
+/* ⑥ 016 回归：模型行第二行与卡片同屏，两套第二行互不干扰。 */
+{
+  const classes = { cacheRead: { perCredit: 10 }, uncachedInput: { perCredit: 20 }, output: { perCredit: 30 } }
+  const models = [{
+    id: 'm1', provider: 'qwen', model: 'qwen3-max', tokens: 1000, calls: 1, tokensPerCredit: 100,
+    classes: {
+      input: { tokens: 1, perCredit: 5 }, cacheRead: { tokens: 1, perCredit: 6 },
+      output: { tokens: 1, perCredit: 7 }, cacheWrite: { tokens: 1, perCredit: 8 },
+    },
+  }]
+  const { tree } = await mountBreakdown(makeCreditsBreakdownSnapshot({ ratio: { classes, models } }))
+  const section = creditsSectionOf(tree)
+  const card = nodesWithProp(section, 'data-usage-credits-classes')[0]
+  ok('T016 回归：卡片与模型行第二行同时存在', card !== undefined
+    && findNodes(section, 'tpq-usage-credits-model-classes').length === 1)
+  check('T016 回归：模型第二行文本未变',
+    collectText(findNodes(section, 'tpq-usage-credits-model-classes')[0]).join(''),
+    '每 Credit：输入 5 · 缓存命中 6 · 输出 7 · 缓存写入 8')
+  check('T017 卡片三格未受模型行影响', creditsClassCells(card).map(creditsCellTexts),
+    [['缓存命中', '10', 'tokens'], ['未命中输入', '20', 'tokens'], ['输出', '30', 'tokens']])
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

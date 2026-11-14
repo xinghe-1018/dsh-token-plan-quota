@@ -1030,12 +1030,13 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
-  // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 153；011 本身不加键）',
-    zhKeys011.length === 153 && enKeys011.length === 153)
+  // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）；
+  // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 155；011 本身不加键）',
+    zhKeys011.length === 155 && enKeys011.length === 155)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
-  ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('011 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('011 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
 
@@ -1104,9 +1105,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151；016 再补 2 个按类比值键 → 153。
-  ok('012 i18n：COPY 现在 zh / en 各 153 键（012/014/015/016 的新键都在里面）',
-    zhKeys012.length === 153 && enKeys012.length === 153)
+  // 015 再补 4 个分项/按模型键 → 151；016 再补 2 个按类比值键 → 153；017 再补 2 个并改 1 个 → 155。
+  ok('012 i18n：COPY 现在 zh / en 各 155 键（012/014/015/016/017 的新键都在里面）',
+    zhKeys012.length === 155 && enKeys012.length === 155)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1164,7 +1165,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       && changelog012.includes('缓存命中'))
 
   // 7) 越界面：012 仍是纯客户端展示，配置键与出站主机都不许动。
-  ok('012 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('012 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('012 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
@@ -1333,7 +1334,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     () => assertUsageIndexShape(blankModel), /lastModel 不是非空字符串/)
 
   // 5) 越界面：013 不改配置键、不加出站主机。
-  ok('013 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('013 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('013 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
@@ -1449,7 +1450,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /.tpq-usage-credits\{[^}]*border/.test(src) && /\.tpq-usage-credits-ratio\{[^}]*tabular-nums/.test(src))
 
   // 9) 越界面：014 不加配置键、不加出站主机、不引第三方依赖。
-  ok('014 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('014 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('014 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
@@ -1505,7 +1506,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     modelRegion !== '' && !modelRegion.includes('.sort(') && !modelRegion.includes('.reverse(')
       && !modelRegion.includes('Math.round') && !modelRegion.includes('toFixed('))
   ok('015 宿主：classes 取官方 totals、models 取本机 models，并标 modelsBasis local',
-    indexSrc015.includes('classes: creditsClassRatios(official.totals')
+    indexSrc015.includes('classes: dailySnapshot === null')
+      && indexSrc015.includes('? creditsClassRatios(official.totals, cycle.used)')
       && indexSrc015.includes('models: creditsModelRatios(localTotals?.models')
       && indexSrc015.includes("modelsBasis: 'local'"))
   ok('015 宿主：官方明细没有模型维度时 modelsBasis 仍是 local（不伪装成官方拆分）',
@@ -1513,14 +1515,15 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
 
   // 2) 客户端：两块渲染的闸门是纯函数，降级矩阵能直接打，不必起真实取数。
   ok('015 客户端：两块渲染函数都是纯函数并进 __internals',
-    src.includes('function usageCreditsClassesLine(') && src.includes('function usageCreditsModelsBlock(')
-      && src.includes('usageCreditsClassesLine, usageCreditsModelsBlock,'))
+    src.includes('function usageCreditsClassesCard(') && src.includes('function usageCreditsModelsBlock(')
+      && src.includes('usageCreditsClassesCard, usageCreditsModelsBlock,')
+      && src.includes('usageCreditsDailyLine,'))
   for (const hook of ['"data-usage-credits-classes": "1"', '"data-usage-credits-models": "1"',
     '"data-usage-credits-model": "1"', '"data-model": id', 'role: "group"',
     '"aria-label": copy.usageCreditsModelsTitle']) {
     ok('015 客户端：钩子 ' + hook + ' 存在', src.includes(hook))
   }
-  const blocksStart = src.indexOf('function usageCreditsClassesLine')
+  const blocksStart = src.indexOf('function usageCreditsClassesCard')
   const blocksEnd = src.indexOf('function usageCreditsSection')
   ok('015 客户端：分项行与模型块可定位', blocksStart > 0 && blocksEnd > blocksStart)
   const blocksRegion = blocksStart > 0 && blocksEnd > blocksStart ? src.slice(blocksStart, blocksEnd) : ''
@@ -1541,8 +1544,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数 zh / en 各 153（147 + 4 + 016 的 2）',
-    zhKeys015.length === 153 && enKeys015.length === 153)
+  ok('015 i18n：COPY 键数 zh / en 各 155（147 + 4 + 016 的 2 + 017 的 2）',
+    zhKeys015.length === 155 && enKeys015.length === 155)
   const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
     'usageCreditsModelsNote']
   ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
@@ -1565,12 +1568,12 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('015 CSS：焦点环与 8px 细滚动条都在（键盘也能滚这块）',
     /\.tpq-usage-credits-models:focus-visible\{[^}]*outline/.test(src)
       && /\.tpq-usage-credits-models::-webkit-scrollbar\{[^}]*width:8px/.test(src))
-  ok('015 CSS：分项行与模型脚注挂既有文字色变量（不自造颜色）',
-    /\.tpq-usage-credits-classes\{[^}]*--dsw-alias-label-secondary/.test(src)
+  ok('015 CSS：分项卡与模型脚注挂既有文字色变量（不自造颜色）',
+    /\.tpq-usage-credits-classes-title\{[^}]*--dsw-alias-label-secondary/.test(src)
       && /\.tpq-usage-credits-models-note\{[^}]*--dsw-alias-label-tertiary/.test(src))
 
   // 5) 越界面：015 不加配置键、不加出站主机。
-  ok('015 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('015 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('015 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
@@ -1664,8 +1667,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
   const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
-  ok('016 i18n：COPY 现在 zh / en 各 153 键（015 的 151 + 2）',
-    zhKeys016.length === 153 && enKeys016.length === 153)
+  ok('016 i18n：COPY 现在 zh / en 各 155 键（015 的 151 + 2 + 017 的 2）',
+    zhKeys016.length === 155 && enKeys016.length === 155)
   const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
   ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
   const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
@@ -1691,7 +1694,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       && /\.tpq-usage-credits-model-classes\{[^}]*--dsw-alias-label-tertiary/.test(src16)
       && /\.tpq-usage-credits-model-classes\{[^}]*tabular-nums/.test(src16))
 
-  ok('016 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('016 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
   ok('016 出站主机没有被这份功能扩表（仍 8 条 https）',
     __internals.DECLARED_HOSTS.length === 8
       && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
@@ -1711,6 +1714,160 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('016 规格目录存在（spec/plan/tasks/INTERFACE）',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '016-per-model-classes', name))))
+
+  // ── 017：折算基础按自然日缓存 + 分项放大成三格卡片 ──────────────────────────
+  {
+    const indexSrc017 = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+    const clientSrc017 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+
+    // 1) 配置面：只多一个落盘路径键，出站主机与路由都不许扩。
+    ok('017 配置：新增 creditsDailyPath 且键数为 26',
+      Object.keys(__internals.DEFAULTS).length === 26
+        && __internals.DEFAULTS.creditsDailyPath === '$DSH_HOME/token-plan-quota.credits-daily.json')
+    ok('017 出站主机没有被这份功能扩表（仍 8 条 https）',
+      __internals.DECLARED_HOSTS.length === 8
+        && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+    // 2) 快照纯函数：形状白名单 + 版本 + 三类键顺序。
+    const dailyFns017 = ['creditsDailyCycleKey', 'creditsDailySnapshotOf', 'creditsDailyReusable',
+      'readCreditsDaily', 'writeCreditsDaily', 'resolveCreditsDaily']
+    ok('017 宿主：六个快照函数都进 __internals（纯函数可直接打）',
+      dailyFns017.every(name => typeof __internals[name] === 'function'))
+    ok('017 宿主：快照版本 1、三类顺序 uncachedInput/cacheRead/output',
+      indexSrc017.includes('const CREDITS_DAILY_VERSION = 1')
+        && indexSrc017.includes("const CREDITS_DAILY_CLASS_KEYS = ['uncachedInput', 'cacheRead', 'output']"))
+    const dailyFieldHooks017 = ['cycleKey,', 'day: dayKey(at)', 'computedAt: at', 'tokensOfficial: tokens',
+      'creditsTotal: total', 'creditsUsed: used', 'tokensPerCredit,', 'capacityTokens: Math.round(tokensPerCredit * total)']
+    ok('017 宿主：快照字段齐全（比值、容量、官方读数、已用 Credits 都在一份里）',
+      dailyFieldHooks017.every(hook => indexSrc017.includes(hook)))
+
+    // 3) 复用规则：账期 key 用 resetDay 收尾，同日同账期才复用。
+    ok('017 宿主：账期 key = key|from|resetDay（不用今天收尾，否则每天换 key 无法复用）',
+      indexSrc017.includes("return cycle.key + '|' + from + '|' + resetDay"))
+    ok('017 宿主：同日同账期才复用，其余一律重算',
+      indexSrc017.includes('normalized.day === day && normalized.cycleKey === cycleKey'))
+    ok('017 宿主：落盘先写 .tmp 再 rename（读端永远看不到半截 JSON）',
+      indexSrc017.includes('const tmp = file + ')
+        && indexSrc017.includes('renameSync(tmp, file)')
+        && indexSrc017.includes('unlinkSync(tmp)'))
+
+    // 4) 响应契约：有 daily 用快照，没有就逐字段退回旧形状（basis 也不出现）。
+    ok('017 宿主：无 daily 时 classes 仍取官方 totals（旧响应逐字段不变）',
+      indexSrc017.includes('classes: dailySnapshot === null')
+        && indexSrc017.includes('? creditsClassRatios(official.totals, cycle.used)'))
+    ok('017 宿主：有 daily 时总比值/容量/分项 perCredit 全部取快照',
+      indexSrc017.includes('dailySnapshot.tokensPerCredit')
+        && indexSrc017.includes('dailySnapshot.capacityTokens')
+        && indexSrc017.includes('dailySnapshot.classes[key].perCredit'))
+    ok('017 宿主：分项 capacity = 快照 perCredit × credits.total（与总容量同一条推导）',
+      indexSrc017.includes('capacity: Math.round(perCredit * cycle.total)'))
+    ok('017 宿主：basis 带 day/computedAt/cycleKey/cached，policy 固定 daily',
+      ['day: dailySnapshot.day', 'computedAt: dailySnapshot.computedAt', 'cycleKey: dailySnapshot.cycleKey',
+        "policy: 'daily'"].every(hook => indexSrc017.includes(hook)))
+    ok('017 宿主：官方明细被夹紧时不落盘（残缺口径不能当当日基准）',
+      indexSrc017.includes('official.coverage?.clampedFrom'))
+
+    // 5) 客户端：卡片三格 + 按日提示都是纯函数，降级矩阵能直接打。
+    const cardStart017 = clientSrc017.indexOf('function usageCreditsClassesCard(')
+    const cardEnd017 = clientSrc017.indexOf('function usageCreditsDailyLine(')
+    const cardRegion017 = cardStart017 > 0 && cardEnd017 > cardStart017
+      ? clientSrc017.slice(cardStart017, cardEnd017) : ''
+    const stripComments017 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    const cardCode017 = cardRegion017 !== '' ? stripComments017(cardRegion017) : ''
+    ok('017 客户端：卡片函数可定位且进 __internals',
+      cardCode017 !== '' && clientSrc017.includes('usageCreditsClassesCard,'))
+    ok('017 客户端：三格顺序固定为缓存命中 / 未命中输入 / 输出',
+      cardCode017.indexOf('cellOf("cacheRead"') > 0
+        && cardCode017.indexOf('cellOf("cacheRead"') < cardCode017.indexOf('cellOf("uncachedInput"')
+        && cardCode017.indexOf('cellOf("uncachedInput"') < cardCode017.indexOf('cellOf("output"'))
+    const cardHooks017 = ['"data-usage-credits-classes": "1"', '"data-usage-credits-class": key',
+      '"tpq-usage-credits-class-value"', '"tpq-usage-credits-class-unit"',
+      'copy.usageCreditsClassesUnit']
+    ok('017 客户端：卡片钩子齐全（容器 / 三格 / 数值 / 单位）',
+      cardHooks017.every(hook => clientSrc017.includes(hook)))
+    ok('017 客户端：任一 perCredit 缺失就整卡不渲染（不画两格误导）',
+      cardCode017.includes('cacheRead === null || uncachedInput === null || output === null')
+        && cardCode017.includes('return null'))
+    ok('017 客户端：卡片区域没有 % 字面量，也不印 Credits 单位',
+      cardCode017 !== '' && !cardCode017.includes('%') && !cardCode017.includes('"Credits"'))
+
+    // 6) 按日提示：day 与 computedAt 都在才渲染，时间按本地 HH:MM 补零。
+    ok('017 客户端：daily 提示要求 day 与 computedAt 都在（旧宿主整条缺席）',
+      clientSrc017.includes('day === "" || !Number.isFinite(computedAt)'))
+    ok('017 客户端：daily 时间取本地 getHours/getMinutes 并补零',
+      clientSrc017.includes('at.getHours()') && clientSrc017.includes('at.getMinutes()')
+        && clientSrc017.includes('padStart(2, "0")'))
+    ok('017 客户端：daily 钩子与两个占位符都在',
+      clientSrc017.includes('"data-usage-credits-daily": "1"')
+        && clientSrc017.includes('.replace("{day}", day)')
+        && clientSrc017.includes('.replace("{time}", time)'))
+    ok('017 客户端：折算行之后插 daily、再插模型块（顺序固定）',
+      clientSrc017.indexOf('children.push(dailyLine)') > clientSrc017.indexOf('key: "estimate"')
+        && clientSrc017.indexOf('children.push(dailyLine)') < clientSrc017.indexOf('children.push(modelsBlock)'))
+
+    // 7) CSS：卡片三列栅格 + 20px 数值 + 窄屏两列。
+    ok('017 CSS：卡片并入宿主卡片体系（layer-2 底 + border-l2 描边 + 10px 圆角 + 三列栅格）',
+      /\.tpq-usage-credits-classes\{[^}]*background:var\(--dsw-alias-bg-layer-2/.test(clientSrc017)
+        && /\.tpq-usage-credits-classes\{[^}]*border:1px solid var\(--dsw-alias-border-l2/.test(clientSrc017)
+        && /\.tpq-usage-credits-classes\{[^}]*border-radius:10px/.test(clientSrc017)
+        && !/\.tpq-usage-credits-classes\{[^}]*margin:/.test(clientSrc017)
+        && /\.tpq-usage-credits-classes-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/.test(clientSrc017))
+    ok('017 CSS：卡片不再硬编码白底/深字（深色主题下不再像贴纸）',
+      !/\.tpq-usage-credits-classes\{[^}]*background:#fff/.test(clientSrc017)
+        && !/\.tpq-usage-credits-classes\{[^}]*#e6e9ef/.test(clientSrc017)
+        && /\.tpq-usage-credits-class-value\{[^}]*color:var\(--dsw-alias-label-primary/.test(clientSrc017))
+    ok('017 CSS：数值 20px/600、单位与标题缩到 10.5/11px',
+      /\.tpq-usage-credits-class-value\{[^}]*font-size:20px/.test(clientSrc017)
+        && /\.tpq-usage-credits-class-value\{[^}]*font-weight:600/.test(clientSrc017)
+        && /\.tpq-usage-credits-class-label\{[^}]*font-size:11px/.test(clientSrc017)
+        && /\.tpq-usage-credits-class-unit\{[^}]*font-size:10\.5px/.test(clientSrc017))
+    ok('017 CSS：≤520px 折成两列（320/375 视口不横向溢出）',
+      /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(clientSrc017))
+
+    // 8) i18n：155 键，标题改成「1 Credit 折合」，新增单位与按日提示。
+    const zhBlock017 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
+    const enBlock017 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
+    const keysOf017 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+    const zhKeys017 = keysOf017(zhBlock017?.[1] ?? '')
+    const enKeys017 = keysOf017(enBlock017?.[1] ?? '')
+    ok('017 i18n：COPY 现在 zh / en 各 155 键',
+      zhKeys017.length === 155 && enKeys017.length === 155)
+    ok('017 i18n：标题/单位/按日提示三个键中英都在',
+      ['usageCreditsClasses', 'usageCreditsClassesUnit', 'usageCreditsDaily']
+        .every(key => zhKeys017.includes(key) && enKeys017.includes(key)))
+    const zhLines017 = (zhBlock017?.[1] ?? '').split('\n')
+    const enLines017 = (enBlock017?.[1] ?? '').split('\n')
+    const lineOf017 = (lines, key) => lines.find(line => line.trim().startsWith(key + ':')) ?? ''
+    ok('017 i18n：中文标题是「1 Credit 折合」，单位 tokens',
+      lineOf017(zhLines017, 'usageCreditsClasses').includes('1 Credit 折合')
+        && lineOf017(zhLines017, 'usageCreditsClassesUnit').includes('tokens'))
+    ok('017 i18n：英文标题是 One credit is worth',
+      /One credit is worth/i.test(lineOf017(enLines017, 'usageCreditsClasses')))
+    ok('017 i18n：按日提示说明「每日刷新一次」且带 {day}/{time}',
+      lineOf017(zhLines017, 'usageCreditsDaily').includes('每日刷新一次')
+        && lineOf017(zhLines017, 'usageCreditsDaily').includes('{day}')
+        && lineOf017(zhLines017, 'usageCreditsDaily').includes('{time}')
+        && /once per day/i.test(lineOf017(enLines017, 'usageCreditsDaily')))
+
+    // 9) 文档：两版 README 与 CHANGELOG 必须同一次改动写清楚（check-docs 只核计数与配置表，这里核语义）。
+    const readme017 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+    const readmeEn017 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+    ok('017 文档：中文 README 写了三格卡片、按日提示与 creditsDailyPath',
+      readme017.includes('1 Credit 折合') && readme017.includes('每日刷新一次')
+        && readme017.includes('creditsDailyPath') && readme017.includes('usage-credits-2d.png'))
+    ok('017 文档：英文 README 同步（One credit is worth / once per day / 快照路径）',
+      readmeEn017.includes('One credit is worth') && /once per day/i.test(readmeEn017)
+        && readmeEn017.includes('creditsDailyPath') && readmeEn017.includes('docs/images/en/usage-credits-2d.png'))
+    const changelog017 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+    ok('017 CHANGELOG：Unreleased 段记了 017、三格卡片与按日基准',
+      /## \[Unreleased\]/.test(changelog017) && changelog017.includes('017')
+        && changelog017.includes('三格卡片') && changelog017.includes('按日'))
+
+    // 10) 规格目录在仓库里（INTERFACE 是实现真值，丢了就无法复核契约）。
+    ok('017 规格目录存在（spec/plan/tasks/INTERFACE）',
+      ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+        .every(name => existsSync(join(ROOT, 'specs', '017-credit-class-card', name))))
+  }
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

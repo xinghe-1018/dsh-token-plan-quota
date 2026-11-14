@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -11,6 +11,8 @@
  *    两个都要拦：面板那个"更新于"按钮会 POST refresh 并把快照覆盖回去（`lib/client.js:1090`）。
  *    用量统计屏是第三个接口（`/token-plan-quota/usage?days=N`，绝对 token 数），同样换成 fixture：
  *    那边的数字一旦来自真实实例，这张图就再也不能证明"仓库里没有真实用量"。
+ *    007 起同一接口还接 `from`+`to`（自定义区间），010 起再接 `month=YYYY-MM`（按月份），三个入口互斥，
+ *    各按查询分开造夹具（拿 7 天的数据回答 31 天的请求，桶数与区间副标题必然对不上）。
  *  - **要活会话**：徽标注入的座位是 `conversation.input.left`（`lib/client.js:1157`），
  *    没有打开的会话就没有 DOM 座位。宿主自带的 `?fixture` 模式（内存假宿主，含种子会话与
  *    默认模型）正好提供这个状态，于是不需要真凭据、不需要种工作区。
@@ -26,7 +28,7 @@ import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, mak
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -148,12 +150,22 @@ function customRangeFor(now) {
   return { from: localDayKey(first), to: localDayKey(today) }
 }
 
+/**
+ * 010 那张"按月份"的图固定拍**上一个自然月**：当月还没过完，夹到今天之后只有十几天，
+ * 读者看不出"整月 31 根柱"这个要点；再往前的月份又可能超出宿主能回填的范围。
+ * 1 月要跨年（2026-01 → 2025-12），所以用 Date 构造而不是字符串减一。
+ */
+function prevMonthOf(now) {
+  const today = new Date(now)
+  return localDayKey(new Date(today.getFullYear(), today.getMonth() - 1, 1)).slice(0, 7)
+}
+
 /* ------------------------------------------------------------------ 主流程 */
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -216,22 +228,32 @@ async function main() {
   /**
    * 用量统计是另一个接口，006 按 `days` 取参、007 追加 `from`+`to`（自定义区间）。7 天的 fixture
    * 拿去回答 90 天的请求，屏上的区间副标题、桶数和坐标轴就会和数字对不上 —— 那不是截图瑕疵，是假数据。
-   * 所以按查询分开缓存，各写一份 .shots-work/<lang>/usage-<days>d.json 或
-   * usage-custom-<from>_<to>.json 供事后核对。
+   * 所以按查询分开缓存，各写一份 .shots-work/<lang>/usage-<days>d.json、
+   * usage-custom-<from>_<to>.json 或 usage-month-<YYYY-MM>.json 供事后核对。
    *
    * `now` 只取一次：自定义区间的 `to` 会被宿主夹到今天，若造 fixture 与断言各取一次 Date.now()，
    * 跨零点那次运行就会出现「桶数对不上」的假失败。
    */
   const usageNow = Date.now()
   const isDayKey = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+  /**
+   * 010：`month=YYYY-MM` 是第三个查询入口（与 from/to 互斥）。判定规则与 fixture 的 `usageMonthArg`
+   * 对齐 —— 只有 trim 后非空的串才算"给了 month"，空串按宿主语义当没传（退回 days 分支）。
+   * 键与落盘文件都按 month 单独命名，免得 31 天的快照被上一轮 7 天的缓存回答。
+   */
+  const monthArg = query => {
+    const raw = typeof query.month === 'string' ? query.month.trim() : ''
+    return raw === '' ? null : raw
+  }
   const usageCache = new Map()
   const builtUsage = query => {
-    const custom = isDayKey(query.from) && isDayKey(query.to)
-    const key = custom ? `c${query.from}_${query.to}` : `d${query.days}`
+    const month = monthArg(query)
+    const custom = month === null && isDayKey(query.from) && isDayKey(query.to)
+    const key = month !== null ? `m${month}` : custom ? `c${query.from}_${query.to}` : `d${query.days}`
     if (!usageCache.has(key)) {
       const usage = makeUsageSnapshot({ now: usageNow, ...query })
       assertUsageFixture(usage, { lang: langKey, now: usageNow, ...query })
-      const file = custom ? `usage-custom-${query.from}_${query.to}.json` : `usage-${query.days}d.json`
+      const file = month !== null ? `usage-month-${month}.json` : custom ? `usage-custom-${query.from}_${query.to}.json` : `usage-${query.days}d.json`
       writeFileSync(join(workDir, file), JSON.stringify(usage, null, 1))
       usageCache.set(key, { json: JSON.stringify(usage), usage })
     }
@@ -240,16 +262,17 @@ async function main() {
   /**
    * 008：官方账号侧对照是第二个接口（`/token-plan-quota/usage-official`），查询参数与本机那份
    * 完全一致。缓存与落盘都必须分开：两份响应形状不同（官方多 source/coverage、没有 models/calls），
-   * 共用一份 JSON 会拍出「官方格读的其实是本机数」的假图。键同样按 days / from+to 分开。
+   * 共用一份 JSON 会拍出「官方格读的其实是本机数」的假图。键同样按 days / from+to / month 分开。
    */
   const officialCache = new Map()
   const builtOfficial = query => {
-    const custom = isDayKey(query.from) && isDayKey(query.to)
-    const key = custom ? `oc${query.from}_${query.to}` : `o${query.days}`
+    const month = monthArg(query)
+    const custom = month === null && isDayKey(query.from) && isDayKey(query.to)
+    const key = month !== null ? `om${month}` : custom ? `oc${query.from}_${query.to}` : `o${query.days}`
     if (!officialCache.has(key)) {
       const official = makeUsageOfficialSnapshot({ now: usageNow, ...query })
       assertUsageOfficialFixture(official, { lang: langKey, now: usageNow, ...query })
-      const file = custom ? `usage-official-custom-${query.from}_${query.to}.json` : `usage-official-${query.days}d.json`
+      const file = month !== null ? `usage-official-month-${month}.json` : custom ? `usage-official-custom-${query.from}_${query.to}.json` : `usage-official-${query.days}d.json`
       writeFileSync(join(workDir, file), JSON.stringify(official, null, 1))
       officialCache.set(key, { json: JSON.stringify(official), official })
     }
@@ -276,6 +299,15 @@ async function main() {
         const params = new URL(request.url).searchParams
         const from = params.get('from')
         const to = params.get('to')
+        // 010：month 优先于 from/to 与 days（与宿主 §1.2 的优先级一致）。混用宿主回 400，
+        // 这里也直接报错 —— 猜一个分支糊过去，拍出来的必然是"查询条件与数据不一致"的图。
+        const month = params.get('month')
+        if (month !== null) {
+          if (isDayKey(from) || isDayKey(to)) {
+            throw new Error('usage-official 拦截：month 与 from/to 混用（' + request.url + '），宿主会回 400 usage-bad-range，不造图')
+          }
+          return { body: builtOfficial({ month }).json, via: 'fixture-official' }
+        }
         if (isDayKey(from) || isDayKey(to)) {
           if (!(isDayKey(from) && isDayKey(to))) {
             throw new Error('usage-official 拦截：请求只带了 from/to 之一（' + request.url + '），宿主会回 400，不造图')
@@ -290,6 +322,14 @@ async function main() {
         const params = new URL(request.url).searchParams
         const from = params.get('from')
         const to = params.get('to')
+        // 010：month 优先于 from/to 与 days（宿主 §1.2 同一顺序）；混用会回 400 usage-bad-range。
+        const month = params.get('month')
+        if (month !== null) {
+          if (isDayKey(from) || isDayKey(to)) {
+            throw new Error('usage 拦截：month 与 from/to 混用（' + request.url + '），宿主会回 400 usage-bad-range，不造图')
+          }
+          return { body: builtUsage({ month }).json, via: 'fixture' }
+        }
         // 007：两端都在才走自定义分支（与宿主路由同一条判据）；只带一个宿主会回 400，
         // 这里也直接报错 —— 拿 days 分支糊过去会拍出一张"查询条件与数据不一致"的图。
         if (isDayKey(from) || isDayKey(to)) {
@@ -679,9 +719,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ---------------------------- ⑧⑨⑩⑪⑫ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照）')
+  /* ---------------------------- ⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月） */
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -974,6 +1014,96 @@ async function main() {
         console.log('  QA 官方失败态（不进 docs/）：' + qaPath + '（' + (qaBuffer.length / 1024).toFixed(0) + ' KB）')
         live.officialError = false
       }
+    }
+
+    /*
+     * ⑬ 按月查询（spec 010）。三件事必须同时成立才算证据：
+     *  - 屏上有月份行（data-usage-month + <input type="month"> + 查询按钮），且 chip 停在「月份」；
+     *  - 输入框吃掉填入的月份（受控组件要走 prototype setter，直接 el.value = … 不会更新 React 状态）；
+     *  - 点查询后标题回显该月、柱数等于 fixture 该月的 buckets（整月 31 天 = 31 根柱是这张图的要点）。
+     * 任一条不满足就抛错：拍一张"预设仍是近 7 天"的图，等于把按月查询的证据换成普通柱图。
+     */
+    if (args.shots.includes(13)) {
+      const month = prevMonthOf(usageNow)
+      const expectedMonth = builtUsage({ month }).usage
+      const expectedBars = expectedMonth.buckets.length
+      if (expectedBars < 1) throw new Error('按月 fixture 没有桶（month=' + month + '），不拍')
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+
+      const pickedMonth = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"month\"]'); if (b === null) return false; b.click(); return true })()")
+      if (pickedMonth !== true) throw new Error('找不到「月份」chip（[data-usage-preset="month"]）：010 客户端未落盘或钩子改名，不拍')
+      await page.waitFor("document.querySelector('[data-usage-month]') !== null", { timeoutMs: 8_000, label: '月份行' })
+      const monthHooks = await page.evaluate("(() => { const vis = n => n !== null && n.getBoundingClientRect().width > 0; const row = document.querySelector('[data-usage-month]'); const input = document.querySelector('[data-usage-month-input]'); return { row: vis(row), input: vis(input), apply: vis(document.querySelector('[data-usage-month-apply]')), type: input === null ? null : input.getAttribute('type') } })()")
+      if (monthHooks.row !== true || monthHooks.input !== true || monthHooks.apply !== true) {
+        throw new Error('月份行不完整（data-usage-month / data-usage-month-input / data-usage-month-apply 缺失或不可见），不拍')
+      }
+      if (monthHooks.type !== 'month') throw new Error('月份输入框不是 <input type="month">（type=' + monthHooks.type + '），不拍')
+
+      const filledMonth = await page.evaluate("(() => { const el = document.querySelector('[data-usage-month-input]'); if (el === null) return null; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(el, " + JSON.stringify(month) + "); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return el.value })()")
+      if (filledMonth !== month) throw new Error('月份输入框没接受 ' + month + '（实际 ' + filledMonth + '），不拍')
+      const appliedMonth = await page.evaluate("(() => { const b = document.querySelector('[data-usage-month-apply]'); if (b === null) return false; b.click(); return true })()")
+      if (appliedMonth !== true) throw new Error('找不到月份查询按钮（data-usage-month-apply），不拍')
+
+      const parts = month.split('-')
+      const year = parts[0]
+      const monthNum = String(Number(parts[1]))
+      // 标题里 {m} 补不补零，spec 自己的两处示例就不一致（"9 月" vs "09 月"），比较前两侧都去掉空白，两种都认。
+      const titleNeedles = langKey === 'zh' ? [year + '年', monthNum + '月'] : [month]
+      const waitMonth = "(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return false; const big = root.querySelector('.tpq-usage-big'); const bars = root.querySelectorAll('rect.tpq-usage-rect').length; return bars === " + expectedBars + " && big !== null && (big.textContent || '').trim().length > 0 })()"
+      await page.waitFor(waitMonth, { timeoutMs: 25_000, label: '按月数据（桶数 + 总分）' })
+      await sleep(600)
+
+      // 标题/副标题可能比柱子晚一帧；用同步轮询等它回显，而不是拍完再肉眼发现不对。
+      let monthHeadAll = ''
+      let headOk = false
+      for (let attempt = 0; attempt < 40 && headOk !== true; attempt += 1) {
+        const head = await headText()
+        monthHeadAll = ((head.title || '') + ' ' + (head.range || '')).trim()
+        const compact = monthHeadAll.split(' ').join('')
+        headOk = titleNeedles.every(needle => compact.includes(needle))
+        if (headOk !== true) await sleep(200)
+      }
+      const monthBars = await barCount()
+      const monthBig = await bigText()
+      if (monthBars !== expectedBars) throw new Error('按月柱数 ' + monthBars + ' 与 fixture 桶数 ' + expectedBars + ' 不一致，不拍')
+      if (headOk !== true) throw new Error('标题/区间副标题没有回显 ' + month + '（期望含 ' + JSON.stringify(titleNeedles) + '，实际：' + monthHeadAll + '），不拍')
+      const monthChip = await page.evaluate("(() => { const b = document.querySelector('[data-usage-preset=\"month\"]'); return b !== null && b.getAttribute('data-active') === '1' && b.getAttribute('aria-pressed') === 'true' })()")
+      if (monthChip !== true) throw new Error('「月份」chip 没有处于选中态（data-active/aria-pressed 不对），不拍')
+      /* 口径同 ⑪：整屏不许出现百分比；「Credits」只允许出现在脚注里（006 起脚注原文就有"不折算 Credits"）。 */
+      const monthBanned = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; const notes = root.querySelector('.tpq-usage-notes'); const notesText = notes === null ? '' : (notes.innerText || ''); const body = (root.innerText || '').split(notesText).join(''); return { percent: body.indexOf('%') >= 0, credits: body.indexOf('Credits') >= 0 } })()")
+      if (monthBanned === null) throw new Error('量不到用量统计屏，不拍')
+      if (monthBanned.percent === true) throw new Error('按月屏出现百分比（%），不拍')
+      if (monthBanned.credits === true) throw new Error('按月屏（脚注以外）出现 Credits，不拍')
+      await officialReady('按月 ' + month)
+
+      /*
+       * 脚注（.tpq-usage-notes）排在官方对照块之后：860 视口从页顶拍时它整个在折叠线下，
+       * 这张图里看不到 007 的「仅统计本机」那句。图不改取景（否则丢掉月份行与柱图的证据），
+       * 所以这里断言它确实在 DOM 里、文案对，并另存一张只进 .shots-work 的 QA 图做可见证据。
+       */
+      const notesProbe = await page.evaluate("(() => { const root = document.querySelector('.tpq-usage'); if (root === null) return null; const notes = root.querySelector('.tpq-usage-notes'); const r = notes === null ? null : notes.getBoundingClientRect(); return { lines: notes === null ? [] : Array.prototype.map.call(notes.querySelectorAll('p'), function (p) { return (p.textContent || '').trim() }), rect: r === null ? null : { top: Math.round(r.top), bottom: Math.round(r.bottom) }, vh: innerHeight } })()")
+      if (notesProbe === null || notesProbe.rect === null) throw new Error('按月屏没有脚注（.tpq-usage-notes 缺失），不拍')
+      const localOnlyNeedle = langKey === 'zh' ? '仅统计本机' : 'Only calls made by this DSH instance'
+      if (!notesProbe.lines.some(function (t) { return t.indexOf(localOnlyNeedle) >= 0 })) {
+        throw new Error('脚注缺「' + localOnlyNeedle + '」这句（实际：' + notesProbe.lines.join(' / ') + '），不拍')
+      }
+      console.log('  脚注：' + notesProbe.lines.length + ' 行，top ' + notesProbe.rect.top + ' / bottom ' + notesProbe.rect.bottom + '（视口高 ' + notesProbe.vh + '；从页顶拍时在折叠线下）')
+      save('usage-month-2d.png', await page.shot({}))
+      // QA（不进 docs/）：滚到脚注，把「仅统计本机」拍成可见证据，免得「图里没有」被读成「页面上没有」。
+      // scrollIntoView({block:'end'}) 只保证「整块别在屏外」，实测底部正好贴着 860，按差值再多收 12px。
+      await page.evaluate("(() => { const notes = document.querySelector('.tpq-usage .tpq-usage-notes'); if (notes === null) return null; notes.scrollIntoView({ block: 'end' }); let sc = notes.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const before = notes.getBoundingClientRect(); box.scrollTop = Math.max(0, box.scrollTop + Math.round(before.bottom - (innerHeight - 12))); return null })()")
+      await sleep(350)
+      const notesQa = await page.evaluate("(() => { const notes = document.querySelector('.tpq-usage .tpq-usage-notes'); if (notes === null) return null; const r = notes.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight } })()")
+      if (notesQa === null || notesQa.top < 4 || notesQa.bottom > notesQa.vh - 4) {
+        throw new Error('滚到脚注后仍不完整（top ' + (notesQa === null ? 'null' : notesQa.top) + ' / bottom ' + (notesQa === null ? 'null' : notesQa.bottom) + ' / vh ' + (notesQa === null ? 'null' : notesQa.vh) + '），不落 QA 图')
+      }
+      console.log('  QA 脚注取景：top ' + notesQa.top + ' / bottom ' + notesQa.bottom + ' / 视口 ' + notesQa.vh)
+      const monthQaDir = join(workDir, 'qa')
+      mkdirSync(monthQaDir, { recursive: true })
+      const monthNotesPath = join(monthQaDir, 'usage-month-notes.png')
+      writeFileSync(monthNotesPath, await page.shot({}))
+      console.log('  QA 脚注（不进 docs/）：' + monthNotesPath)
+      console.log('  按月查询：' + month + '（' + expectedBars + ' 个桶，总分 ' + monthBig + '）')
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

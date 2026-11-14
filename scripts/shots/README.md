@@ -1,6 +1,6 @@
 # README 截图是怎么来的
 
-十一张图（中文一套、英文一套，英文套十张——编号 7 只有中文）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
+十二张图（中文一套、英文一套，英文套十一张——编号 7 只有中文）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
 
 ## 为什么不是随手截一张
 
@@ -16,13 +16,14 @@
 面板与徽标的渲染输入只有一个来源：同源 GET `/token-plan-quota/summary`。所以 `cdp.mjs` 用 Chrome DevTools
 Protocol 的 `Fetch` 域，把这个响应（外加面板"更新于"按钮 POST 的 `/token-plan-quota/refresh`——它会覆盖快照，
 漏拦就会拍到真数据）换成 `fixture.mjs` 造的对象。
-用量统计整页屏是第三个接口：`GET /token-plan-quota/usage?days=N`（绝对 token 数）。它**按 days 取参**，
-所以 fixture 也按 days 缓存、各写一份快照，并用 `assertUsageFixture()` 校验——7 天的快照去回答 90 天的请求，
+用量统计整页屏是第三个接口：`GET /token-plan-quota/usage?days=N`（绝对 token 数）。它**按查询取参**，
+所以 fixture 也按查询缓存、各写一份快照，并用 `assertUsageFixture()` 校验——7 天的快照去回答 90 天的请求，
 拍出来就是"副标题说 90 天、图上只有 7 根柱"的假图。
-第四、第五个接口是 007 的自定义区间与 008 的官方账号侧对照：`usage?from=…&to=…` 与
-`usage-official?…`（与本次查询同一份 query）。官方对照的 fixture 与缓存键**独立于本机快照**
-（`o<days>` / `oc<from>_<to>`），并用 `assertUsageOfficialFixture()` 校验；两边数字不同源，拍出来就会
-出现"官方格等于本机格"或差额算反的假图。
+查询入口有三个、互斥：006 的 `days`、007 的 `from`+`to`（自定义区间）、010 的 `month=YYYY-MM`（按月份）；
+010 起 month 优先于 from/to 和 days，混用宿主回 400，脚本也直接报错而不是猜一个分支。
+第四个接口是 008 的官方账号侧对照：`usage-official?…`（与本次查询同一份 query，三个入口都适用）。
+官方对照的 fixture 与缓存键**独立于本机快照**（`o<days>` / `oc<from>_<to>` / `om<month>`），
+并用 `assertUsageOfficialFixture()` 校验；两边数字不同源，拍出来就会出现"官方格等于本机格"或差额算反的假图。
 
 好处：不必模拟任何供应商的上游契约（尤其是千问控制台网关那套 Cookie/secToken 语义——最容易写错，
 而且一旦写进文档就会和真实上游长期不一致），并且真实数字**根本进不到浏览器**，跑图用的实例不需要任何凭据。
@@ -77,7 +78,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 `--lang` 决定浏览器语言，而插件界面文案跟着 `document.documentElement.lang` 走，所以中英各跑一次就是两套图。
 新版 `dsh web` 启动时会打印一条带 `?token=…` 的地址（首次访问 303 换 cookie）；**把整条地址原样传给 `--url`**
 即可，脚本会自己接 `fixture` 参数（直接传裸端口会被 401 挡在门外）。
-`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
+`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11,13`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
 不进 `docs/`，所以不在默认集合里）。产物：
 
 | # | 文件 | 证明什么 |
@@ -93,6 +94,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 9 | `usage-3d.png` | 同一份数据的 3D 等轴柱图。视图只是前端投影，数字必须与 2D 完全一致 |
 | 10 | `usage-range-2d.png` | 自定义起止日期：日期行可见、chip 停在「自定义」、桶恰好铺满 `[from, to]` |
 | 11 | `usage-official-2d.png` | 官方账号侧对照：官方/本机/差额三格数字与本机细分，与各自 fixture 逐个相等 |
+| 13 | `usage-month-2d.png` | 按月份查询：月份行可见、chip 停在「月份」、桶恰好是整月（如 31 天 31 根柱）、标题回显该月 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -105,8 +107,8 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 说明那是另一次（可能失败的）加载，不是换了个画法。
 
 中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload；用量统计是
-`.shots-work/<lang>/usage-<days>d.json` / `usage-custom-<from>_<to>.json`，官方对照是
-`usage-official-<days>d.json` / `usage-official-custom-<from>_<to>.json`；QA 错误态是
+`.shots-work/<lang>/usage-<days>d.json` / `usage-custom-<from>_<to>.json` / `usage-month-<YYYY-MM>.json`，官方对照是
+`usage-official-<days>d.json` / `usage-official-custom-<from>_<to>.json` / `usage-official-month-<YYYY-MM>.json`；QA 错误态是
 `.shots-work/<lang>/qa/usage-official-error.png`）与 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
 `package.json` 的 `files` 显式列了 `docs`，而 allowlist 会压过 `.gitignore`，帧文件会直接被打进 npm 包。
 
@@ -148,7 +150,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 ⑧⑨ 的额外两条：**两条恒等式必须成立**（区间 totals == 各桶 totals 之和 == 顶层模型 totals 之和），
 否则总分卡与柱状图会各说各话；**不许出现 `%` 与 "Credits"**——用量统计只报绝对 token，不折算、不派生百分比。
 
-⑧⑨⑩ 拍之前都先过一道**官方对照就绪断言**：`[data-usage-official]` 存在、`data-stale="0"`、三格
+⑧⑨⑩⑬ 拍之前都先过一道**官方对照就绪断言**：`[data-usage-official]` 存在、`data-stale="0"`、三格
 （官方 / 本机 / 差额）都是非空整数、细分行与说明段非空、块内无 `%` / `Credits`。008 起本机快照成功就会再请求
 一次 `usage-official`，少了这道断言，图里要么缺一块、要么是「官方取不到」的错误态，而截图本身看不出来。
 
@@ -158,6 +160,14 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 周桶首桶从 `from` 起）。区间取"今天所在月往前推 2 个月的 1 号 → 今天"，跨度随月份在 60–92 天之间浮动，
 正好落在 `>62 天按周聚合` 那一档；日期由脚本现算，不写死。
 
+⑬ 是 010 的按月份查询（`?month=YYYY-MM`），固定拍**上一个自然月**：当月还没过完，夹到今天只剩十几天，
+看不出"整月 31 根柱"这个要点。断言链条与 ⑩ 同构：点开 `data-usage-preset="month"` 后，
+`data-usage-month` 行、`<input type="month" data-usage-month-input>` 与 `data-usage-month-apply`
+必须都可见；输入框必须真的 `type="month"`，并且要吃下 prototype setter 填进去的月份（直接
+`el.value = …` 不会更新 React 的受控状态）；点查询后标题/区间副标题要回显该月（zh 认「YYYY 年 M 月」
+与补零的「YYYY 年 0M 月」两种写法，en 认「YYYY-MM」），柱数必须等于 fixture 该月的 `buckets`；
+chip 必须停在「月份」，整屏无 `%` / `Credits`（脚注除外）。
+
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的
 `totals.tokens`，差额按官方 − 本机带符号比对 `data-sign`（`pos` / `neg` / `zero`）；下方细分用官方 totals 的
@@ -166,7 +176,7 @@ input / cacheRead / output，三个数字必须在一行里对得上（顺序不
 整屏仍不许出现 `%`；"Credits" 只允许出现在脚注（那句脚注原文就写着不折算 Credits）。
 
 取景：1280×860 装不下「页头 + 总卡 + 柱图 + 模型榜 + 官方块」（到官方块底边约 940–1020px），所以分两种口径——
-⑧⑨⑩ 保持从页顶拍（标题、区间、日期行是它们的证据），官方块只露到三格数字；⑪ 单独滚到
+⑧⑨⑩⑬ 保持从页顶拍（标题、区间、日期行 / 月份行是它们的证据），官方块只露到三格数字；⑪ 单独滚到
 「柱图卡顶 → 官方块 + 说明段 + 脚注」的取景，整块完整进图，且顶边吸到 `.tpq-usage` 子块边界，
 不把一行字切一半（`frameUsage()`：块底贴视口底 16px，再往上找最近的子块边界）。
 
@@ -197,6 +207,9 @@ node -e "import('./scripts/shots/fixture.mjs').then(m=>{const u=m.makeUsageSnaps
 `assertUsageFixture` 会拦：区间/桶/模型三层 totals 的恒等式、日桶连续与周桶从周一起步、
 顶层模型按 tokens 降序且 id = provider + "/" + model、桶 models 只有 5 个原始计数、
 被渲染的字符串里出现 `%` 或 "Credits"、以及同样的真实痕迹与英文套中文泄漏。
+010 起同一套断言也覆盖 `month=YYYY-MM`：`range` 必须是 `{kind: 'month', month, days, from, to}`、`from` 是该月 1 号、
+`to` 是该月最后一天（当月夹到今天）、桶数与天数相等、粒度恒为 `day`（不走周聚合），月份非法或晚于当前月直接抛错。
+官方对照 `assertUsageOfficialFixture` 的 month 分支同样要求 `range` 五键 `{kind, month, days, from, to}`：宿主按 `from`/`to` 命中缓存时靠 `month` 区分两个月查询（`month` 与夹紧后的 `from/to` 可能完全同值），缺了这个键会把 kind/month 串味。
 
 `assertFixture` 会拦：真实痕迹（用户名/盘符/真实余额数字）、不在 `publicCard()` 白名单里的键、
 实测卡带百分比、百分比与 `remaining/total` 不自洽、零记录实测卡带了本该缺席的字段、

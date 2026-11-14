@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **按自然月查用量（010）**：统计屏的预设行再多一个「按月」——展开一个月份框（`YYYY-MM`），选 2026-10 就只看这个月，
+  一天一根柱。宿主新增 `GET /token-plan-quota/usage?month=YYYY-MM`（本地时区，1 号至月末，**恒为日桶**），
+  当前月结束日夹到今天，响应里的 `range` 报夹紧后的真值；工具 `token_plan_quota` 的 `usage` / `usage-official`
+  同步接受 `month`，官方账号侧对照跟着**同一个月份区间**走。
+  纯函数 `resolveMonthRange({now, month})` 在 `lib/usage-stats.js`（校验顺序：trim → 格式 → 真实月 → 未来月 → 夹今天），
+  聚合复用 007 的「桶恰好铺满区间」分支，所以月份区间不会为了凑整周把区间外的日子算进来。
+  错误码两条：`month` 与 `from`/`to` 混用 → 400 `usage-bad-range`；月份格式非法或在未来 → 400 `usage-bad-month`
+  （客户端先本地校验，非法输入**零请求**，错误文案不回显宿主原文）。没有任何新增配置键、出站主机仍 8 条。
+  新增宿主断言 795→855、客户端断言 586→695、guards 静态矩阵 271→299（第 10 节 28 条）。
+  方案见 `specs/010-month-range/`，接口契约见该目录的 `INTERFACE.md`。
+
 ### Fixed
 
 - **CI：Node 20 上 009 的 zstd 用例不再假红**：0.5.0 的 tag 落地后 ci 矩阵的 node 20 三平台全红——

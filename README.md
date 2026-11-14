@@ -199,6 +199,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![按起止日期查询：日期行、区间标题与柱子都取自同一份响应](docs/images/usage-range-2d.png)
 
+![按自然月查询：2026 年 10 月整月，一天一根柱](docs/images/usage-month-2d.png)
+
 ![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
 
 - **只报绝对 token**：区间总量、四类拆分（input / output / cacheRead / cacheWrite）、调用次数、按模型排行。
@@ -212,6 +214,9 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   非法输入（空、格式不对、开始晚于结束、开始在未来）在**本地拦下、一个请求都不发**；跨度上限与索引保留天数
   共用 `usageBackfillDays`（默认 365 天），结束日晚于今天会被夹到今天，屏上的范围一律按**夹紧后的真值**写。
   超过 62 天同样按周聚合，但**首末桶贴着所选区间**——不为了凑整周把区间外的日子算进来。
+- 也能按**自然月**查：预设旁边的「按月」展开一个月份框，选 2026-10 就只看这个月（1 号至月末，一天一根柱）。
+  当前月只到**今天**（结束日夹紧，屏上按真值写）；月份格式非法或选了未来月在本地拦下、零请求。
+  `month` 与 `from`/`to` 不能混用（宿主回 400 `usage-bad-range`），月份不合法/在未来回 400 `usage-bad-month`。
 - **官方账号侧对照**（可选，配 `officialUsage` 打开）：柱子下面另有一条对照条，把同一段时间的
   **官方「Token Plan 用量明细」**（账号级 tokens）与本机实测并排，第三格是「官方 − 本机」的差额。
   官方那边包含同一把 Key 在**其他设备 / 其他客户端**上的调用，所以差额就是「本机之外用了多少」；
@@ -436,10 +441,11 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 | `POST /token-plan-quota/reset` | 清零本实例实测统计（含窗口锚点） |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | 按本地日（`days > 62` 时按周）聚合的 token 用量；自定义天数用 `?days=N`（1..365，优先于 `range`）。响应里的 `coverage` 除会话统计外还有 `scanned` / `rescued` / `scanFailed` / `scanDeferred`：`rescued` 是本轮从日志目录补扫进来的会话数 |
 | `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | 按起止日期（两端都含）聚合，优先于 `days`/`range`；只给一端、格式非法、开始晚于结束或开始在未来 → 400 `usage-bad-range`；跨度超 `usageBackfillDays` → 400 `usage-range-too-long`（带 `maxDays`） |
+| `GET /token-plan-quota/usage?month=YYYY-MM` | 按**自然月**聚合（本地时区，1 号至月末，恒为日桶）；当前月结束日夹到今天。`month` 与 `from`/`to` 混用 → 400 `usage-bad-range`；格式非法或月份在未来 → 400 `usage-bad-month` |
 | `GET /token-plan-quota/usage-official?days=N`（也可 `range=` / `from&to=` / `fresh=1`） | **官方账号级 tokens**（Token Plan 用量明细）。参数语义与 `/usage` 完全一致、错误码相同；成功 200 带 `{range, granularity, totals, buckets, source, coverage}`，取不到时 200 + `{error:"official-unavailable", code, hint}`——`code` 是固定枚举（禁用 / 没凭据 / 登录过期 / 超时 / 上游 / 响应不认识 / 只给下载链接），`hint` 可直接展示 |
 | `GET /token-plan-quota/probe?source=<id>` | 上游响应字段骨架（排查用） |
 
-只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`，或 `from` + `to`（`YYYY-MM-DD`，两端含，优先于 `days`））。
+只接受同源请求，**永不回传密钥**。模型侧有 `token_plan_quota` 工具（`status` / `refresh` / `reset` / `usage`，`usage` 可带 `days: 1..365`，或 `from` + `to`（`YYYY-MM-DD`，两端含，优先于 `days`），或 `month`（`YYYY-MM`，自然月））。
 
 配合 429：`settings.yaml` 里给该 provider 配 `retryPolicy`（把 `QUOTA` 纳入 `retryableCodes`，
 `initialDelayMs == maxDelayMs` + `jitterRatio: 0` 可把退避压成固定间隔）。明细的「自动重试观测」显示真实
@@ -453,7 +459,7 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 - **`reset` 只清月账本与窗口锚点，不清用量索引**：统计屏读的是会话日志折出来的历史，删它没有意义（日志还在，下一轮会折回来）。
 - 观测计数是本次进程启动以来的；按天历史在用量索引里（统计屏），两者都只覆盖**经过本实例**的调用。
 - 自定义区间里**早于索引覆盖范围**的日子按 0 计：索引只留 `usageBackfillDays` 天，刚装好时能覆盖的历史更短，
-  所以那几根 0 柱的意思是「索引里没有这天的记录」，不是「这天一次都没调用」。
+  所以那几根 0 柱的意思是「索引里没有这天的记录」，不是「这天一次都没调用」。按月份查更早的月份同理：整月 0 桶只表示索引没覆盖到。
 - 补扫只认 `usageScanPath`（默认 `$DSH_HOME/sessions`）下的日志：日志文件被删掉或挪走之后就补不回来；
   单轮 64 MB 预算意味着缺的会话很多时补扫会跨几轮完成，脚注里的 `rescued` 随轮次增长。
 - 用量索引的首轮回填是后台跑的：刚装好时先看到的是部分历史，顶部会显示进度；最多等一个同步周期（5 分钟）就是全量。
@@ -481,16 +487,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 795 项，离线
-node test/client.mjs               # 586 项，假 React/DOM/fetch
-node test/guards.mjs               # 271 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 855 项，离线
+node test/client.mjs               # 695 项，假 React/DOM/fetch
+node test/guards.mjs               # 299 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 795/586 项 + guards 271 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 855/695 项 + guards 299 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

@@ -235,6 +235,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Query by start/end date: the date row, the range title and the bars all come from the same response](docs/images/en/usage-range-2d.png)
 
+![Query by calendar month: October 2026 as a whole month, one bar per day](docs/images/en/usage-month-2d.png)
+
 ![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
 
 - **Absolute tokens only**: the range total, the four buckets (input / output / cacheRead / cacheWrite), the
@@ -255,6 +257,10 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   `usageBackfillDays` key that bounds index retention (365 by default), an end date after today is clamped
   to today, and the range shown on screen always uses the **clamped** value. Above 62 days it still aggregates
   weekly, but the **first and last buckets hug the selected range** - no padding out to whole weeks.
+- You can also query a **calendar month**: "Month" next to the presets opens a month box, and picking 2026-10 shows
+  only that month (the 1st to the last day, one bar per day). The current month stops at **today** (the end date is
+  clamped and the screen shows the real value); a malformed month or a future month is blocked locally without a
+  request. `month` cannot be combined with `from`/`to` (400 `usage-bad-range`); a bad or future month returns 400 `usage-bad-month`.
 - **Official account-side comparison** (opt-in via `officialUsage`): a strip under the bars puts the
   **official "Token Plan usage details"** (account-level tokens) next to this instance's measurement, with
   the difference (official − local) as the third cell. The official side counts the same key used by other
@@ -513,11 +519,12 @@ it does not list a speed per provider; that data stays in the snapshot and via `
 | `POST /token-plan-quota/reset` | Clear this instance's measured totals (including window anchors) |
 | `GET /token-plan-quota/usage?range=today|7d|30d|90d` | Token usage aggregated per local day (per week when `days > 62`); a custom range uses `?days=N` (1..365, takes precedence over `range`). The `coverage` block also reports `scanned` / `rescued` / `scanFailed` / `scanDeferred`, where `rescued` is how many sessions this round recovered from the log directory |
 | `GET /token-plan-quota/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` | Aggregation for an explicit start/end date (both inclusive), taking precedence over `days`/`range`; one end only, malformed, start after end or in the future → 400 `usage-bad-range`; span above `usageBackfillDays` → 400 `usage-range-too-long` (with `maxDays`) |
+| `GET /token-plan-quota/usage?month=YYYY-MM` | Aggregation for a **calendar month** (local time, the 1st to the last day, always daily buckets); the current month is clamped to today. Mixing `month` with `from`/`to` → 400 `usage-bad-range`; a malformed or future month → 400 `usage-bad-month` |
 | `GET /token-plan-quota/usage-official?days=N` (also `range=` / `from&to=` / `fresh=1`) | **Official account-level tokens** (Token Plan usage details). Same parameters and error codes as `/usage`; success returns 200 with `{range, granularity, totals, buckets, source, coverage}`, and when it cannot be fetched 200 with `{error:"official-unavailable", code, hint}` - `code` is a fixed enum (disabled / no credentials / login expired / timeout / upstream / unrecognised response / download link only) and `hint` is safe to display |
 | `GET /token-plan-quota/probe?source=<id>` | Upstream field skeleton (for troubleshooting) |
 
 Same-origin requests only, and **keys are never returned**. On the model side there is the `token_plan_quota`
-tool (`status` / `refresh` / `reset` / `usage`, where `usage` accepts `days: 1..365` or `from` + `to` (`YYYY-MM-DD`, both inclusive, taking precedence over `days`)).
+tool (`status` / `refresh` / `reset` / `usage`, where `usage` accepts `days: 1..365`, `from` + `to` (`YYYY-MM-DD`, both inclusive, taking precedence over `days`), or `month` (`YYYY-MM`, a calendar month)).
 
 Working with 429s: configure `retryPolicy` for that provider in `settings.yaml` (add `QUOTA` to
 `retryableCodes`, and set `initialDelayMs == maxDelayMs` with `jitterRatio: 0` to flatten the backoff into a
@@ -563,9 +570,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 795 assertions, offline
-node test/client.mjs                # 586 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 271 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 855 assertions, offline
+node test/client.mjs                # 695 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 299 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -573,7 +580,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 795/586 tests plus 271 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 855/695 tests plus 299 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

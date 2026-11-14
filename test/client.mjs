@@ -3910,8 +3910,9 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   tree = hoverPointer(bundle, tree, 3, 100, 120)
   check('T011 指针进入后渲染恰好一个浮层', tipCount(tree), 1)
   const tip = tipOf(tree)
-  check('T011 浮层 role / data 钩子 / index',
-    [tip.props.role, tip.props['data-usage-tip'], tip.props['data-usage-tip-index']], ['tooltip', '1', '3'])
+  // 012 复核：浮层不进无障碍树（aria-hidden），role="tooltip" 随之去掉——柱子 aria-label 才是数字来源。
+  check('T011 浮层 data 钩子 / index / aria-hidden',
+    [tip.props['data-usage-tip'], tip.props['data-usage-tip-index'], tip.props['aria-hidden']], ['1', '3', 'true'])
   check('T011 指针坐标偏移 12px（portal + fixed）',
     [tip.props.style.position, tip.props.style.left, tip.props.style.top], ['fixed', 112, 132])
   check('T011 首行日期（日桶只印一天）', collectText(tipPartOf(tree, 'range')).join(''), fixture.from)
@@ -4472,7 +4473,7 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
     '命中率 26.7%')
 }
 
-/* #8：图表 role 与浮层 id / aria-describedby（描述只挂在当前命中柱上）。 */
+/* #8：图表 role 与浮层不重复进无障碍树（柱子的 aria-label 已含全部数字）。 */
 {
   const bundle = await mountUsage({ fetchImpl: dayFetch() })
   resetHooks()
@@ -4483,13 +4484,59 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   check('T013 图表 <svg> 用 role=group（role=img 会剪掉可聚焦柱子）', svg?.props?.role, 'group')
   check('T013 图表仍有可访问名称', svg?.props?.['aria-label'], '每日用量')
   tree = hoverPointer(bundle, tree, 2, 100, 120)
-  check('T013 浮层带稳定 id', tipOf(tree)?.props?.id, 'tpq-usage-tip')
-  check('T013 只有命中柱把浮层挂进 aria-describedby',
+  check('T013 浮层上屏但 aria-hidden（读屏不会把同一个桶念两遍）',
+    [tipOf(tree)?.props?.['aria-hidden'], tipOf(tree)?.props?.id], ['true', undefined])
+  check('T013 柱子不再挂 aria-describedby（数字已全在 aria-label 里）',
     [barOf(tree, 2)?.props?.['aria-describedby'], barOf(tree, 1)?.props?.['aria-describedby']],
-    ['tpq-usage-tip', undefined])
-  barOf(tree, 2).props.onPointerLeave()
-  tree = bundle.renderUsage()
-  check('T013 浮层关闭后 aria-describedby 也摘掉', barOf(tree, 2)?.props?.['aria-describedby'], undefined)
+    [undefined, undefined])
+  const tick = findNodes(tree, 'tpq-usage-tick')[0]
+  const peak = findNodes(tree, 'tpq-usage-value')[0]
+  check('T013 轴标与峰值标签标注 aria-hidden（role=group 下不再线性念一遍）',
+    [tick?.props?.['aria-hidden'], peak?.props?.['aria-hidden']], ['true', 'true'])
+}
+
+/* #5 / #1：浮层坐标纯函数的边界（导出就是为了能这么钉）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: dayFetch() })
+  const internals = bundle.api.__internals
+  check('T013 usageTipAnchorOf 只认有限 number，null / 空串 / 数组 / 布尔一律回兜底',
+    [internals.usageTipAnchorOf(120, 7), internals.usageTipAnchorOf(NaN, 7),
+      internals.usageTipAnchorOf(null, 7), internals.usageTipAnchorOf('', 7),
+      internals.usageTipAnchorOf('120', 7), internals.usageTipAnchorOf([], 7),
+      internals.usageTipAnchorOf(true, 7), internals.usageTipAnchorOf(undefined, 7)],
+    [120, 7, 7, 7, 7, 7, 7, 7])
+  const rect = (left) => () => ({ left: left })
+  const scroller = { firstElementChild: { getBoundingClientRect: rect(240) }, getBoundingClientRect: rect(40) }
+  check('T013 usageTipInlineOffsetX = SVG 左边 − 容器左边（居中留白与横向滚动已含在差值里）',
+    [internals.usageTipInlineOffsetX(scroller),
+      internals.usageTipInlineOffsetX({ firstElementChild: {}, getBoundingClientRect: rect(0) }),
+      internals.usageTipInlineOffsetX({ firstElementChild: null, getBoundingClientRect: rect(0) }),
+      internals.usageTipInlineOffsetX(null),
+      internals.usageTipInlineOffsetX({ getBoundingClientRect: rect(0) })],
+    [200, 0, 0, 0, 0])
+  check('T013 usageTipInlineOffsetX 绝不返回 NaN（矩形缺失 / 非数都按 0）',
+    [internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: () => ({}) }, getBoundingClientRect: rect(0) }),
+      internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: rect(NaN) }, getBoundingClientRect: rect(0) })],
+    [0, 0])
+  check('T013 usageFiniteToken 是唯一的归一化入口',
+    [internals.usageFiniteToken(42), internals.usageFiniteToken(NaN), internals.usageFiniteToken('42'),
+      internals.usageFiniteToken(null), internals.usageFiniteToken(Infinity)],
+    [42, 0, 0, 0, 0])
+}
+
+/* #7：模型行 key 用 id（有 id 时），缺 id 才退到序号；空标题不挂空 title。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, models: [{ id: 'm2', model: 'm2', totals: { tokens: 10 } }, { totals: {} }] })),
+  })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const rows = findNodes(tree, 'tpq-usage-model')
+  check('T013 有 id 的模型行 key 用 id（降序重排不整列重挂载）', rows[0]?.props?.key, 'model-m2')
+  check('T013 缺 id 的模型行 key 退到序号且带 # 前缀（不与真实 id 撞）', rows[1]?.props?.key, 'model-#1')
+  check('T013 缺 id 的行不给空 title（与可见的 — 一致）',
+    [findNodes(rows[1], 'tpq-usage-model-id')[0]?.props?.title, findNodes(rows[0], 'tpq-usage-model-id')[0]?.props?.title],
+    [undefined, 'm2'])
 }
 
 /* #9：3D 命中区要盖住「正面 + 向左半柱宽 + 向上一个 ISO_DEPTH」的可见足迹。 */

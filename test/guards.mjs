@@ -981,7 +981,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   for (const hook of ['"data-usage-bar": "1"', '"data-usage-bar-index"', '"data-usage-bar-from"',
     '"data-usage-bar-to"', '"data-usage-tip": "1"', '"data-usage-tip-index"',
     '"data-usage-tip-range": "1"', '"data-usage-tip-tokens": "1"', '"data-usage-tip-" + row.key',
-    'role: "tooltip"', 'tabIndex: 0', 'role: "img"']) {
+    '"aria-hidden": "true"', 'tabIndex: 0', 'role: "img"']) {
     ok('011 客户端：命中钩子 ' + hook + ' 存在', clientSrc011.includes(hook))
   }
 
@@ -1170,15 +1170,20 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   // 1) 0 值占比：守卫收进两个拼串函数（usagePercentText 自己仍要能返回 "0%"）。
   const shareFn = src.slice(src.indexOf('function usageShareText'), src.indexOf('function usagePercentSuffix'))
   const suffixFn = src.slice(src.indexOf('function usagePercentSuffix'), src.indexOf('function usageHitRateBase'))
-  ok('013 占比与后缀都对 value <= 0 短路（不再由调用点各判一遍）',
-    shareFn.includes('value <= 0') && suffixFn.includes('value <= 0'))
+  ok('013 占比与后缀都走 usageFiniteToken 再对 <= 0 短路（不再由调用点各判一遍）',
+    shareFn.includes('usageFiniteToken(value)') && suffixFn.includes('usageFiniteToken(value)')
+      && shareFn.includes('<= 0') && suffixFn.includes('<= 0'))
   ok('013 usagePercentText 仍能输出 "0%"（0 值纪律在调用方，不破坏纯函数语义）',
     src.includes('return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)) + "%"'))
 
   // 2) 命中率分母只有一份实现，总量卡与模型行都走它。
   const baseFn = src.slice(src.indexOf('function usageHitRateBase'), src.indexOf('function usageHitRateText'))
-  ok('013 命中率分母抽成 usageHitRateBase（三项归一到有限数）',
-    baseFn.includes('source.input') && baseFn.includes('source.cacheRead') && baseFn.includes('source.cacheWrite'))
+  ok('013 命中率分母抽成 usageHitRateBase（三项都走 usageFiniteToken 归一）',
+    baseFn.includes('usageFiniteToken(source.input)') && baseFn.includes('usageFiniteToken(source.cacheRead)')
+      && baseFn.includes('usageFiniteToken(source.cacheWrite)'))
+  ok('013 归一化只有一份实现（usageFiniteToken），命中率分子也复用它',
+    /function usageFiniteToken\(value\)[\s\S]{0,200}Number\.isFinite\(value\)/.test(src)
+      && src.includes('const cacheRead = usageFiniteToken(source.cacheRead)'))
   const cardRegion = src.slice(src.indexOf('const hitRatePercent'), src.indexOf('const hitRatePercent') + 240)
   ok('013 总量卡命中率走 usagePercentText + usageHitRateBase（不再手写分母）',
     cardRegion.includes('usagePercentText(totals.cacheRead, usageHitRateBase(totals))'))
@@ -1188,10 +1193,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   // 3) 无障碍：svg 不能用 role="img"（Children-Presentational 会把可聚焦柱子剪掉）。
   ok('013 图表 <svg> 用 role=group（aria-label 仍在）',
     /className: "tpq-usage-chart tpq-usage-svg",[\s\S]{0,400}role: "group"/.test(src))
-  ok('013 浮层有稳定 id 常量并挂到节点上',
-    src.includes('USAGE_TIP_ID = "tpq-usage-tip"') && src.includes('id: USAGE_TIP_ID'))
-  ok('013 浮层 id 只挂给当前命中柱的 aria-describedby',
-    src.includes('"aria-describedby": tipIndex === index ? USAGE_TIP_ID : undefined'))
+  const tipNodeRegion = src.slice(src.indexOf('tipNode = React.createElement("div"'), src.indexOf('tipChildren);', src.indexOf('tipNode = React.createElement("div"')))
+  ok('013 浮层 aria-hidden（柱子 aria-label 已含全部数字，读屏不再念两遍）',
+    tipNodeRegion.includes('"aria-hidden": "true"'))
+  ok('013 柱子与浮层都不再挂 aria-describedby（不重复描述同一个桶）',
+    !src.includes('"aria-describedby":') && !src.includes('USAGE_TIP_ID'))
+  ok('013 轴标与峰值标签都标 aria-hidden（role=group 下不再线性念一遍）',
+    (src.match(/"aria-hidden": "true"/g) || []).length >= 4
+      && src.includes('key: "tick-" + index,\n              className: "tpq-usage-tick",'))
 
   // 4) 3D 命中区必须往左上扩（正面 + 半柱宽 + 一个 ISO_DEPTH），且子节点都有 key。
   ok('013 3D 命中区向左半柱宽、向上一个 ISO_DEPTH',
@@ -1206,8 +1215,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('013 weekly 判定在 data 为空时也安全（三重防御）',
     src.includes('data !== null && data !== undefined && data.granularity === "week"'))
   ok('013 模型行的 id / totals 都先判类型（外部数据缺字段不许炸）',
-    src.includes('typeof entry.id === "string"') && src.includes('typeof entry.totals === "object"')
-      && src.includes('"model-" + String(index)'))
+    src.includes('typeof entry.id === "string"') && src.includes('typeof entry.totals === "object"'))
+  ok('013 模型行 key 有 id 用 id、缺 id 才退序号（降序重排不整列重挂载）',
+    src.includes('const rowKey = modelId !== "" ? "model-" + modelId : "model-#" + String(index)'))
+  ok('013 缺 id 的行 title 一起省略（不挂空 title）',
+    src.includes('title: modelId !== "" ? modelId : undefined'))
   ok('013 柱子树走 useMemo，且空区间的早退在 hook 之后（hook 数量恒定）',
     src.indexOf('React.useMemo(function buildBars()') > 0
       && src.indexOf('React.useMemo(function buildBars()') < src.indexOf('if (buckets.length === 0) return null'))
@@ -1223,6 +1235,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     src.includes('function usageTipInlineOffsetX')
       && src.includes('const offsetX = usageTipInlineOffsetX(scrollRef.current)')
       && src.includes('x: localCenter + offsetX'))
+  const inlineFn = src.slice(src.indexOf('function usageTipInlineOffsetX'), src.indexOf('function usageBucketTitle'))
+  ok('013 内联位移用两份 getBoundingClientRect 相减（SVG 根元素没有 offsetLeft）',
+    inlineFn.includes('getBoundingClientRect') && !inlineFn.includes('offsetLeft'))
+  const anchorFn = src.slice(src.indexOf('function usageTipAnchorOf'), src.indexOf('function usageTipInlineOffsetX'))
+  ok('013 usageTipAnchorOf 只认 typeof number（Number(null)/Number("") 会被当成 0）',
+    anchorFn.includes('typeof value !== "number"') && !anchorFn.includes('Number(value)'))
+  ok('013 柱子子树的 memo 依赖里不含 tipIndex（浮层不进无障碍树，指针移动不重画柱子）',
+    /\}, \[buckets, step, barWidth, peak, tallest, threeD, copy, chartKey, base, height, labelStep, width\]\);/.test(src))
   const internalsStart013 = src.lastIndexOf('__internals = {')
   const internals013 = src.slice(internalsStart013, src.indexOf('exports.apply', internalsStart013))
   ok('013 __internals 追加 usageHitRateBase 与两个浮层坐标纯函数',

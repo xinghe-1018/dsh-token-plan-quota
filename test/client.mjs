@@ -1693,8 +1693,9 @@ function findChip(node) {
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
   // 019 增了 4 个容量测算键（ModelPickTitle/Hint/Card/Note），155 → 159；
-  // 022 又增 2 个（ModelPickEstimate/Share），159 → 161。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [158, 158])
+   // 022 又增 2 个（ModelPickEstimate/Share），159 → 161；023 删 3 个（Hint/Share/Note），161 → 158。
+   // 024 删 6 个口径脚注键（CreditsNote/ModelsNote/RatioNote/NoteDelay/NoteCacheWrite/NoteNoCredits），158 → 152。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [152, 152])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -2057,9 +2058,9 @@ async function mountUsage(options = {}) {
   ok('总量卡给出缓存命中率（cacheRead ÷ (input + cacheRead + cacheWrite)）',
     text.includes('缓存命中率 14.3%'), text.slice(0, 500))
   ok('数字来源打「本实例实测」徽标（不是官方余额）', text.includes('本实例实测'))
-  ok('数据源脚注按 source.kind 本地化（session-index → 本地 COPY 句，不照抄宿主 label）',
+   ok('数据源脚注按 source.kind 本地化（session-index → 本地 COPY 句，不照抄宿主 label）',
    text.includes('数据源：本实例实测（来自本地会话记录），不是官方余额。'), text.slice(-260))
-  ok('脚注声明不折算 Credits、不估算余量', text.includes('不折算 Credits，也不估算余量。'))
+
   ok('模型行按 tokens 降序（qwen 在 deepseek 前，不按数组顺序）',
     text.indexOf('qwen/qwen3-max') >= 0 && text.indexOf('qwen/qwen3-max') < text.indexOf('deepseek/deepseek-chat'),
     String(text.indexOf('qwen/qwen3-max')) + ' vs ' + String(text.indexOf('deepseek/deepseek-chat')))
@@ -2276,18 +2277,18 @@ async function mountUsage(options = {}) {
       .includes(fragment)), fragments.join(','))
   ok('百分比片段都长成「x%」或「(x%)」，不拼进句子',
     strayPercentFragments(text).length === 0, strayPercentFragments(text).join(' | '))
-  // 014：Credits 换算块合法地出现「Credits」——换算块的文案由 usageCredits* 九个键决定，
-  // 这里把换算块整段的文本先剔掉，剩下的画面除了那一条脚注白名单外仍不许出现 Credits。
-  let withoutCreditsBlock = text.split('不折算 Credits，也不估算余量。').join('')
+  // 014：Credits 换算块合法地出现「Credits」——换算块的文案由 usageCredits* 键决定，
+  // 这里把换算块整段的文本先剔掉，剩下的画面不许出现 Credits。
+  // 024 已删「不折算 Credits」脚注与 012 比例口径脚注（公式不再上屏）。
+  let withoutCreditsBlock = text
   for (const chunk of collectText(findNodes(tree, 'tpq-usage-credits')[0] ?? [])) {
     withoutCreditsBlock = withoutCreditsBlock.split(chunk).join('')
   }
-  ok('除换算块与那一条脚注白名单外不出现 Credits', !withoutCreditsBlock.includes('Credits'),
+  ok('除换算块外不出现 Credits', !withoutCreditsBlock.includes('Credits'),
     withoutCreditsBlock.slice(0, 400))
-  ok('白名单脚注本身确实渲染出来了', text.includes('不折算 Credits，也不估算余量。'))
-  ok('比例口径脚注跟着数据一起渲染（公式写在屏上）',
-    text.includes('占比与命中率都是本机实测 tokens 的比值')
-      && text.includes('不是配额比例'), text.slice(-400))
+  ok('024 之后两条口径脚注都不再渲染',
+    !text.includes('不折算 Credits，也不估算余量。')
+      && !text.includes('占比与命中率都是本机实测 tokens 的比值'), text.slice(-400))
 }
 
 /* 英文界面不许混进中文（COPY 是两张完整字典，不是中文兜底）。
@@ -3206,10 +3207,9 @@ function officialFetchOf(bodyOrFactory) {
   check('T006 差额 = 官方 − 本机（正号必显）',
     [officialCellTextOf(tree, 'gap'), findNodes(tree, 'tpq-usage-official-gap')[0].props['data-sign']],
     ['+2099000000', 'pos'])
-  // 012：中文界面标签中文化（顺序沿用官方 payload 的 input / cacheRead / output）。
-  check('T006 官方四项拆分同源且不与 tokens 相加',
-    collectText(findNodes(tree, 'tpq-usage-official-split')[0]).join(''),
-    '输入 1260000000 · 缓存命中 1134000000 · 输出 840000000')
+  // 024：官方四项拆分的数字行已按用户要求从面板撤掉（不再上屏）。
+  ok('T006 官方四项拆分行已删除（024）', findNodes(tree, 'tpq-usage-official-split').length === 0,
+    String(findNodes(tree, 'tpq-usage-official-split').length))
   const note = collectText(findNodes(tree, 'tpq-usage-official-note')[0]).join('')
   ok('T006 脚注点明口径差异（其他设备 + 不相加）',
     note.includes('其他设备') && note.includes('不相加') && note.includes('本机会话记录'), note)
@@ -3459,9 +3459,9 @@ function rescuedFetch(n) {
     '另有 2 个会话不在宿主的会话列表里，已按日志目录补扫。')
   ok('T009 新行落在同一块脚注里（官方对照条下方、来源声明旁边）',
     notes[0] !== undefined && nodesWithProp(notes[0], 'data-usage-rescued').length === 1)
-  // 既有 5 行 + rescued 1 行 + 012 比例口径 1 行 = 7。
-  check('T009 有 rescued 时脚注行数 = 既有 5 行 + rescued 1 行 + 比例口径 1 行',
-    notes[0] === undefined ? -1 : notes[0].children.length, 7)
+  // 024：既有 2 行（来源 + 仅本机）+ rescued 1 行 = 3。
+  check('T009 有 rescued 时脚注行数 = 既有 2 行 + rescued 1 行',
+    notes[0] === undefined ? -1 : notes[0].children.length, 3)
   const text = collectText(tree).join(' ')
   ok('T009 既有「仅统计本机」脚注仍渲染（新行不替换来源声明）',
     text.includes('仅统计本机 DSH 发出的调用；其他设备的用量不在此列。'), text.slice(-260))
@@ -3475,12 +3475,12 @@ function rescuedFetch(n) {
   const tree = await settle(bundle.renderUsage, 8)
   const notes = findNodes(tree, 'tpq-usage-notes')
   check('T009 rescued=0 时一行都不渲染', nodesWithProp(tree, 'data-usage-rescued').length, 0)
-  // 008 的 5 行 + 012 比例口径 1 行；rescue 行不出现。
-  check('T009 rescued=0 时脚注 = 既有 5 行 + 比例口径 1 行',
-    notes[0] === undefined ? -1 : notes[0].children.length, 6)
+  // 024：既有 2 行；rescue 行不出现。
+  check('T009 rescued=0 时脚注 = 既有 2 行',
+    notes[0] === undefined ? -1 : notes[0].children.length, 2)
   const text = collectText(tree).join(' ')
-  ok('T009 rescued=0 时既有脚注照旧（含「仅统计本机」与「不折算 Credits」）',
-    text.includes('仅统计本机 DSH 发出的调用') && text.includes('不折算 Credits，也不估算余量。'), text.slice(-260))
+  ok('T009 rescued=0 时既有脚注照旧（含「仅统计本机」）',
+    text.includes('仅统计本机 DSH 发出的调用'), text.slice(-260))
 }
 
 /* T009 ④：老宿主 / 缺键 —— coverage 没有 rescued 时同 rescued=0，不抛也不渲染。 */
@@ -4464,21 +4464,17 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
     findNodes(container, 'tpq-usage-model').length, 2)
 }
 
-/* SC-007：脚注中英各一条、含两条公式；无 Credits 之外的措辞、无「还剩」。 */
+/* 024：012 的比例口径脚注已从面板撤掉（公式不再上屏）。 */
 {
   const bundle = await mountUsage()
   resetHooks()
   const tree = await settle(bundle.renderUsage, 5)
-  const notes = findNodes(tree, 'tpq-usage-notes')[0]
-  const noteRows = (notes?.children ?? []).map((child) => collectText(child).join(''))
-  const ratioRow = noteRows.find((row) => row.includes('占比与命中率都是本机实测 tokens 的比值'))
-  ok('T012 比例口径脚注渲染出来了', ratioRow !== undefined, noteRows.join(' | '))
-  ok('T012 脚注含两条公式（命中率分母三项 / 占比分母区间总量）',
-    ratioRow !== undefined
-      && ratioRow.includes('缓存命中率 = 缓存命中 ÷ (输入 + 缓存命中 + 缓存写入)')
-      && ratioRow.includes('各自 ÷ 区间 tokens 总量'), String(ratioRow))
-  ok('T012 脚注明说不是配额比例', String(ratioRow).includes('不是配额比例'), String(ratioRow))
   const text = collectText(tree).join(' ')
+  ok('T012 比例口径脚注不再渲染（024 删除）',
+    !text.includes('占比与命中率都是本机实测 tokens 的比值'), text.slice(-400))
+  ok('T012 两条口径公式都不再上屏（024）',
+    !text.includes('缓存命中率 = 缓存命中 ÷')
+      && !text.includes('各自 ÷ 区间 tokens 总量'), text.slice(-400))
   ok('T012 全屏不出现「还剩」类措辞', !/还剩|剩余/.test(text), text.slice(0, 400))
 }
 {
@@ -4493,9 +4489,9 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   ok('T012 en：模型行中文标签换成英文',
     text.includes('input 400K (61.5%) · output 200K (30.8%) · cache hit 50K (7.7%) · cache write 0 · hit rate 11.1%'),
     text.slice(0, 900))
-  ok('T012 en：比例脚注是英文且含两条公式',
-    text.includes('cache hit rate = cache hit ÷ (input + cache hit + cache write)')
-      && text.includes('each ÷ total tokens in the range'), text.slice(-500))
+  ok('T012 en：比例脚注也已删除（024）',
+    !text.includes('cache hit rate = cache hit ÷ (input + cache hit + cache write)')
+      && !text.includes('each ÷ total tokens in the range'), text.slice(-500))
   ok('T012 en：整屏无中文（en 不是中文兜底）', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 400))
 }
 
@@ -4942,9 +4938,7 @@ async function mountCreditsScreen(options = {}) {
   check('T014 折算行逐字（明写非官方口径）',
     collectText(creditsAttrNode(tree, 'data-usage-credits-estimate')).join(''),
     '按本账期实测比值，80000 Credits 约合 45.66亿 tokens（折算参考，非官方口径）')
-  check('T014 口径脚注逐字（比值定义 + 混合口径均值）',
-    collectText(findNodes(section, 'tpq-usage-credits-note')[0]).join(''),
-    '比值 = 官方账号 tokens ÷ 已用 Credits；已用 Credits = 官方额度 × 官方已用比例。分项按官方口径拆成缓存命中 / 未命中输入 / 输出（官方 input 含缓存命中，这里相减后单列），三者相加等于官方 tokens。它是本账期的混合口径均值，随模型与缓存命中率变化，不是固定兑换率。')
+  check('T014 口径脚注已按 024 删除', findNodes(section, 'tpq-usage-credits-note').length, 0)
   check('T014 就绪态不给重试按钮', nodesWithProp(section, 'data-usage-credits-retry').length, 0)
   ok('T014 就绪态不带 unavailable / error 钩子',
     nodesWithProp(section, 'data-usage-credits-unavailable').length === 0
@@ -4972,8 +4966,7 @@ async function mountCreditsScreen(options = {}) {
     collectText(creditsAttrNode(tree, 'data-usage-credits-estimate')).join(''),
     "At this cycle's measured ratio, 80000 credits ≈ 4.57B tokens (derived, not official)")
   ok('T014 en 换算块整段无中文', !/[\u3400-\u9fff]/u.test(creditsTextOf(tree)), creditsTextOf(tree))
-  ok('T014 en 脚注是英文',
-    /blended average/.test(collectText(findNodes(tree, 'tpq-usage-credits-note')[0]).join('')))
+  ok('T014 en 口径脚注也已删除（024）', findNodes(tree, 'tpq-usage-credits-note').length === 0)
 }
 
 /* ⑤ §4：数字格式（万/亿、千分位、百分比；四舍五入口径与相邻卡片同源）。 */
@@ -5177,14 +5170,14 @@ async function mountBreakdown(credits, options = {}) {
     && source.includes('"data-usage-credits-models": "1"')
     && source.includes('"data-usage-credits-model": "1"')
     && source.includes('"data-model": id'))
-  ok('T015/T017 COPY 分项卡与脚注都带分项口径',
+  ok('T015/T017 COPY 分项卡与模型标题带口径（024 已删脚注键）',
     source.includes('usageCreditsClasses: "1 Credit 折合"')
     && source.includes('usageCreditsClassesUnit: "tokens"')
     && source.includes('usageCreditsDaily: "按 {day} 当日实测比值计算，每日刷新一次（{time}）"')
     && source.includes('usageCreditsClassUncached: "未命中输入"')
     && source.includes('usageCreditsModelsTitle: "每个模型各自的比值"')
-    && source.includes('usageCreditsModelsNote: "模型行 = 本机该模型 tokens')
-    && source.includes('分项按官方口径拆成缓存命中 / 未命中输入 / 输出'))
+    && !source.includes('usageCreditsModelsNote:')
+    && !source.includes('usageCreditsNote:'))
   const cssStart = source.indexOf('.tpq-usage-credits-classes{')
   const cssEnd = source.indexOf('@media (max-width:520px)', cssStart)
   const creditsCss = cssStart >= 0 && cssEnd > cssStart ? source.slice(cssStart, cssEnd) : ''
@@ -5211,12 +5204,11 @@ async function mountBreakdown(credits, options = {}) {
     creditsCss.includes('.tpq-usage-credits-models::-webkit-scrollbar{width:8px}')
     && /\.tpq-usage-credits-models::-webkit-scrollbar-thumb\{[^}]*border-radius:4px/.test(creditsCss)
     && /\.tpq-usage-credits-models:focus-visible\{[^}]*outline:2px solid/.test(creditsCss))
-  ok('T015 CSS 标题 12.5px / 行 flex gap 8px / name 省略 / 数字 nowrap+tabular / 脚注 10.5px',
+  ok('T015 CSS 标题 12.5px / 行 flex gap 8px / name 省略 / 数字 nowrap+tabular（024 删脚注 10.5px）',
     /\.tpq-usage-credits-models-title\{[^}]*margin:0 0 4px;[^}]*font-size:12.5px/.test(creditsCss)
     && /\.tpq-usage-credits-model\{[^}]*display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline/.test(creditsCss)
     && /\.tpq-usage-credits-model-name\{[^}]*overflow:hidden;text-overflow:ellipsis;[\s\S]{0,80}white-space:nowrap/.test(creditsCss)
-    && /\.tpq-usage-credits-model-tokens,\.tpq-usage-credits-model-ratio\{[^}]*white-space:nowrap;[\s\S]{0,120}tabular-nums/.test(creditsCss)
-    && /\.tpq-usage-credits-models-note\{[^}]*font-size:10.5px/.test(creditsCss))
+    && /\.tpq-usage-credits-model-tokens,\.tpq-usage-credits-model-ratio\{[^}]*white-space:nowrap;[\s\S]{0,120}tabular-nums/.test(creditsCss))
   const fnStart = source.indexOf('function usageCreditsClassesCard')
   const fnEnd = source.indexOf('function usageCreditsSection')
   const fnRegion = fnStart >= 0 && fnEnd > fnStart ? source.slice(fnStart, fnEnd) : ''
@@ -5249,9 +5241,8 @@ async function mountBreakdown(credits, options = {}) {
     [modelsBlock.props.tabIndex, modelsBlock.props.role, modelsBlock.props['aria-label']],
     [0, 'group', '每个模型各自的比值'])
   check('T015 模型块标题逐字', collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-title')[0]).join(''), '每个模型各自的比值')
-  check('T015 模型块脚注逐字',
-    collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-note')[0]).join(''),
-    '模型行 = 本机该模型 tokens ÷ 本账期已用 Credits（官方不按模型拆分，这是贡献值）；每行的输入 / 缓存命中 / 输出各自是「该模型这一类 tokens ÷ 同一个账号级分母」，三者相加等于该行总量。各行相加约等于本机总量，与账号级官方总量有少量差额。')
+  check('T015 模型块脚注已按 024 删除',
+    findNodes(modelsBlock, 'tpq-usage-credits-models-note').length, 0)
   const rows = findNodes(modelsBlock, 'tpq-usage-credits-model')
   check('T015 模型行数不截断（三条入参 → 三行）', rows.length, 3)
   check('T015 模型行顺序严格照宿主（降序，不重排）',
@@ -5275,16 +5266,15 @@ async function mountBreakdown(credits, options = {}) {
       collectText(findNodes(rows[2], 'tpq-usage-credits-model-ratio')[0]).join('')],
     ['1200.0万 tokens', '1 Credit ≈ 322.6 tokens'])
   const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
-  check('T015 块内顺序：detail → classes → estimate → models → note（023：单模型块已独立）',
+  check('T015 块内顺序：detail → classes → estimate → models（023 单模型块独立；024 无脚注）',
     seq,
     ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
       'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
-      'tpq-usage-credits-models', 'tpq-usage-credits-note'])
+      'tpq-usage-credits-models'])
   check('T015 014 总量比值行未变', collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
-  ok('T015 014 五行仍在（ratio/window/detail/estimate/note）',
+  ok('T015 014 四行仍在（ratio/window/detail/estimate；024 删掉脚注）',
     ['data-usage-credits-ratio', 'data-usage-credits-window', 'data-usage-credits-detail',
-      'data-usage-credits-estimate'].every((attr) => nodesWithProp(section, attr).length === 1)
-    && findNodes(section, 'tpq-usage-credits-note').length === 1)
+      'data-usage-credits-estimate'].every((attr) => nodesWithProp(section, attr).length === 1))
 }
 
 /* ③ 英文就绪态：逐字、无汉字/万/亿。 */
@@ -5311,7 +5301,7 @@ async function mountBreakdown(credits, options = {}) {
     ['1.31B tokens', '1 credit ≈ 35K tokens'])
   ok('T015 en 模型块没有汉字与万/亿',
     !/[\u3400-\u9fff]|万|亿/.test(collectText(modelsBlock).join('')), collectText(modelsBlock).join(''))
-  ok('T015 en 脚注写清 official 不按模型拆分', /not split by model/.test(collectText(modelsBlock).join('')))
+  ok('T015 en 模型块脚注已删除（024）', findNodes(modelsBlock, 'tpq-usage-credits-models-note').length === 0)
 }
 
 /* ④ 降级矩阵：缺字段/空数组/非有限一律整块不渲染，且不抛错。 */
@@ -5374,19 +5364,17 @@ async function mountModelClasses(models, options = {}) {
   const internals = bundle.api.__internals
   ok('T016 __internals 暴露模型行第二行纯函数', typeof internals.usageCreditsModelClassesLine === 'function')
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  ok('T016 COPY 两键与改写脚注（zh）',
+  ok('T016 COPY 两键（zh；024 已删改写脚注）',
     source.includes('usageCreditsModelClasses: "每 Credit：输入 {input} · 缓存命中 {cacheRead} · 输出 {output}"')
-    && source.includes('usageCreditsModelClassWrite: " · 缓存写入 {tokens}"')
-    && source.includes('每行的输入 / 缓存命中 / 输出各自是「该模型这一类 tokens ÷ 同一个账号级分母」，三者相加等于该行总量'))
-  ok('T016 COPY 两键与改写脚注（en，全 ASCII）',
+    && source.includes('usageCreditsModelClassWrite: " · 缓存写入 {tokens}"'))
+  ok('T016 COPY 两键（en，全 ASCII；024 已删改写脚注）',
     source.includes('usageCreditsModelClasses: "Per credit: input {input} · cache hit {cacheRead} · output {output}"')
-    && source.includes('usageCreditsModelClassWrite: " · cache write {tokens}"')
-    && source.includes("each row's input / cache hit / output is that class's tokens for the model over the same account-level denominator"))
+    && source.includes('usageCreditsModelClassWrite: " · cache write {tokens}"'))
   ok('T016 第二行钩子与类名落地',
     source.includes('"data-usage-credits-model-classes": "1"')
     && source.includes('className: "tpq-usage-credits-model-classes"'))
   const cssStart = source.indexOf('.tpq-usage-credits-model{')
-  const cssEnd = source.indexOf('.tpq-usage-credits-models-note{', cssStart)
+  const cssEnd = source.indexOf('@media (max-width:520px)', cssStart)
   const modelCss = cssStart >= 0 && cssEnd > cssStart ? source.slice(cssStart, cssEnd) : ''
   ok('T016 CSS 模型行 flex-wrap + 2px 8px 行内间距',
     /\.tpq-usage-credits-model\{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;padding:2px 0;font-size:12px\}/.test(modelCss))
@@ -5504,8 +5492,8 @@ async function mountModelClasses(models, options = {}) {
     [collectText(findNodes(rows[0], 'tpq-usage-credits-model-tokens')[0]).join(''),
       collectText(findNodes(rows[0], 'tpq-usage-credits-model-ratio')[0]).join('')],
     ['9,000 tokens', '1 Credit ≈ 200 tokens'])
-  check('T016 回归：模型块标题 / 脚注各一份',
-    [findNodes(section, 'tpq-usage-credits-models-title').length, findNodes(section, 'tpq-usage-credits-models-note').length], [1, 1])
+  check('T016 回归：模型块标题一份、脚注已删（024）',
+    [findNodes(section, 'tpq-usage-credits-models-title').length, findNodes(section, 'tpq-usage-credits-models-note').length], [1, 0])
   ok('T016 回归：每行第二行最多一条（不重复渲染）',
     rows.every((row) => findNodes(row, 'tpq-usage-credits-model-classes').length === 1))
 }
@@ -5587,11 +5575,10 @@ function withBasis(basis, ratioOverrides = {}) {
     '按 2026-11-14 当日实测比值计算，每日刷新一次（' + expectedClock(computedAt) + '）')
   ok('T017 zh daily 时间是两位数 HH:MM', /（\d{2}:\d{2}）$/.test(collectText(daily).join('')), collectText(daily).join(''))
   const seq = (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
-  check('T017 zh 块内顺序：classes → estimate → daily → models（023：单模型块已独立）',
+  check('T017 zh 块内顺序：classes → estimate → daily → models（023 单模型块独立；024 无脚注）',
     seq, ['tpq-usage-credits-title', 'tpq-usage-credits-ratio', 'tpq-usage-credits-window',
       'tpq-usage-credits-detail', 'tpq-usage-credits-classes', 'tpq-usage-credits-estimate',
-      'tpq-usage-credits-daily', 'tpq-usage-credits-models',
-      'tpq-usage-credits-note'])
+      'tpq-usage-credits-daily', 'tpq-usage-credits-models'])
   ok('T017 zh daily 与卡片、模型块同屏不互相顶掉',
     findNodes(section, 'tpq-usage-credits-classes').length === 1
     && findNodes(section, 'tpq-usage-credits-models').length === 1)

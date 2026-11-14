@@ -1032,9 +1032,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
   // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）；
   // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 加 4 → 159；022 再加 2 个估算键 → 161；
-  // 023 删 Hint/Share/Note 三键 → 158。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 158；011 本身不加键）',
-    zhKeys011.length === 158 && enKeys011.length === 158)
+  // 023 删 Hint/Share/Note 三键 → 158；024 删六个口径脚注键 → 152。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 152；011 本身不加键）',
+    zhKeys011.length === 152 && enKeys011.length === 152)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
@@ -1106,9 +1106,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161；023 删三键 → 158。
-  ok('012 i18n：COPY 现在 zh / en 各 158 键（012/014/015/016/017/019/022/023 的键都在里面）',
-    zhKeys012.length === 158 && enKeys012.length === 158)
+  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161；023 删三键 → 158；024 删六键 → 152。
+  ok('012 i18n：COPY 现在 zh / en 各 152 键（012/014/015/016/017/019/022/023/024 的键都在里面）',
+    zhKeys012.length === 152 && enKeys012.length === 152)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1135,11 +1135,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /\.tpq-usage-split-share\{[^}]*label-tertiary/.test(clientSrc012)
       && /\.tpq-usage-split-share\{[^}]*tabular-nums/.test(clientSrc012))
 
-  // 4) 公式脚注与口径收窄：屏幕里必须同时给出两条公式，并声明「不是配额比例」。
-  ok('012 客户端：公式脚注走 COPY.usageRatioNote（不硬编码长句）',
-    (clientSrc012.match(/usageRatioNote/g) || []).length >= 3)
-  ok('012 文案：中文脚注声明「不是配额比例」', (zhBlock012?.[1] ?? '').includes('不是配额比例'))
-  ok('012 文案：英文脚注声明 composition, not quota', /not quota/i.test(enBlock012?.[1] ?? ''))
+  // 4) 024：012 的公式脚注已从面板撤掉（用户要求删说明文字），键与屏上文本都不再存在。
+  ok('012 客户端：公式脚注已按 024 删除（usageRatioNote 不再存在）',
+    (clientSrc012.match(/usageRatioNote/g) || []).length === 0)
+  ok('012 文案：口径长句不再出现在 COPY 里',
+    !(zhBlock012?.[1] ?? '').includes('不是配额比例') && !/not quota/i.test(enBlock012?.[1] ?? ''))
 
   // 5) 006 的口径收窄必须有书面依据，否则下一个人会把 012 的 % 当越界删掉。
   const spec006 = readFileSync(join(ROOT, 'specs', '006-usage-stats', 'spec.md'), 'utf8')
@@ -1435,24 +1435,24 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('014 i18n：COPY 键数不小于 zh / en 各 147（138 + 9；015 起实际 151）',
     zhKeys014.length >= 147 && enKeys014.length >= 147)
   const creditsKeys = ['usageCreditsTitle', 'usageCreditsRatio', 'usageCreditsWindow', 'usageCreditsDetail',
-    'usageCreditsEstimate', 'usageCreditsNote', 'usageCreditsLoading', 'usageCreditsUnavailable', 'usageCreditsRetry']
-  ok('014 i18n：9 个换算键中英都在', creditsKeys.every(key => zhKeys014.includes(key) && enKeys014.includes(key)))
-  // 只取 014 自己的 9 个键：015 又加了 4 个 usageCredits* 键，正则前缀会把它们一起捞进来。
+    'usageCreditsEstimate', 'usageCreditsLoading', 'usageCreditsUnavailable', 'usageCreditsRetry']
+  ok('014 i18n：8 个换算键中英都在（024 删掉 usageCreditsNote）', creditsKeys.every(key => zhKeys014.includes(key) && enKeys014.includes(key)))
+  // 只取 014 自己的 8 个键：015 又加了 4 个 usageCredits* 键，正则前缀会把它们一起捞进来。
   const isCreditsKey014 = line => creditsKeys.some(key => line.startsWith('        ' + key + ':'))
   const zhLines014 = (zhBlock014?.[1] ?? '').split('\n').filter(isCreditsKey014)
   const enLines014 = (enBlock014?.[1] ?? '').split('\n').filter(isCreditsKey014)
-  // 比值那行的中文字面量按契约就是 "1 Credit ≈ {tokens} tokens"（量纲只写英文），其余 8 行必须有汉字。
+  // 比值那行的中文字面量按契约就是 "1 Credit ≈ {tokens} tokens"（量纲只写英文），其余 7 行必须有汉字。
   const zhRatioLine014 = zhLines014.filter(line => /^ {8}usageCreditsRatio:/.test(line))
   const zhOtherLines014 = zhLines014.filter(line => !/^ {8}usageCreditsRatio:/.test(line))
-  ok('014 i18n：中文 9 行里 8 行有汉字，比值行保留 Credit/tokens 量纲（含 ≈）',
-    zhLines014.length === 9 && zhOtherLines014.length === 8
+  ok('014 i18n：中文 8 行里 7 行有汉字，比值行保留 Credit/tokens 量纲（含 ≈）',
+    zhLines014.length === 8 && zhOtherLines014.length === 7
       && zhOtherLines014.every(line => /[\u3400-\u9fff]/u.test(line))
       && zhRatioLine014.length === 1 && zhRatioLine014[0].includes('\u2248'))
-  ok('014 i18n：英文 9 行都没有汉字', enLines014.length === 9 && enLines014.every(line => !/[\u3400-\u9fff]/u.test(line)))
+  ok('014 i18n：英文 8 行都没有汉字', enLines014.length === 8 && enLines014.every(line => !/[\u3400-\u9fff]/u.test(line)))
   ok('014 i18n：比值模板带 {tokens}，明细模板带 {percent}',
     src.includes('1 Credit \u2248 {tokens} tokens') && src.includes('{used} / {total}\uff08{percent}\uff09'))
-  ok('014 i18n：脚注写明不是固定兑换率（中英各一处）',
-    src.includes('\u4e0d\u662f\u56fa\u5b9a\u5151\u6362\u7387') && /not a fixed exchange rate/i.test(src))
+  ok('014 i18n：脚注已按 024 删除（「不是固定兑换率」不再出现）',
+    !src.includes('\u4e0d\u662f\u56fa\u5b9a\u5151\u6362\u7387') && !/not a fixed exchange rate/i.test(src))
 
   // 8) CSS：与官方块同一套卡片视觉（否则会看起来像临时贴上去的一块）。
   ok('014 CSS：.tpq-usage-credits 卡片与比值行样式都在',
@@ -1553,21 +1553,18 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数 zh / en 各 158（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 删 3）',
-    zhKeys015.length === 158 && enKeys015.length === 158)
-  const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
-    'usageCreditsModelsNote']
-  ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
+  ok('015 i18n：COPY 键数 zh / en 各 152（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 删 3 - 024 删 6）',
+    zhKeys015.length === 152 && enKeys015.length === 152)
+  const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle']
+  ok('015 i18n：3 个新键中英都在（024 删掉 ModelsNote）', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
   const zhLines015 = (zhBlock015?.[1] ?? '').split('\n')
     .filter(line => classKeys015.some(key => line.startsWith('        ' + key + ':')))
   const enLines015 = (enBlock015?.[1] ?? '').split('\n')
     .filter(line => classKeys015.some(key => line.startsWith('        ' + key + ':')))
-  ok('015 i18n：中文 4 行都有汉字', zhLines015.length === 4 && zhLines015.every(line => /[\u3400-\u9fff]/u.test(line)))
-  ok('015 i18n：英文 4 行都没有汉字', enLines015.length === 4 && enLines015.every(line => !/[\u3400-\u9fff]/u.test(line)))
-  ok('015 i18n：脚注写明官方 input 含缓存命中、三者相加等于官方 tokens',
-    src.includes('官方 input 含缓存命中') && src.includes('三者相加等于官方 tokens'))
-  ok('015 i18n：模型脚注写明官方不按模型拆分（贡献口径）',
-    src.includes('官方不按模型拆分') && /not split by model/i.test(src))
+  ok('015 i18n：中文 3 行都有汉字', zhLines015.length === 3 && zhLines015.every(line => /[\u3400-\u9fff]/u.test(line)))
+  ok('015 i18n：英文 3 行都没有汉字', enLines015.length === 3 && enLines015.every(line => !/[\u3400-\u9fff]/u.test(line)))
+  ok('015 i18n：两条口径脚注已按 024 删除',
+    !src.includes('官方 input 含缓存命中') && !src.includes('官方不按模型拆分') && !/not split by model/i.test(src))
 
   // 4) CSS：模型块定高内滚 + 焦点环 + 细滚动条，与 012 的模型卡同一套变量。
   ok('015 CSS：模型块 252px 内滚（thin + 滚动链交还外层 auto）',
@@ -1578,9 +1575,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('015 CSS：焦点环与 8px 细滚动条都在（键盘也能滚这块）',
     /\.tpq-usage-credits-models:focus-visible\{[^}]*outline/.test(src)
       && /\.tpq-usage-credits-models::-webkit-scrollbar\{[^}]*width:8px/.test(src))
-  ok('015 CSS：分项卡与模型脚注挂既有文字色变量（不自造颜色）',
+  ok('015 CSS：分项卡标题挂既有文字色变量（024 删掉模型脚注后只查这一条）',
     /\.tpq-usage-credits-classes-title\{[^}]*--dsw-alias-label-secondary/.test(src)
-      && /\.tpq-usage-credits-models-note\{[^}]*--dsw-alias-label-tertiary/.test(src))
+      && !src.includes('.tpq-usage-credits-models-note'))
 
   // 5) 越界面：015 不加配置键、不加出站主机。
   ok('015 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
@@ -1677,8 +1674,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
   const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
-  ok('016 i18n：COPY 现在 zh / en 各 158 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 的 3）',
-    zhKeys016.length === 158 && enKeys016.length === 158)
+  ok('016 i18n：COPY 现在 zh / en 各 152 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
+    zhKeys016.length === 152 && enKeys016.length === 152)
   const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
   ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
   const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
@@ -1693,9 +1690,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     enLines016.length === 2 && enLines016[0].includes('Per credit: input')
       && enLines016[0].includes('cache hit') && enLines016[0].includes('output')
       && enLines016[1].includes('cache write') && enLines016.every(line => !/[\u3400-\u9fff]/u.test(line)))
-  ok('016 i18n：模型脚注写明三类共用同一个账号级分母、三者相加等于该行总量',
-    src16.includes('同一个账号级分母') && src16.includes('三者相加等于该行总量')
-      && /same account-level denominator/i.test(src16))
+  ok('016 i18n：模型脚注已按 024 删除（键与长句都不在了）',
+    !src16.includes('usageCreditsModelsNote') && !src16.includes('三者相加等于该行总量')
+      && !/same account-level denominator/i.test(src16))
   ok('016 CSS：模型行改成两行制（flex-wrap + 行内 gap），第二行整行换行',
     /\.tpq-usage-credits-model\{[^}]*flex-wrap:wrap[^}]*gap:2px 8px/.test(src16)
       && /\.tpq-usage-credits-model-classes\{[^}]*flex:0 0 100%/.test(src16))
@@ -1834,14 +1831,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('017 CSS：≤520px 折成两列（320/375 视口不横向溢出）',
       /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(clientSrc017))
 
-    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161，023 删 3 → 158；标题改成「1 Credit 折合」，新增单位与按日提示。
+    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161，023 删 3 → 158，024 删 6 → 152；标题改成「1 Credit 折合」，新增单位与按日提示。
     const zhBlock017 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const enBlock017 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const keysOf017 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
     const zhKeys017 = keysOf017(zhBlock017?.[1] ?? '')
     const enKeys017 = keysOf017(enBlock017?.[1] ?? '')
-    ok('017 i18n：COPY 现在 zh / en 各 158 键（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3）',
-      zhKeys017.length === 158 && enKeys017.length === 158)
+    ok('017 i18n：COPY 现在 zh / en 各 152 键（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
+      zhKeys017.length === 152 && enKeys017.length === 152)
     ok('017 i18n：标题/单位/按日提示三个键中英都在',
       ['usageCreditsClasses', 'usageCreditsClassesUnit', 'usageCreditsDaily']
         .every(key => zhKeys017.includes(key) && enKeys017.includes(key)))
@@ -1996,8 +1993,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf19 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys19 = keysOf19(zhBlock19?.[1] ?? '')
   const enKeys19 = keysOf19(enBlock19?.[1] ?? '')
-  ok('019 i18n：COPY 键数 zh / en 各 158（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3）',
-    zhKeys19.length === 158 && enKeys19.length === 158)
+  ok('019 i18n：COPY 键数 zh / en 各 152（017 的 155 + 019 的 4 + 022 的 2 - 023 的 3 - 024 的 6）',
+    zhKeys19.length === 152 && enKeys19.length === 152)
   const pickKeys19 = ['usageCreditsModelPickTitle', 'usageCreditsModelPickCard']
   ok('019 i18n：标题与卡片两个键中英都在（023 后收敛为三键）',
     pickKeys19.every(key => zhKeys19.includes(key) && enKeys19.includes(key)))
@@ -2123,8 +2120,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhBlock22 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src22c)
   const enBlock22 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src22c)
   const keysOf22 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
-  ok('022 i18n：COPY 键数 zh / en 各 158（023 删掉 hint / share / note）',
-    keysOf22(zhBlock22?.[1] ?? '').length === 158 && keysOf22(enBlock22?.[1] ?? '').length === 158)
+  ok('022 i18n：COPY 键数 zh / en 各 152（023 删 hint/share/note，024 删六个口径脚注键）',
+    keysOf22(zhBlock22?.[1] ?? '').length === 152 && keysOf22(enBlock22?.[1] ?? '').length === 152)
 
   const readme22 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn22 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
@@ -2179,5 +2176,41 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
 }
 
+// 24) 024 撤掉说明性脚注：面板只留数据，不再解释口径（用户 m01627 要求）。
+{
+  const src24 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('024 客户端：六个口径脚注键彻底删除',
+    ['usageCreditsNote', 'usageCreditsModelsNote', 'usageRatioNote',
+      'usageNoteDelay', 'usageNoteCacheWrite', 'usageNoteNoCredits']
+      .every(key => !src24.includes('        ' + key + ':')))
+  ok('024 客户端：官方四项细分数字行不再渲染',
+    !src24.includes('"data-usage-official-split"') && !src24.includes('className: "tpq-usage-official-split"'))
+  ok('024 客户端：模型块 / 换算卡的脚注节点都已撤掉',
+    !src24.includes('tpq-usage-credits-models-note') && !src24.includes('className: "tpq-usage-credits-note"'))
+  ok('024 客户端：整页脚注只在有内容时才建块（只剩来源 / 本机 / 补扫）',
+    src24.includes('if (noteLines.length > 0)') && !src24.includes('copy.usageRatioNote')
+      && !src24.includes('copy.usageNoteDelay'))
+  ok('024 CSS：三条脚注规则已删除',
+    !src24.includes('.tpq-usage-credits-note{') && !src24.includes('.tpq-usage-credits-models-note{')
+      && !/^\.tpq-usage-official-split,/m.test(src24))
+  const zhBlock24 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src24)
+  const enBlock24 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src24)
+  const keysOf24 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  ok('024 i18n：COPY 键数 zh / en 各 152（023 的 158 - 024 的 6）',
+    keysOf24(zhBlock24?.[1] ?? '').length === 152 && keysOf24(enBlock24?.[1] ?? '').length === 152)
+  ok('024 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '024-drop-explanatory-notes', name))))
+  const readme24 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn24 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  const changelog24 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('024 README / CHANGELOG 记了撤掉脚注',
+    readme24.includes('024') && readmeEn24.includes('024')
+      && /## \[Unreleased\]/.test(changelog24) && changelog24.includes('024'))
+  ok('024 没有新增配置键 / 出站主机 / 依赖',
+    Object.keys(__internals.DEFAULTS).length === 26
+      && __internals.DECLARED_HOSTS.length === 8
+      && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
+}
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

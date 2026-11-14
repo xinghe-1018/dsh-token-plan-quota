@@ -331,6 +331,7 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   reference, not the official caliber - and the footnote states that the numerator is this instance's usage while
   the denominator is account-level credits used. With an older host, or when no model yields a capacity, the whole
   block is not rendered; a 0 is never substituted.
+- **Estimated from list prices (022)**: for models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) the picker leads with the tokens the whole cycle's credits would buy at that model alone: the row's list-price cost divided by this account's measured list-price cost per credit (`ratio.priceBasis` records the basis, its verification date and the unit). A smaller line keeps the 019 share-derived estimate (contribution only, not additive) and notes that the 22:00-08:00 discount and models without a published price are not modelled; without an estimate every field falls back to 019, `capacity` stays, and both calibers coexist - the estimate is a reference, not an official reading.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -641,9 +642,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 1037 assertions, offline
-node test/client.mjs                # 1358 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 603 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 1073 assertions, offline
+node test/client.mjs                # 1384 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 615 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -651,7 +652,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
-config table, 8 sources, 8 declared outbound hosts, 1037/1358 tests plus 603 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 1073/1384 tests plus 615 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

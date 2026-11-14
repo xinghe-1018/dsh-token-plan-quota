@@ -178,7 +178,7 @@ chip 必须停在「月份」，脚注以外无 `Credits`（012 起 `%` 只来�
 柱子定位靠测试钩子 `[data-usage-bar][data-usage-bar-from="2026-10-22"]`，命中区还得带 `role="img"`、
 `tabindex="0"` 与非空 `aria-label`（读屏和键盘走同一份文案）。然后**真发 `Input.dispatchMouseEvent` 的 `mouseMoved`**
 到柱心——`element.hover()` 只走 JS 派发路径，证明不了指针事件能唤起浮层。浮层出现后逐项断言：
-`[data-usage-tip]` 恰好 1 个且 `role="tooltip"`、`data-usage-tip-index` 等于该桶序号、`[data-usage-tip-range]`
+`[data-usage-tip]` 恰好 1 个且标了 `aria-hidden="true"`（012 复核第二轮起浮层不再有 `role`/`id`，改由柱子 `aria-label` 承担读屏）、`data-usage-tip-index` 等于该桶序号、`[data-usage-tip-range]`
 含 `2026-10-22`、`[data-usage-tip-tokens]` 含上面那个量纲串、四类拆分与调用五行分别含 fixture 量纲串、
 浮层四边都在视口内（≥8px）、整屏（脚注除外）无 `Credits`（012 起 `%` 只来自构成比与命中率）、英文套不混中文。前置同 ⑬：先过
 官方对照就绪断言；脚注在 860 折叠线下，⑭ 不断言其可见（也不落 QA 图），只断言 `.tpq-usage-notes`

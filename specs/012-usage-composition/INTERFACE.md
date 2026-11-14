@@ -233,3 +233,30 @@ check-docs OK（配置键 25、数据源 8、计数一致）、check-refs OK（6
 第二轮可失败性实证：把 `usageTipInlineOffsetX` 改回读 `offsetLeft`、把 `usageTipAnchorOf` 改回 `Number(value)`、
 去掉两个 `aria-hidden`、把 rowKey 改回纯序号——四处改动各自都会让 client 或 guards 至少 1 条变红。
 
+## 13. 复核第三轮（2026-11-14，对第二轮修复提交再跑一遍）
+
+`ocr review --commit 642ca0f --format json --audience agent --effort medium --max-tools 50
+--exclude test/**,scripts/**,specs/**,docs/**,*.md`：14m32s / 1.96M tokens / 68 次工具调用，
+JSON complete、6 条 comments（stdout 依旧是收尾写会话目录 `Access is denied`，以 JSON 为准）。
+6 条里 2 条真问题、3 条过期、1 条接受偏差：
+
+| # | 级别 / 类别 | 结论 | 处置 |
+|---|---|---|---|
+| 1 | high / bug | 称删 `role`/`id` 会让 `test/client.mjs` 的 id 断言变红 | **过期**：ocr 只拿到 642ca0f 这一个提交，测试在 5eaca0a 才提交；当前工作树已改好、门禁绿 |
+| 2 | medium / bug | `usageTipInlineOffsetX` 只检查函数存在，`getBoundingClientRect()` 返回 `null`/`undefined`/非对象时读 `.left` 抛 TypeError（渲染期崩） | **已修**：先取两个 rect 再判 `typeof === "object"`，缺失一律 0（与 `usageBarRectOf` 同防法）；补 client 1 条 + guards 1 条 |
+| 3 | medium / test | 称 guards 仍要求字面 `value <= 0` | **过期**：守卫在同一提交之后的 5eaca0a 才改成 `usageFiniteToken` |
+| 4 | medium / test | 称 guards 仍断言 `"model-" + String(index)` | **过期**：守卫已改钉 `rowKey` 形状 |
+| 5 | medium / documentation | `scripts/shots/make-shots.mjs` 的 ⑭ 场景硬门仍要求 `role="tooltip"`，⑭ 场景会直接抛错、悬停图拍不出来；`scripts/shots/README.md` 与 `specs/011/INTERFACE.md` 的契约也没同步 | **已修**：⑭ 改断言 `aria-hidden="true"` 且不得再有 `role`；两处文档契约同步为当前形状；⑭ 中英各实跑一次通过 |
+| 6 | low / performance | `usageTipInlineOffsetX` 在渲染期做两次同步布局读取，建议按浮层生命周期缓存 | **接受为偏差**：该路径只在没有 react-dom portal 时启用（回退渲染），一次两次 rect 与已有的浮层尺寸测量同量级；缓存要引 ref + effect，风险大于收益 |
+
+顺带：⑭ 的实跑用独立 demo 实例（`DSH_HOME=tmp/shots-012`、`--port 3099`、`node_modules/dsh-token-plan-quota`
+是指向仓库的 Junction）中英各跑一次，产物写到 `tmp/shots-out-014*`（未覆盖 `docs/images`，因为本轮画面无变化）；
+本机坑同 §11：工作区是 `~/.dsh` 时 Chromium 在带 DSH 保护标记 ACL 的目录下起子进程会 `Target crashed`，
+需临时给启动参数加 `--no-sandbox`（跑完已回滚，未进仓库）。
+
+门禁：host **855**（不变）/ client **885**（884→885）/ guards **385**（384→385），全 0 failed；
+check-manifest / check-docs / check-refs / check-submission 全 OK。
+
+可失败性（都实跑过）：把 `usageTipInlineOffsetX` 里的两处 rect 判空删掉 → `test/client.mjs` 立刻以
+`TypeError: Cannot read properties of null (reading 'left')` 崩掉（正是要防的渲染期白屏），guards 同改法 384/1 红；
+把 ⑭ 的 `aria-hidden` 断言换回 `role` 硬门 → 该截图场景实跑直接抛错（改动后中英各跑一次才通过）。

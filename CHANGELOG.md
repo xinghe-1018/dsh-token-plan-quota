@@ -55,6 +55,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **用量构成复核第三轮（012 复核 3，对第二轮修复提交再跑一遍 OpenCodeReview）**：6 条结论，2 条真问题已修，
+  3 条是「只审一个提交」造成的过期结论，1 条接受为偏差。
+  **（2，medium）内联位移的注释承诺「拿不到矩形按 0」，但只检查了函数存在**：若宿主或测试替身让
+  `getBoundingClientRect()` 返回 `null` / `undefined` / 非对象，渲染期读 `.left` 会抛 TypeError
+  （整块统计屏白掉）。现在先取两个 rect 再判对象，缺失一律回 0，与该文件既有的 `usageBarRectOf` 同一套防法；
+  客户端补 1 条边界断言、guards 补 1 条源码形状断言。
+  **（5，medium）截图流水线跟着旧契约走**：`scripts/shots/make-shots.mjs` 的 ⑭ 场景有硬门
+  `if (tip.role !== 'tooltip') throw`，第二轮把浮层改成 `aria-hidden` 之后，这张图再也拍不出来（真跑会直接抛错）。
+  改为断言 `aria-hidden="true"` 且**不得再出现 role**，并把 `scripts/shots/README.md` 与
+  `specs/011-bar-tooltip/INTERFACE.md` 里的 role/id/describedby 契约同步为当前形状；⑭ 中英各实跑一次通过
+  （浮层 148×151、锚柱 2026-10-22 / 1,403,000 tokens）。
+  过期结论（#1 / #3 / #4）都是「测试与 guards 在修复提交之后的那个提交里才落地」：ocr 只拿到单个 commit 的
+  `lib/client.js`，看不到下一提交的断言，于是把已修好的地方报成红。实际门禁全绿。
+  接受为偏差（#6）：`usageTipInlineOffsetX` 在渲染期做两次同步布局读取——它只在内联回退路径（宿主没有
+  react-dom portal）生效，开销与已有的浮层尺寸测量同量级；加缓存要引入 ref + effect，风险大于收益。
+  测试：客户端 884→885、guards 384→385，宿主仍 855。第三轮记录见 `specs/012-usage-composition/INTERFACE.md` §13。
+
 - **用量构成复核第二轮（012 复核 2，对修复提交再跑一遍 OpenCodeReview）**：上一轮改完又审了一次，
   7 条结论全部处理，其中 1 条是真 bug、2 条是上一轮引入的新问题：
   **（1，high）内联浮层的定位补偿原来读 `svgElement.offsetLeft`** —— `.tpq-usage-scroll` 的子节点是

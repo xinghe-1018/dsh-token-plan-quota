@@ -38,7 +38,7 @@ React.createElement("g", {
 ```js
 React.createElement("div", {
   className: "tpq-usage-tip",
-  role: "tooltip",
+  "aria-hidden": "true",   // 纯视觉呈现，读屏走柱子的 aria-label（012 复核第二轮删掉 role/id）
   "data-usage-tip": "1",
   "data-usage-tip-index": String(index),
   style: { left: px, top: px },        // fixed（portal）或 absolute（回退）
@@ -50,6 +50,7 @@ React.createElement("div", {
 ```
 
 - 同一时刻**最多一个** `[data-usage-tip]`。
+- 不挂 `role` / `id` / `aria-describedby`：柱子的 `aria-label` 已经由 `usageBucketTitle()` 拼出同一份内容，再挂一遍会让读屏把同一个桶念两遍；浮层只标 `aria-hidden="true"`。外层 `<svg>` 用 `role="group"`（`role="img"` 是 Children-Presentational，会把每根可聚焦的柱子整棵从无障碍树里剪掉）。
 - `pointer-events: none`，不挡指针。
 - 文案：绝对 tokens；不出现 `%`、`Credits`、估算/余量字样；英文界面不混中文。
 

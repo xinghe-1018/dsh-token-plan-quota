@@ -293,6 +293,12 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 - **The model ranking scrolls inside its card**: the list is capped at about four rows and a thin scrollbar
   reveals the rest; the container itself is `Tab`-focusable so keyboard and screen-reader users can scroll it.
   No amount of models can push the official comparison or the footnote off screen.
+- **The screen scrolls as one page**: the whole panel sits in a scroll viewport (`data-usage-scroll="1"`, thin
+  scrollbar, `Tab`-focusable, `PageDown` / `End` work), so content taller than the host's main seat is no longer
+  clipped; the model ranking keeps its own in-card scroll and the two scroll independently.
+- **Model names come from the session header**: when a later slice carries no new header, the last declared
+  `provider/model` of that session is reused, so usage no longer falls into "unknown" mid-session. Sessions whose
+  logs never declare a header are still reported as unknown - we do not guess.
 - When the data is not available it says so: no `sessionPersistence` → falls back to "since this process started"
   (resets on restart); backfill still running → a thin progress bar and "backfilling (N/M sessions)"; statistics
   turned off → the screen states that, instead of pretending "cannot measure" means zero.
@@ -586,9 +592,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 855 assertions, offline
-node test/client.mjs                # 885 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 385 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 887 assertions, offline
+node test/client.mjs                # 918 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 413 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -596,7 +602,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 855/885 tests plus 385 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 887/918 tests plus 413 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

@@ -55,6 +55,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **用量统计屏整页滚动 + 未知模型归位（013）**：统计屏的内容高于宿主主区（860px）时原先被外层 `overflow:hidden`
+  裁掉、连滚动条都没有。现在整屏包在一层 `.tpq-usage-viewport` 里（`height:100%`、`overflow-y:auto`、
+  `overscroll-behavior:contain`、8px 细滚动条、`tabIndex=0` + `role="region"` + `aria-label`，
+  `data-usage-scroll="1"` 供门禁/截图定位）；错误态与正常态两个 return 点共用同一个 `usageViewport` helper。
+  不写 `scrollbar-gutter`：经典滚动条出现时 920px 居中列会有 5px 左移，这是本轮接受的唯一视觉副作用。
+  模型排行仍是卡内 252px 内滚，两层独立。
+  另一半是 `unknown/unknown`（本机实测 285.7M tokens / 2347 次调用）：根因是会话索引的增量折叠只读
+  `lastSeq+1` 之后的切片，切片里没有新的 `request/header` 时模型上下文丢失，整片被记成未知。
+  索引升到 schema v2，会话条目多存 `lastProvider` / `lastModel`（要么都有、要么都没有，不写空串），
+  列表增量与兜底扫描两条路径都从上一片继承模型；仍无法确定（日志从未声明 header）才记未知，绝不按「看起来像」猜。
+  旧 v1 索引按既有坏文件策略备份成 `.bad-<毫秒>` 后全量重建。
+  测试：宿主 855→887、客户端 885→918、guards 384→413（第 013 块净增 32 / 33 / 29 条执行断言）。
+  方案见 `specs/013-scroll-and-model-attribution/`。
+
+### Fixed
+
 - **用量构成复核第三轮（012 复核 3，对第二轮修复提交再跑一遍 OpenCodeReview）**：6 条结论，2 条真问题已修，
   3 条是「只审一个提交」造成的过期结论，1 条接受为偏差。
   **（2，medium）内联位移的注释承诺「拿不到矩形按 0」，但只检查了函数存在**：若宿主或测试替身让

@@ -1692,7 +1692,7 @@ function findChip(node) {
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [151, 151])
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [153, 153])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -5126,7 +5126,7 @@ async function mountBreakdown(credits, options = {}) {
     && /\.tpq-usage-credits-models:focus-visible\{[^}]*outline:2px solid/.test(creditsCss))
   ok('T015 CSS 标题 12.5px / 行 flex gap 8px / name 省略 / 数字 nowrap+tabular / 脚注 10.5px',
     /\.tpq-usage-credits-models-title\{[^}]*margin:0 0 4px;[^}]*font-size:12.5px/.test(creditsCss)
-    && /\.tpq-usage-credits-model\{[^}]*display:flex;gap:8px;align-items:baseline/.test(creditsCss)
+    && /\.tpq-usage-credits-model\{[^}]*display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline/.test(creditsCss)
     && /\.tpq-usage-credits-model-name\{[^}]*overflow:hidden;text-overflow:ellipsis;[\s\S]{0,80}white-space:nowrap/.test(creditsCss)
     && /\.tpq-usage-credits-model-tokens,\.tpq-usage-credits-model-ratio\{[^}]*white-space:nowrap;[\s\S]{0,120}tabular-nums/.test(creditsCss)
     && /\.tpq-usage-credits-models-note\{[^}]*font-size:10.5px/.test(creditsCss))
@@ -5156,7 +5156,7 @@ async function mountBreakdown(credits, options = {}) {
   check('T015 模型块标题逐字', collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-title')[0]).join(''), '每个模型各自的比值')
   check('T015 模型块脚注逐字',
     collectText(findNodes(modelsBlock, 'tpq-usage-credits-models-note')[0]).join(''),
-    '模型行 = 本机该模型 tokens ÷ 本账期已用 Credits（官方不按模型拆分，这是贡献值）；各行相加约等于本机总量，与账号级官方总量有少量差额。')
+    '模型行 = 本机该模型 tokens ÷ 本账期已用 Credits（官方不按模型拆分，这是贡献值）；每行的输入 / 缓存命中 / 输出各自是「该模型这一类 tokens ÷ 同一个账号级分母」，三者相加等于该行总量。各行相加约等于本机总量，与账号级官方总量有少量差额。')
   const rows = findNodes(modelsBlock, 'tpq-usage-credits-model')
   check('T015 模型行数不截断（三条入参 → 三行）', rows.length, 3)
   check('T015 模型行顺序严格照宿主（降序，不重排）',
@@ -5246,6 +5246,167 @@ async function mountBreakdown(credits, options = {}) {
   check('T015 混合入参：跳过非有限行且保持宿主顺序',
     rows.map((row) => row.props['data-model']), ['small-first', 'big-second'])
   check('T015 混合入参：行数', rows.length, 2)
+}
+
+/* ===== 016 模型行第二行：按类摊开的每 Credit 比值（INTERFACE §3）=====
+ * 数据形状照 §2：models[i].classes 四键（input/cacheRead/output/cacheWrite），每键 { tokens, perCredit }。
+ * 渲染只依赖三个必填类的 perCredit；cacheWrite 是可选第四段（有限且 > 0 才追加）。
+ * 与 015 的行语义互不影响：第一行三个 span 照旧，第二行整行换行。 */
+function modelClasses(input, cacheRead, output, cacheWrite) {
+  const cell = (perCredit) => ({ tokens: 1, perCredit })
+  const classes = { input: cell(input), cacheRead: cell(cacheRead), output: cell(output) }
+  if (cacheWrite !== undefined) classes.cacheWrite = cell(cacheWrite)
+  return classes
+}
+
+function modelWith(classes, overrides = {}) {
+  return { id: 'm', provider: 'qwen', model: 'qwen3-max', tokens: 1000, calls: 1, tokensPerCredit: 10, classes, ...overrides }
+}
+
+async function mountModelClasses(models, options = {}) {
+  return mountBreakdown(makeCreditsBreakdownSnapshot({ ratio: { models } }), options)
+}
+
+/* ① 静态契约：COPY 两键 + 改写脚注、钩子、__internals、CSS 两件、渲染段无 %。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T016 __internals 暴露模型行第二行纯函数', typeof internals.usageCreditsModelClassesLine === 'function')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T016 COPY 两键与改写脚注（zh）',
+    source.includes('usageCreditsModelClasses: "每 Credit：输入 {input} · 缓存命中 {cacheRead} · 输出 {output}"')
+    && source.includes('usageCreditsModelClassWrite: " · 缓存写入 {tokens}"')
+    && source.includes('每行的输入 / 缓存命中 / 输出各自是「该模型这一类 tokens ÷ 同一个账号级分母」，三者相加等于该行总量'))
+  ok('T016 COPY 两键与改写脚注（en，全 ASCII）',
+    source.includes('usageCreditsModelClasses: "Per credit: input {input} · cache hit {cacheRead} · output {output}"')
+    && source.includes('usageCreditsModelClassWrite: " · cache write {tokens}"')
+    && source.includes("each row's input / cache hit / output is that class's tokens for the model over the same account-level denominator"))
+  ok('T016 第二行钩子与类名落地',
+    source.includes('"data-usage-credits-model-classes": "1"')
+    && source.includes('className: "tpq-usage-credits-model-classes"'))
+  const cssStart = source.indexOf('.tpq-usage-credits-model{')
+  const cssEnd = source.indexOf('.tpq-usage-credits-models-note{', cssStart)
+  const modelCss = cssStart >= 0 && cssEnd > cssStart ? source.slice(cssStart, cssEnd) : ''
+  ok('T016 CSS 模型行 flex-wrap + 2px 8px 行内间距',
+    /\.tpq-usage-credits-model\{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;padding:2px 0;font-size:12px\}/.test(modelCss))
+  ok('T016 CSS 第二行整行换行 / 10.5px / 弱化色 / tabular',
+    /\.tpq-usage-credits-model-classes\{flex:0 0 100%;font-size:10.5px;line-height:1.6;overflow-wrap:anywhere;[\s\S]{0,120}label-tertiary[^}]*font-variant-numeric:lining-nums tabular-nums\}/.test(modelCss))
+  const fnStart = source.indexOf('function usageCreditsModelClassesLine')
+  const fnEnd = source.indexOf('function usageCreditsModelsBlock', fnStart)
+  const fnSource = fnStart >= 0 && fnEnd > fnStart ? source.slice(fnStart, fnEnd) : ''
+  const stripped = fnSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  ok('T016 第二行渲染段（剥注释后）无 % 字面量', stripped.length > 0 && !stripped.includes('%'), stripped.includes('%') ? stripped : '')
+}
+
+/* ② 中文就绪态：逐字、四段追加、0 值照实、缺 classes 不渲染。 */
+{
+  const models = [
+    modelWith(modelClasses(1341, 33000, 133, 250), { id: 'full' }),
+    modelWith(modelClasses(0, 0, 0, 0), { id: 'zero-write' }),
+    modelWith(undefined, { id: 'no-classes' }),
+    modelWith(modelClasses(5, 6, 7), { id: 'no-write-key' }),
+  ]
+  const { tree } = await mountModelClasses(models)
+  const rows = findNodes(creditsSectionOf(tree), 'tpq-usage-credits-model')
+  check('T016 zh 四行都在（顺序照宿主）', rows.map((row) => row.props['data-model']), ['full', 'zero-write', 'no-classes', 'no-write-key'])
+  const lineOf = (row) => findNodes(row, 'tpq-usage-credits-model-classes')
+  check('T016 zh 满配行：第二行整行文本（输入 1,341 / 缓存命中 3.3万 / 输出 133 + 缓存写入 250）',
+    collectText(lineOf(rows[0])[0]).join(''),
+    '每 Credit：输入 1,341 · 缓存命中 3.3万 · 输出 133 · 缓存写入 250')
+  ok('T016 zh 满配行：第二行是第 4 个子节点（flex 100% 会后换行）',
+    rows[0].children.length === 4
+    && rows[0].children[3].props.className === 'tpq-usage-credits-model-classes'
+    && rows[0].children[3].props['data-usage-credits-model-classes'] === '1')
+  check('T016 zh 满配行：第一行三 span 仍是 name/tokens/ratio',
+    [0, 1, 2].map((i) => rows[0].children[i].props.className),
+    ['tpq-usage-credits-model-name', 'tpq-usage-credits-model-tokens', 'tpq-usage-credits-model-ratio'])
+  check('T016 zh cacheWrite=0：照实印三类 0，不追加第四段',
+    collectText(lineOf(rows[1])[0]).join(''), '每 Credit：输入 0 · 缓存命中 0 · 输出 0')
+  ok('T016 zh cacheWrite=0：文本里没有「缓存写入」', !collectText(lineOf(rows[1])[0]).join('').includes('缓存写入'))
+  check('T016 zh 缺 classes（旧宿主）：不渲染第二行', lineOf(rows[2]).length, 0)
+  check('T016 zh 缺 classes：该行仍是 3 个子节点', rows[2].children.length, 3)
+  check('T016 zh 缺 cacheWrite 键：第二行照渲染、无第四段',
+    collectText(lineOf(rows[3])[0]).join(''), '每 Credit：输入 5 · 缓存命中 6 · 输出 7')
+  ok('T016 zh 所有第二行文本无 % 字面量',
+    lineOf(rows[0]).concat(lineOf(rows[1]), lineOf(rows[3])).every((n) => !collectText(n).join('').includes('%')))
+  ok('T016 zh 第二行不带 role / tabIndex（整行可读但不必单独聚焦）',
+    lineOf(rows[0]).every((n) => n.props.role === undefined && n.props.tabIndex === undefined))
+}
+
+/* ③ 英文就绪态：逐字、全 ASCII、无万/亿。 */
+{
+  const models = [
+    modelWith(modelClasses(1341, 33000, 133, 250), { id: 'full' }),
+    modelWith(modelClasses(0, 0, 0, 0), { id: 'zero-write' }),
+  ]
+  const { tree } = await mountModelClasses(models, { lang: 'en-US' })
+  const rows = findNodes(creditsSectionOf(tree), 'tpq-usage-credits-model')
+  const lineOf = (row) => findNodes(row, 'tpq-usage-credits-model-classes')
+  check('T016 en 满配行逐字（1.3K / 33K / 133 + cache write 250）',
+    collectText(lineOf(rows[0])[0]).join(''),
+    'Per credit: input 1.3K · cache hit 33K · output 133 · cache write 250')
+  check('T016 en cacheWrite=0：不追加第四段',
+    collectText(lineOf(rows[1])[0]).join(''), 'Per credit: input 0 · cache hit 0 · output 0')
+  ok('T016 en 第二行无汉字 / 万 / 亿 / %',
+    lineOf(rows[0]).concat(lineOf(rows[1])).every((n) => !/[\u3400-\u9fff]|万|亿|%/.test(collectText(n).join(''))))
+}
+
+/* ④ 降级矩阵：三类缺一 / 非对象 / 非有限都整行不渲染；cacheWrite 异常只影响第四段。 */
+{
+  const cases = [
+    ['classes 非对象', 'nope'],
+    ['classes 是数组', []],
+    ['classes 空对象', {}],
+    ['缺 input', { cacheRead: { perCredit: 2 }, output: { perCredit: 3 } }],
+    ['缺 cacheRead', { input: { perCredit: 1 }, output: { perCredit: 3 } }],
+    ['缺 output', { input: { perCredit: 1 }, cacheRead: { perCredit: 2 } }],
+    ['input perCredit 非有限（NaN）', { input: { perCredit: NaN }, cacheRead: { perCredit: 2 }, output: { perCredit: 3 } }],
+    ['cacheRead perCredit 是字符串', { input: { perCredit: 1 }, cacheRead: { perCredit: 'two' }, output: { perCredit: 3 } }],
+    ['output perCredit 是 null（不是 0）', { input: { perCredit: 1 }, cacheRead: { perCredit: 2 }, output: { perCredit: null } }],
+    ['output perCredit 是 Infinity', { input: { perCredit: 1 }, cacheRead: { perCredit: 2 }, output: { perCredit: Infinity } }],
+  ]
+  for (const [label, classes] of cases) {
+    const { tree } = await mountModelClasses([modelWith(classes, { id: 'row' })])
+    const section = creditsSectionOf(tree)
+    check('T016 降级 ' + label + '：第二行不渲染', findNodes(section, 'tpq-usage-credits-model-classes').length, 0)
+    check('T016 降级 ' + label + '：第一行照旧（行还在）', findNodes(section, 'tpq-usage-credits-model').length, 1)
+    check('T016 降级 ' + label + '：第一行 tokens 仍在',
+      collectText(findNodes(section, 'tpq-usage-credits-model-tokens')[0]).join(''), '1,000 tokens')
+  }
+  const tails = [
+    ['cacheWrite=0 不追加', 0, ''],
+    ['cacheWrite 负数不追加', -5, ''],
+    ['cacheWrite=NaN 不追加', NaN, ''],
+    ['cacheWrite 缺键不追加', undefined, ''],
+    ['cacheWrite 有限正数追加', 12.5, ' · 缓存写入 12.5'],
+  ]
+  for (const [label, write, suffix] of tails) {
+    const classes = modelClasses(1, 2, 3, write)
+    const { tree } = await mountModelClasses([modelWith(classes, { id: 'row' })])
+    check('T016 ' + label, collectText(findNodes(creditsSectionOf(tree), 'tpq-usage-credits-model-classes')[0]).join(''),
+      '每 Credit：输入 1 · 缓存命中 2 · 输出 3' + suffix)
+  }
+}
+
+/* ⑤ 015 不回归：行筛选/顺序/第一行三件与脚注位置都不受第二行影响。 */
+{
+  const models = [
+    { id: 'big', tokens: 9000, tokensPerCredit: 200, classes: modelClasses(10, 20, 30, 40) },
+    { id: 'broken', tokens: 500, tokensPerCredit: undefined, classes: modelClasses(1, 1, 1, 1) },
+    { id: 'small', tokens: 100, tokensPerCredit: 2.5, classes: modelClasses(1, 0, 0) },
+  ]
+  const { tree } = await mountModelClasses(models)
+  const section = creditsSectionOf(tree)
+  const rows = findNodes(section, 'tpq-usage-credits-model')
+  check('T016 回归：跳过非有限行且顺序照宿主', rows.map((row) => row.props['data-model']), ['big', 'small'])
+  check('T016 回归：第一行 tokens / ratio 文本未变',
+    [collectText(findNodes(rows[0], 'tpq-usage-credits-model-tokens')[0]).join(''),
+      collectText(findNodes(rows[0], 'tpq-usage-credits-model-ratio')[0]).join('')],
+    ['9,000 tokens', '1 Credit ≈ 200 tokens'])
+  check('T016 回归：模型块标题 / 脚注各一份',
+    [findNodes(section, 'tpq-usage-credits-models-title').length, findNodes(section, 'tpq-usage-credits-models-note').length], [1, 1])
+  ok('T016 回归：每行第二行最多一条（不重复渲染）',
+    rows.every((row) => findNodes(row, 'tpq-usage-credits-model-classes').length === 1))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

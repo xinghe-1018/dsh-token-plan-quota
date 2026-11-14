@@ -3604,7 +3604,7 @@ function recursiveKeys(value, out = []) {
 
   // 模型行：分子本机、分母账号级 → 只保留 tokens>0，保持入参降序，不重排。
   const localModels = [
-    { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { tokens: 1200, calls: 4 } },
+    { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { input: 600, cacheRead: 300, output: 200, cacheWrite: 100, tokens: 1200, calls: 4 } },
     { id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', totals: { tokens: 300, calls: 2 } },
     { id: 'zero/model', provider: 'zero', model: 'model', totals: { tokens: 0, calls: 9 } },
     { id: 'bad/model', provider: 'bad', model: 'model', totals: { tokens: NaN, calls: 1 } },
@@ -3613,8 +3613,16 @@ function recursiveKeys(value, out = []) {
   const modelRatios = creditsModelRatios(localModels, 100)
   check('015 creditsModelRatios：只收 tokens>0 且保持降序',
     modelRatios.map(item => item.id), ['qwen/qwen3-max', 'deepseek/deepseek-v4.1'])
-  check('015 creditsModelRatios：行字段完整', modelRatios[0],
-    { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', tokens: 1200, calls: 4, tokensPerCredit: 12 })
+  check('015 creditsModelRatios：行字段完整（016 起含 classes）', modelRatios[0],
+    {
+      id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', tokens: 1200, calls: 4, tokensPerCredit: 12,
+      classes: {
+        input: { tokens: 600, perCredit: 6 },
+        cacheRead: { tokens: 300, perCredit: 3 },
+        output: { tokens: 200, perCredit: 2 },
+        cacheWrite: { tokens: 100, perCredit: 1 },
+      },
+    })
   check('015 creditsModelRatios：tokensPerCredit = tokens / used',
     [modelRatios[1].tokens, modelRatios[1].calls, modelRatios[1].tokensPerCredit], [300, 2, 3])
   check('015 creditsModelRatios：非数组 / 空数组 → []',
@@ -3629,7 +3637,7 @@ function recursiveKeys(value, out = []) {
   const localFull = {
     totals: { tokens: 2080883520 },
     models: [
-      { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { tokens: 1000000, calls: 3 } },
+      { id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max', totals: { input: 500000, cacheRead: 300000, output: 150000, cacheWrite: 50000, tokens: 1000000, calls: 3 } },
       { id: 'deepseek/deepseek-v4.1', provider: 'deepseek', model: 'deepseek-v4.1', totals: { tokens: 500000, calls: 2 } },
     ],
   }
@@ -3646,6 +3654,12 @@ function recursiveKeys(value, out = []) {
   check('015 compose：ratio.models 本机两行且保序',
     composed.ratio.models.map(item => [item.id, item.tokens, item.calls, item.tokensPerCredit]),
     [['qwen/qwen3-max', 1000000, 3, 1000000 / USED], ['deepseek/deepseek-v4.1', 500000, 2, 500000 / USED]])
+  check('016 compose：ratio.models 每行带 classes 四键',
+    Object.keys(composed.ratio.models[0].classes), ['input', 'cacheRead', 'output', 'cacheWrite'])
+  check('016 compose：模型行四类 tokens 相加 === 行 tokens',
+    composed.ratio.models[0].classes.input.tokens + composed.ratio.models[0].classes.cacheRead.tokens
+      + composed.ratio.models[0].classes.output.tokens + composed.ratio.models[0].classes.cacheWrite.tokens,
+    composed.ratio.models[0].tokens)
   ok('015 compose：014 的 ratio 旧字段不回归',
     Math.abs(composed.ratio.tokensPerCredit - 57072) < 1
       && composed.ratio.capacityTokens === Math.round(composed.ratio.tokensPerCredit * 80000))
@@ -3674,6 +3688,108 @@ function recursiveKeys(value, out = []) {
 
   ok('015 __internals：两个纯函数可直接调',
     typeof creditsClassRatios === 'function' && typeof creditsModelRatios === 'function')
+}
+
+// ---------------------------------------------------------------------------
+// 016：模型行再拆四类（input/cacheRead/output/cacheWrite）的 tokens 与 perCredit。
+// 分子取本机 totals，分母仍是账号级已用 Credits；perCredit 不取整。
+// ---------------------------------------------------------------------------
+{
+  const CLASS_MODELS = [
+    {
+      id: 'qwen/qwen3-max', provider: 'qwen', model: 'qwen3-max',
+      totals: { input: 600, cacheRead: 300, output: 200, cacheWrite: 100, tokens: 1200, calls: 4 },
+    },
+  ]
+  const classRow = creditsModelRatios(CLASS_MODELS, 100)[0]
+  check('016 creditsModelRatios：classes 四类 tokens / perCredit', classRow.classes, {
+    input: { tokens: 600, perCredit: 6 },
+    cacheRead: { tokens: 300, perCredit: 3 },
+    output: { tokens: 200, perCredit: 2 },
+    cacheWrite: { tokens: 100, perCredit: 1 },
+  })
+  check('016 creditsModelRatios：四类 tokens 相加 === 行 tokens',
+    classRow.classes.input.tokens + classRow.classes.cacheRead.tokens
+      + classRow.classes.output.tokens + classRow.classes.cacheWrite.tokens,
+    classRow.tokens)
+  ok('016 creditsModelRatios：四类 perCredit 相加 === 行 tokensPerCredit',
+    Math.abs(classRow.classes.input.perCredit + classRow.classes.cacheRead.perCredit
+      + classRow.classes.output.perCredit + classRow.classes.cacheWrite.perCredit
+      - classRow.tokensPerCredit) < 1e-12)
+  ok('016 creditsModelRatios：perCredit 不取整', classRow.classes.cacheRead.perCredit === 3
+    && classRow.tokensPerCredit === 12)
+
+  // 缺字段 / 非有限 / 负数：全部按 0，四类仍是完整对象，不产出 NaN/Infinity。
+  const clamped = creditsModelRatios([{
+    id: 'mix/model', provider: 'mix', model: 'model',
+    totals: { input: 50, cacheRead: NaN, output: -5, cacheWrite: undefined, tokens: 50, calls: '3' },
+  }], 10)[0]
+  check('016 creditsModelRatios：缺字段 / 非有限 / 负数按 0',
+    [clamped.classes.input.tokens, clamped.classes.cacheRead.tokens,
+      clamped.classes.output.tokens, clamped.classes.cacheWrite.tokens,
+      clamped.classes.input.perCredit, clamped.classes.cacheRead.perCredit,
+      clamped.classes.output.perCredit, clamped.classes.cacheWrite.perCredit,
+      clamped.calls],
+    [50, 0, 0, 0, 5, 0, 0, 0, 3])
+  check('016 creditsModelRatios：四类 tokens 相加 === 行 tokens（夹 0 后）',
+    clamped.classes.input.tokens + clamped.classes.cacheRead.tokens
+      + clamped.classes.output.tokens + clamped.classes.cacheWrite.tokens,
+    clamped.tokens)
+
+  const onlyTokens = creditsModelRatios([{
+    id: 'only/tokens', provider: 'only', model: 'tokens', totals: { tokens: 100 },
+  }], 10)[0]
+  check('016 creditsModelRatios：四类全缺也是四键 0 对象', onlyTokens.classes, {
+    input: { tokens: 0, perCredit: 0 },
+    cacheRead: { tokens: 0, perCredit: 0 },
+    output: { tokens: 0, perCredit: 0 },
+    cacheWrite: { tokens: 0, perCredit: 0 },
+  })
+  check('016 creditsModelRatios：tokens=0 的行即使 classes 非零也被过滤',
+    creditsModelRatios([{
+      id: 'zero/model', provider: 'zero', model: 'model',
+      totals: { input: 999, cacheRead: 999, output: 999, cacheWrite: 999, tokens: 0 },
+    }], 10), [])
+  check('016 creditsModelRatios：used<=0 仍返回 []',
+    [creditsModelRatios(CLASS_MODELS, 0), creditsModelRatios(CLASS_MODELS, -1)],
+    [[], []])
+
+  // 真实 /usage 数据（2026-11-01..14，used=38280.2997）的 qwen3.8-flash 行：
+  // 三类 perCredit 约 1341.40 / 33302.19 / 132.79，cacheWrite 为 0。
+  const REAL_USED = 38280.2997
+  const REAL_ROW = {
+    id: 'qwen-token-plan-cn/qwen3.8-flash',
+    provider: 'qwen-token-plan-cn',
+    model: 'qwen3.8-flash',
+    totals: {
+      input: 51349194,
+      cacheRead: 1274817814,
+      output: 5083241,
+      cacheWrite: 0,
+      tokens: 1331250249,
+      calls: 0,
+    },
+  }
+  const realRow = creditsModelRatios([REAL_ROW], REAL_USED)[0]
+  ok('016 实际数据：qwen3.8-flash 三类 perCredit 约 1341.40 / 33302.19 / 132.79',
+    Math.abs(realRow.classes.input.perCredit - 1341.40) < 0.01
+      && Math.abs(realRow.classes.cacheRead.perCredit - 33302.19) < 0.01
+      && Math.abs(realRow.classes.output.perCredit - 132.79) < 0.01)
+  check('016 实际数据：四类 tokens 相加 === 行 tokens', realRow.classes.input.tokens
+    + realRow.classes.cacheRead.tokens + realRow.classes.output.tokens + realRow.classes.cacheWrite.tokens,
+    realRow.tokens)
+  ok('016 实际数据：行 tokensPerCredit 约 34776.37 / 34776.38（两位小数舍入差）',
+    Math.abs(realRow.tokensPerCredit - 34776.37) < 0.02)
+  ok('016 实际数据：四类 perCredit 相加 === 行 tokensPerCredit',
+    Math.abs(realRow.classes.input.perCredit + realRow.classes.cacheRead.perCredit
+      + realRow.classes.output.perCredit + realRow.classes.cacheWrite.perCredit
+      - realRow.tokensPerCredit) < 1e-9)
+  check('016 实际数据：cacheWrite 为 0 但仍是完整对象', realRow.classes.cacheWrite,
+    { tokens: 0, perCredit: 0 })
+  ok('016 实际数据：perCredit 保留原始浮点（不取整）',
+    realRow.classes.input.perCredit % 1 !== 0
+      && realRow.classes.cacheRead.perCredit % 1 !== 0
+      && realRow.classes.output.perCredit % 1 !== 0)
 }
 
 // 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。

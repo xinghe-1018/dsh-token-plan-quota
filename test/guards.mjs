@@ -1030,9 +1030,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
-  // 015 再补 4 个分项/按模型键（→ 151）。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 151；011 本身不加键）',
-    zhKeys011.length === 151 && enKeys011.length === 151)
+  // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 153；011 本身不加键）',
+    zhKeys011.length === 153 && enKeys011.length === 153)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
@@ -1104,9 +1104,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151。
-  ok('012 i18n：COPY 现在 zh / en 各 151 键（012/014/015 的新键都在里面）',
-    zhKeys012.length === 151 && enKeys012.length === 151)
+  // 015 再补 4 个分项/按模型键 → 151；016 再补 2 个按类比值键 → 153。
+  ok('012 i18n：COPY 现在 zh / en 各 153 键（012/014/015/016 的新键都在里面）',
+    zhKeys012.length === 153 && enKeys012.length === 153)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1541,8 +1541,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数升到 zh / en 各 151（147 + 4）',
-    zhKeys015.length === 151 && enKeys015.length === 151)
+  ok('015 i18n：COPY 键数 zh / en 各 153（147 + 4 + 016 的 2）',
+    zhKeys015.length === 153 && enKeys015.length === 153)
   const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
     'usageCreditsModelsNote']
   ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
@@ -1590,6 +1590,127 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('015 规格目录存在（spec/plan/tasks/INTERFACE）',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '015-credits-ratio-breakdown', name))))
+}
+/* 16) 016 每个模型的分项比值：输入 / 缓存命中 / 输出 各自除以同一个账号级分母。
+ * 最容易坏的三处，全在这里钉住：
+ *  1. perCredit 被取整 —— 屏上 1,341.40 变成 1,341，读起来像官方单价，实际是实测均值；
+ *  2. 缺字段被 0 顶替 —— 凭空多出一条 0 值比值，比不显示更误导；
+ *  3. cacheWrite 恒 0 时仍印第四段 —— 本机缓存写入从来是 0，多一段只会让人以为有数据。
+ * 宿主侧直接打纯函数（creditsModelRatios 已进 __internals），客户端侧钉两道渲染闸门与 COPY 口径。 */
+{
+  const indexSrc16 = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+  const src16 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const cmr16 = __internals.creditsModelRatios
+  ok('016 宿主：creditsModelRatios 从 __internals 暴露（纯函数可直接打）', typeof cmr16 === 'function')
+  const modelFrom16 = indexSrc16.indexOf('function creditsModelRatios')
+  const modelTo16 = indexSrc16.indexOf('const CREDITS_UNAVAILABLE_HINTS')
+  const modelRegion16 = modelFrom16 > 0 && modelTo16 > modelFrom16 ? indexSrc16.slice(modelFrom16, modelTo16) : ''
+  ok('016 宿主：模型行里四类各自 { tokens, perCredit }，分母都是同一个 used',
+    modelRegion16.includes('classes: {')
+      && ['input', 'cacheRead', 'output', 'cacheWrite']
+        .every(key => modelRegion16.includes(key + ': { tokens: ' + key + ', perCredit: ' + key + ' / u }')))
+  ok('016 宿主：perCredit 保留原始浮点（段内不出现 round / floor / ceil / toFixed）',
+    modelRegion16 !== '' && !/Math\.round|Math\.floor|Math\.ceil|toFixed\(/.test(modelRegion16))
+
+  const one16 = cmr16([{ id: 'm', provider: 'p', model: 'x',
+    totals: { tokens: 1000, calls: 3, input: 400, cacheRead: 500, output: 100, cacheWrite: 0 } }], 8)
+  ok('016 宿主：四类 tokens 取本机 totals，四类相加等于该行 tokens',
+    one16.length === 1
+      && one16[0].classes.input.tokens === 400 && one16[0].classes.cacheRead.tokens === 500
+      && one16[0].classes.output.tokens === 100 && one16[0].classes.cacheWrite.tokens === 0
+      && one16[0].classes.input.tokens + one16[0].classes.cacheRead.tokens
+        + one16[0].classes.output.tokens + one16[0].classes.cacheWrite.tokens === one16[0].tokens)
+  ok('016 宿主：perCredit = 该类 tokens ÷ 同一个已用 Credits（50 / 62.5 / 12.5 / 0）',
+    one16.length === 1 && one16[0].classes.input.perCredit === 50
+      && one16[0].classes.cacheRead.perCredit === 62.5 && one16[0].classes.output.perCredit === 12.5
+      && one16[0].classes.cacheWrite.perCredit === 0)
+  const third16 = cmr16([{ id: 'm', totals: { tokens: 4, input: 1, cacheRead: 2, output: 1 } }], 3)
+  ok('016 宿主：除不尽时保留全精度（1 ÷ 3 不截断、不两位小数）',
+    third16.length === 1 && third16[0].classes.input.perCredit === 1 / 3)
+  const clamp16 = cmr16([{ id: 'm', totals: { tokens: 10, input: -4, cacheRead: null, output: NaN, cacheWrite: 'x' } }], 2)
+  ok('016 宿主：缺字段 / 非有限 / 负数一律按 0（不拿 NaN 上屏、不出现负比值）',
+    clamp16.length === 1 && ['input', 'cacheRead', 'output', 'cacheWrite']
+      .every(key => clamp16[0].classes[key].tokens === 0 && clamp16[0].classes[key].perCredit === 0))
+  ok('016 宿主：0 token 行仍被过滤、used 无效仍返回 []（015 的两条短路没被绕过）',
+    cmr16([{ id: 'z', totals: { tokens: 0, input: 0, cacheRead: 0, output: 0 } }], 5).length === 0
+      && cmr16([{ id: 'm', totals: { tokens: 5 } }], 0).length === 0
+      && cmr16([{ id: 'm', totals: { tokens: 5 } }], undefined).length === 0)
+
+  const classesStart16 = src16.indexOf('function usageCreditsModelClassesLine')
+  const classesEnd16 = src16.indexOf('function usageCreditsSection')
+  ok('016 客户端：第二行渲染函数可定位', classesStart16 > 0 && classesEnd16 > classesStart16)
+  const strip16 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  const classesCode16 = classesStart16 > 0 && classesEnd16 > classesStart16
+    ? strip16(src16.slice(classesStart16, classesEnd16)) : ''
+  ok('016 客户端：三类任一缺失就整行不渲染（不印半个比值、不写 0 顶替）',
+    classesCode16.includes('input === null || cacheRead === null || output === null')
+      && classesCode16.includes('return null'))
+  ok('016 客户端：cacheWrite 有限且 > 0 才追加第四段（0 是真实值，不冒充缺失）',
+    classesCode16.includes('cacheWrite > 0'))
+  ok('016 客户端：第二行文案只走 COPY 两个模板（不拼字面量）',
+    classesCode16.includes('copy.usageCreditsModelClasses')
+      && classesCode16.includes('copy.usageCreditsModelClassWrite'))
+  ok('016 客户端：段落无 % 字面量、无硬编码汉字（文案一律走 COPY）',
+    classesCode16 !== '' && !classesCode16.includes('"%"') && !classesCode16.includes("'%'")
+      && !/[\u3400-\u9fff]/u.test(classesCode16))
+  for (const hook of ['"data-usage-credits-model-classes": "1"',
+    'className: "tpq-usage-credits-model-classes"',
+    'usageCreditsModelClassesLine,']) {
+    ok('016 客户端：钩子 ' + hook + ' 存在', src16.includes(hook))
+  }
+
+  const zhBlock016 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src16)
+  const enBlock016 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src16)
+  const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
+  const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
+  ok('016 i18n：COPY 现在 zh / en 各 153 键（015 的 151 + 2）',
+    zhKeys016.length === 153 && enKeys016.length === 153)
+  const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
+  ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
+  const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
+    .filter(line => classKeys016.some(key => line.startsWith('        ' + key + ':')))
+  const enLines016 = (enBlock016?.[1] ?? '').split('\n')
+    .filter(line => classKeys016.some(key => line.startsWith('        ' + key + ':')))
+  ok('016 i18n：中文两行是「每 Credit：输入 / 缓存命中 / 输出」与「缓存写入」',
+    zhLines016.length === 2 && zhLines016[0].includes('每 Credit：输入') && zhLines016[0].includes('缓存命中')
+      && zhLines016[0].includes('输出') && zhLines016[1].includes('缓存写入')
+      && zhLines016.every(line => /[\u3400-\u9fff]/u.test(line)))
+  ok('016 i18n：英文两行是「Per credit: input / cache hit / output」与「cache write」，且无汉字',
+    enLines016.length === 2 && enLines016[0].includes('Per credit: input')
+      && enLines016[0].includes('cache hit') && enLines016[0].includes('output')
+      && enLines016[1].includes('cache write') && enLines016.every(line => !/[\u3400-\u9fff]/u.test(line)))
+  ok('016 i18n：模型脚注写明三类共用同一个账号级分母、三者相加等于该行总量',
+    src16.includes('同一个账号级分母') && src16.includes('三者相加等于该行总量')
+      && /same account-level denominator/i.test(src16))
+  ok('016 CSS：模型行改成两行制（flex-wrap + 行内 gap），第二行整行换行',
+    /\.tpq-usage-credits-model\{[^}]*flex-wrap:wrap[^}]*gap:2px 8px/.test(src16)
+      && /\.tpq-usage-credits-model-classes\{[^}]*flex:0 0 100%/.test(src16))
+  ok('016 CSS：第二行缩小字号、可断行、走弱化色与行内数字',
+    /\.tpq-usage-credits-model-classes\{[^}]*font-size:10\.5px[^}]*overflow-wrap:anywhere/.test(src16)
+      && /\.tpq-usage-credits-model-classes\{[^}]*--dsw-alias-label-tertiary/.test(src16)
+      && /\.tpq-usage-credits-model-classes\{[^}]*tabular-nums/.test(src16))
+
+  ok('016 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('016 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8
+      && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+  const readme016 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn016 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('016 文档：中文 README 写了「每 Credit 对应该模型多少输入/缓存命中/输出」与四类占比不取整',
+    readme016.includes('1 Credit 对应该模型多少输入') && readme016.includes('同一个账号级分母')
+      && readme016.includes('usage-credits'))
+  ok('016 文档：英文 README 写了 for that model 的三类比值',
+    readmeEn016.includes('for that model, input / cache hit / output')
+      && /same account-level denominator/i.test(readmeEn016))
+  const changelog016 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('016 CHANGELOG：Unreleased 段记了 016 与每个模型的分项比值',
+    /## \[Unreleased\]/.test(changelog016) && changelog016.includes('016')
+      && changelog016.includes('每个模型的分项比值') && changelog016.includes('1 Credit 对应该模型多少输入'))
+  ok('016 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '016-per-model-classes', name))))
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

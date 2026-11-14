@@ -626,8 +626,8 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 ```bash
 npm run check                       # all seven steps below
 node test/host.mjs                  # 1016 assertions, offline
-node test/client.mjs                # 1267 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 561 assertions: behaviour matrices of the gates themselves
+node test/client.mjs                # 1268 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 570 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -635,7 +635,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
-config table, 8 sources, 8 declared outbound hosts, 1016/1267 tests plus 561 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 1016/1268 tests plus 570 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

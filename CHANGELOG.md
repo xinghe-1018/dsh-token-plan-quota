@@ -117,6 +117,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **用量页的焦点噪音：整页白边与点柱出框（018）**：两处噪音同源——焦点环只看了「键盘还是鼠标」，
+  没看「这块元素是不是页面骨架」。① 整页滚动视口 `.tpq-usage-viewport` 是 `tabIndex=0` 的整屏容器，
+  原先的焦点环是 2px 实线 + `outline-offset:-2px`，颜色取 `--dsw-alias-brand-primary`——该变量在 body
+  主题层解析成 ink（浅色 `#0f1115` / 深色 `#f9fafb`，回退值 `#4176e6` 从不生效），所以深色主题下就是
+  整整一圈**白边**，点空白再按方向键滚动每按一次闪一次。现在视口不画焦点环（`outline:none`），
+  `tabIndex` / `role="region"` / `aria-label` / PageDown、↓、Home、End 全部保留。② 柱子是
+  `<g tabindex="0" role="img">`，鼠标点击命中 Chromium 对可聚焦 SVG 的 **UA 默认** `outline:auto 5px`
+  （浅色 `#101010`、深色白），框住整根列轨道；插件原先只压了 `:focus-visible`，所以键盘无框、鼠标有框。
+  现在 2D / 3D 柱都对普通 `:focus` 抑制轮廓，键盘聚焦仍由内层 stroke 表达。零新增配置键/路由/主机/文案，
+  不改任何数据与几何，也不重拍截图。客户端断言 1267→1268、guards 561→570（第 18 节 8 条 + 013 段 1 条改口径）。
+  方案见 `specs/018-focus-noise/`，接口契约见该目录 `INTERFACE.md`。
 - **用量统计屏整页滚动 + 未知模型归位（013）**：统计屏的内容高于宿主主区（860px）时原先被外层 `overflow:hidden`
   裁掉、连滚动条都没有。现在整屏包在一层 `.tpq-usage-viewport` 里（`height:100%`、`overflow-y:auto`、
   `overscroll-behavior:contain`、8px 细滚动条、`tabIndex=0` + `role="region"` + `aria-label`，

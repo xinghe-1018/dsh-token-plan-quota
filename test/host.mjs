@@ -36,7 +36,7 @@ const {
   recordUsage, buildInstanceCard, slidingWindow, throughputSnapshot, retrySnapshot, observeRetryEvent, observeAbandoned,
   usageLedger, recentCalls, resetInstanceState, state,
   toToolJson, buildQuotaTool,
-  emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange, resolveCustomRange,
+  emptyUsageIndex, dayKey, foldUsageEvents, aggregateUsageRange, resolveCustomRange, resolveMonthRange,
   loadUsageIndex, saveUsageIndex, trimUsageIndex, syncUsageIndex,
   decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature,
   ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
@@ -2934,6 +2934,182 @@ function recursiveKeys(value, out = []) {
     else process.env.BAILIAN_CONSOLE_COOKIE = realCookie
     await new Promise(resolve => server.close(resolve))
     officialCache.clear()
+  }
+}
+
+// ⑬ 010 自然月：纯函数校验 / month 聚合与等价 from-to 同源 / 路由与工具接线
+{
+  // a) resolveMonthRange：合法月、夹紧、闰月、以及非法输入（010 §1.1）
+  const SEPT = { month: '2026-09', from: '2026-09-01', to: '2026-09-30', days: 30 }
+  const SEPT_RANGE = { kind: 'month', month: '2026-09', days: 30, from: '2026-09-01', to: '2026-09-30' }
+  check('010 resolve：9 月整月', resolveMonthRange({ now: USAGE_NOW, month: '2026-09' }), SEPT)
+  check('010 resolve：当前月夹到今天', resolveMonthRange({ now: USAGE_NOW, month: '2026-11' }),
+    { month: '2026-11', from: '2026-11-01', to: '2026-11-12', days: 12 })
+  check('010 resolve：闰年 2 月 29 天', resolveMonthRange({ now: USAGE_NOW, month: '2024-02' }),
+    { month: '2024-02', from: '2024-02-01', to: '2024-02-29', days: 29 })
+  // 2028 相对 2026-11 是未来月，用 2029 的视角单独验证闰年 2 月（规则本身与现在是几号无关）。
+  const LATER_NOW = new Date(2029, 0, 15, 12, 0, 0).getTime()
+  check('010 resolve：2028-02 闰月 29 天', resolveMonthRange({ now: LATER_NOW, month: '2028-02' }),
+    { month: '2028-02', from: '2028-02-01', to: '2028-02-29', days: 29 })
+  check('010 resolve：平年 2 月 28 天', resolveMonthRange({ now: USAGE_NOW, month: '2026-02' }),
+    { month: '2026-02', from: '2026-02-01', to: '2026-02-28', days: 28 })
+  check('010 resolve：12 月 31 天且不跨年', resolveMonthRange({ now: USAGE_NOW, month: '2025-12' }),
+    { month: '2025-12', from: '2025-12-01', to: '2025-12-31', days: 31 })
+  check('010 resolve：首尾空格被 trim', resolveMonthRange({ now: USAGE_NOW, month: '  2026-09  ' }), SEPT)
+  // 单月最多 31 天，不套 usageBackfillDays：maxDays 再小也不该把整月裁短。
+  check('010 resolve：不套后台天数上界', resolveMonthRange({ now: USAGE_NOW, month: '2026-09', maxDays: 5 }).days, 30)
+  const badMonths = ['2026-13', '2026-00', '2026-1', '2026-9', 'abc', '', '2026-9 ', '0000-01', '0099-01', '2026-12', '2027-01']
+  check('010 resolve：非法/未来月矩阵 → usage-bad-month',
+    badMonths.map(month => resolveMonthRange({ now: USAGE_NOW, month })),
+    badMonths.map(() => ({ error: 'usage-bad-month' })))
+  check('010 resolve：非字符串输入 → usage-bad-month',
+    [undefined, null, 123, {}, []].map(month => resolveMonthRange({ now: USAGE_NOW, month })),
+    [undefined, null, 123, {}, []].map(() => ({ error: 'usage-bad-month' })))
+
+  // b) month 聚合：桶与等价 from/to 完全同源，恰好铺满 [1 号, 月末]，优先于 from/to/days
+  const monthIndex = emptyUsageIndex()
+  monthIndex.days['2026-08-31'] = { input: 90, output: 9, cacheRead: 0, cacheWrite: 0, calls: 9, models: { 'p/m1': { input: 90, output: 9, cacheRead: 0, cacheWrite: 0, calls: 9 } } }
+  monthIndex.days['2026-09-01'] = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1, models: { 'p/m1': { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1 } } }
+  monthIndex.days['2026-09-03'] = { input: 20, output: 2, cacheRead: 5, cacheWrite: 0, calls: 2, models: { 'p/m1': { input: 12, output: 1, cacheRead: 5, cacheWrite: 0, calls: 1 }, 'p/m2': { input: 8, output: 1, cacheRead: 0, cacheWrite: 0, calls: 1 } } }
+  monthIndex.days['2026-09-30'] = { input: 30, output: 3, cacheRead: 0, cacheWrite: 0, calls: 3, models: { 'p/m1': { input: 30, output: 3, cacheRead: 0, cacheWrite: 0, calls: 3 } } }
+  monthIndex.days['2026-10-01'] = { input: 70, output: 7, cacheRead: 0, cacheWrite: 0, calls: 7, models: { 'p/m1': { input: 70, output: 7, cacheRead: 0, cacheWrite: 0, calls: 7 } } }
+  const monthAgg = aggregateUsageRange(monthIndex, { now: USAGE_NOW, month: '2026-09' })
+  check('010 month：range 标 month 且 days 由日历现算', monthAgg.range, SEPT_RANGE)
+  check('010 month：granularity=day', monthAgg.granularity, 'day')
+  check('010 month：30 个日桶恰好铺满整月',
+    [monthAgg.buckets.length, monthAgg.buckets[0].from, monthAgg.buckets[29].to],
+    [30, '2026-09-01', '2026-09-30'])
+  check('010 month：桶 label 是 MM-DD',
+    [monthAgg.buckets[0].label, monthAgg.buckets[29].label], ['09-01', '09-30'])
+  check('010 month：无记录日补 0 桶',
+    [monthAgg.buckets[0].totals.calls, monthAgg.buckets[1].totals.calls, monthAgg.buckets[2].totals.calls],
+    [1, 0, 2])
+  check('010 month：只累计月内，边界外不计', monthAgg.totals,
+    { input: 60, output: 6, cacheRead: 5, cacheWrite: 0, calls: 6, steps: 6, tokens: 71 })
+  assertTotalsIdentity('010 month', monthAgg)
+  const customSame = aggregateUsageRange(monthIndex, { now: USAGE_NOW, from: '2026-09-01', to: '2026-09-30' })
+  check('010 month：与等价 from/to 逐桶相等', monthAgg.buckets, customSame.buckets)
+  check('010 month：与等价 from/to totals 相等', monthAgg.totals, customSame.totals)
+  check('010 month：与等价 from/to 模型归属相等', monthAgg.models, customSame.models)
+  check('010 month：优先于 from/to/days',
+    aggregateUsageRange(monthIndex, { now: USAGE_NOW, month: '2026-09', from: '2026-10-01', to: '2026-10-31', days: 3 }).range,
+    monthAgg.range)
+  check('010 month：非法 month 只被忽略，退回 days 分支',
+    aggregateUsageRange(monthIndex, { now: USAGE_NOW, month: '2026-13', days: 7 }).range,
+    { kind: '7d', days: 7, from: '2026-11-06', to: '2026-11-12' })
+  const currentMonth = aggregateUsageRange(monthIndex, { now: USAGE_NOW, month: '2026-11' })
+  check('010 month：当前月只铺到今天',
+    [currentMonth.range, currentMonth.buckets.length], [{ kind: 'month', month: '2026-11', days: 12, from: '2026-11-01', to: '2026-11-12' }, 12])
+  check('010 month：当前月无记录时 totals 全 0', currentMonth.totals.calls, 0)
+
+  // c) 路由：?month= 200 / 夹紧 / 400 固定码 / 与等价 from-to 逐桶一致；工具同语义
+  resetInstanceState()
+  const monthPersistence = makeFakePersistence({
+    'sess-month': {
+      revision: 'r-month',
+      events: [
+        headerEvent(1, new Date(2026, 8, 1, 12, 0, 0).getTime()),
+        usageEvent(2, new Date(2026, 8, 1, 12, 0, 1).getTime(), { inputTokens: 5, outputTokens: 0 }),
+        headerEvent(3, new Date(2026, 8, 3, 12, 0, 0).getTime()),
+        usageEvent(4, new Date(2026, 8, 3, 12, 0, 1).getTime(), { inputTokens: 10, outputTokens: 0 }),
+        headerEvent(5, new Date(2026, 9, 10, 12, 0, 0).getTime()),
+        usageEvent(6, new Date(2026, 9, 10, 12, 0, 1).getTime(), { inputTokens: 20, outputTokens: 0 }),
+        usageEvent(7, new Date(2026, 10, 12, 12, 0, 0).getTime(), { inputTokens: 40, outputTokens: 0 }),
+      ],
+    },
+  })
+  const monthRow = { sources: [], usageIndexPath: join(TEST_HOME, 'usage-index-month-range.json') }
+  const monthRouteCtx = makeRouteCtx(monthPersistence)
+  resetInstanceState()
+  apply(monthRouteCtx.ctx, monthRow)
+  const monthRoute = monthRouteCtx.registered.find(item => item.path === '/token-plan-quota')
+  const realDateNow = Date.now
+  try {
+    Date.now = () => USAGE_NOW
+    await runUsageSync(monthRouteCtx.ctx, effectiveConfig(monthRow, monthRouteCtx.ctx))
+    const sepMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-09')
+    check('010 路由：?month=2026-09 → 200', sepMonth.status, 200)
+    check('010 路由：range 标 month 并回真值', sepMonth.json.range, SEPT_RANGE)
+    check('010 路由：30 个桶与月内 totals',
+      [sepMonth.json.buckets.length, sepMonth.json.totals],
+      [30, { input: 15, output: 0, cacheRead: 0, cacheWrite: 0, calls: 2, steps: 2, tokens: 15 }])
+    check('010 路由：月内无记录日补 0 桶',
+      [sepMonth.json.buckets[0].totals.calls, sepMonth.json.buckets[1].totals.calls, sepMonth.json.buckets[2].totals.calls],
+      [1, 0, 1])
+    const sepCustom = await callUsageRoute(monthRoute, '/token-plan-quota/usage?from=2026-09-01&to=2026-09-30')
+    check('010 路由：month 与等价 from/to 逐桶相等', sepMonth.json.buckets, sepCustom.json.buckets)
+    check('010 路由：month 与等价 from/to totals 相等', sepMonth.json.totals, sepCustom.json.totals)
+    check('010 回归：from/to 仍标 custom', [sepCustom.json.range.kind, sepCustom.json.range.days], ['custom', 30])
+    const plainDays = await callUsageRoute(monthRoute, '/token-plan-quota/usage?days=7')
+    check('010 回归：days 仍标 7d 且 7 个桶',
+      [plainDays.json.range.kind, plainDays.json.range.days, plainDays.json.buckets.length], ['7d', 7, 7])
+    const current = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-11')
+    check('010 路由：当前月夹到今天并回写真值',
+      [current.json.range, current.json.buckets.length],
+      [{ kind: 'month', month: '2026-11', days: 12, from: '2026-11-01', to: '2026-11-12' }, 12])
+    check('010 路由：当前月 totals', current.json.totals,
+      { input: 40, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, steps: 1, tokens: 40 })
+    const monthIgnoringDays = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-09&days=1&range=today')
+    check('010 路由：month 在时忽略 days/range', [monthIgnoringDays.json.range.kind, monthIgnoringDays.json.range.days],
+      ['month', 30])
+    const mixedFrom = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-09&from=2026-09-01')
+    check('010 路由：month + from → 400 usage-bad-range', [mixedFrom.status, mixedFrom.json], [400, { error: 'usage-bad-range' }])
+    const mixedTo = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-09&to=2026-09-30')
+    check('010 路由：month + to → 400 usage-bad-range', [mixedTo.status, mixedTo.json], [400, { error: 'usage-bad-range' }])
+    const badMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-13')
+    check('010 路由：13 月 → 400 usage-bad-month', [badMonth.status, badMonth.json], [400, { error: 'usage-bad-month' }])
+    const futureMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-12')
+    check('010 路由：未来月 → 400 usage-bad-month', [futureMonth.status, futureMonth.json], [400, { error: 'usage-bad-month' }])
+    const emptyMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=')
+    check('010 路由：空 month 视为未给，回到 006 分支',
+      [emptyMonth.status, emptyMonth.json.range.kind, emptyMonth.json.range.days], [200, '7d', 7])
+    const postMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage?month=2026-09', 'POST')
+    check('010 路由：POST → 405', postMonth.status, 405)
+    ok('010 路由：响应没有百分号', !sepMonth.raw.includes('%'))
+    ok('010 路由：响应没有消息文本 / 表头字段',
+      !recursiveKeys(sepMonth.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+    ok('010 路由：400 响应同样只有固定码',
+      !recursiveKeys(badMonth.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+    // usage-official 的参数层与 /usage 同码同形：参数错在取凭据 / 联网之前就返回 400。
+    const officialBadMonth = await callUsageRoute(monthRoute, '/token-plan-quota/usage-official?month=2026-13')
+    check('010 官方路由：非法 month → 400 usage-bad-month', [officialBadMonth.status, officialBadMonth.json],
+      [400, { error: 'usage-bad-month' }])
+    const officialMixed = await callUsageRoute(monthRoute, '/token-plan-quota/usage-official?month=2026-09&from=2026-09-01')
+    check('010 官方路由：month + from → 400 usage-bad-range', [officialMixed.status, officialMixed.json],
+      [400, { error: 'usage-bad-range' }])
+    const officialFuture = await callUsageRoute(monthRoute, '/token-plan-quota/usage-official?month=2026-12')
+    check('010 官方路由：未来月 → 400 usage-bad-month', [officialFuture.status, officialFuture.json],
+      [400, { error: 'usage-bad-month' }])
+
+    // 官方侧区间解析（纯函数）：与本机共用 month 语义，但成功快照要联网，单测只验区间层。
+    const monthConfig = effectiveConfig(monthRow, monthRouteCtx.ctx)
+    check('010 官方 range：month 形状与夹紧',
+      resolveOfficialRange(monthConfig, { month: '2026-11' }, USAGE_NOW),
+      { kind: 'month', month: '2026-11', days: 12, from: '2026-11-01', to: '2026-11-12' })
+    check('010 官方 range：month + from → paramError', resolveOfficialRange(monthConfig, { month: '2026-09', from: '2026-09-01' }, USAGE_NOW),
+      { error: 'usage-bad-range', paramError: true })
+    check('010 官方 range：非法 month → paramError', resolveOfficialRange(monthConfig, { month: '2026-00' }, USAGE_NOW),
+      { error: 'usage-bad-month', paramError: true })
+    check('010 官方 range：未给 month 行为不变', resolveOfficialRange(monthConfig, { days: 7 }, USAGE_NOW).kind, '7d')
+
+    // 工具：month 成功 / 非法 / 与 from-to 混用；官方 action 在取凭据前就会因参数错误返回。
+    const monthTool = buildQuotaTool(() => effectiveConfig(monthRow, monthRouteCtx.ctx), monthRouteCtx.ctx)
+    const toolMonth = await monthTool.execute({ action: 'usage', month: '2026-09' })
+    check('010 工具：action=usage 传 month', [toolMonth.ok, toolMonth.usage.range],
+      [true, SEPT_RANGE])
+    ok('010 工具：文本说「2026 年 9 月（30 天）」', String(toolMonth.text).includes('2026 年 9 月（30 天）'), toolMonth.text)
+    const toolBadMonth = await monthTool.execute({ action: 'usage', month: '2026-13' })
+    check('010 工具：非法 month → ok=false + 固定码', [toolBadMonth.ok, toolBadMonth.error], [false, 'usage-bad-month'])
+    ok('010 工具：月份错误文本给格式提示', String(toolBadMonth.text).includes('YYYY-MM'), toolBadMonth.text)
+    const toolMix = await monthTool.execute({ action: 'usage', month: '2026-09', from: '2026-09-01' })
+    check('010 工具：month + from → ok=false usage-bad-range', [toolMix.ok, toolMix.error], [false, 'usage-bad-range'])
+    ok('010 工具：混用文本点明 month 与 from/to', String(toolMix.text).includes('month'), toolMix.text)
+    const toolOfficialBad = await monthTool.execute({ action: 'usage-official', month: '2026-13' })
+    check('010 工具：usage-official 非法 month → ok=false', [toolOfficialBad.ok, toolOfficialBad.error], [false, 'usage-bad-month'])
+    const toolOfficialMix = await monthTool.execute({ action: 'usage-official', month: '2026-09', to: '2026-09-30' })
+    check('010 工具：usage-official 混用 → ok=false', [toolOfficialMix.ok, toolOfficialMix.error], [false, 'usage-bad-range'])
+  } finally {
+    Date.now = realDateNow
   }
 }
 

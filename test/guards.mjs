@@ -886,6 +886,76 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('009 客户端：补扫脚注中英都在，且不含百分比与 Credits',
       rescuedLines.length === 2 && rescuedLines.every(line => !line.includes('%') && !/credit/i.test(line)))
   }
+  /* 10) 010 按月查询：纯函数只算日期、路由两个固定码、工具与客户端钩子成对。
+   * 月份是用户直接输入的字符串，最容易坏的三处：放过 2026-13 / 2026-00、把未来月当成今天、
+   * 让 month 与 from/to 同时生效（两个真值源 → 屏上标题与柱子对不上，却不会红）。 */
+  {
+    ok('010 resolveMonthRange 从 usage-stats.js 暴露到 __internals（可直接测）',
+      typeof __internals.resolveMonthRange === 'function')
+    const monthFn = typeof __internals.resolveMonthRange === 'function'
+      ? __internals.resolveMonthRange.toString() : ''
+    ok('010 resolveMonthRange：只认 YYYY-MM（月份两位、01..12），先 trim',
+      monthFn.includes('(0[1-9]|1[0-2])') && monthFn.includes('trim()'))
+    ok('010 resolveMonthRange：未来月按月份前缀比较（不按毫秒），并回 usage-bad-month',
+      monthFn.includes('slice(0, 7)') && monthFn.includes('usage-bad-month'))
+    const monthStart = usageSrc.indexOf('function resolveMonthRange')
+    const monthEnd = usageSrc.indexOf('export function aggregateUsageRange')
+    ok('010 纯函数段在 lib/usage-stats.js 里存在且可定位', monthStart > 0 && monthEnd > monthStart)
+    const monthRegion = monthStart > 0 ? usageSrc.slice(monthStart, monthEnd)
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '') : ''
+    ok('010 纯函数段：不出现百分比与 Credits', monthRegion !== '' && !/%/.test(monthRegion) && !/credit/i.test(monthRegion))
+    ok('010 纯函数段：不联网、不读凭据',
+      monthRegion !== '' && !/fetch\(|https?:\/\//.test(monthRegion)
+      && !/credential|apiKey|cookie|process\.env/i.test(monthRegion))
+    ok('010 聚合：month 分支的 range.kind 是 month',
+      usageSrc.includes("kind: 'month'") || usageSrc.includes('kind: "month"'))
+
+    ok('010 宿主：month 走独立解析器，且与 from/to 互斥',
+      indexSrc.includes('resolveUsageMonth') && indexSrc.includes("searchParams.get('month')")
+      && indexSrc.includes("'usage-bad-range'") && indexSrc.includes("'usage-bad-month'"))
+    ok('010 宿主：resolveMonthRange 从 usage-stats.js 导入（不另写一份）',
+      /import \{[^}]*resolveMonthRange[^}]*\} from '\.\/usage-stats\.js'/.test(indexSrc)
+      && indexSrc.includes('  resolveMonthRange,'))
+    const officialStart = indexSrc.indexOf('function resolveOfficialRange')
+    const officialEnd = indexSrc.indexOf('function buildOfficialUsageSnapshot')
+    const officialRegion = officialStart > 0 && officialEnd > officialStart
+      ? indexSrc.slice(officialStart, officialEnd) : ''
+    ok('010 官方对照跟随同一月份（同一个解析器，不是第二套规则）',
+      officialRegion !== '' && officialRegion.includes('resolveUsageMonth'))
+    ok('010 工具 schema：month 参数在 properties 里并透传',
+      /month: \{ type: 'string'/.test(indexSrc) && indexSrc.includes('month: args?.month'))
+
+    for (const hook of ['"data-usage-preset": "month"', '"data-usage-month": "1"',
+      '"data-usage-month-input"', '"data-usage-month-apply"', '"data-usage-month-error": "1"']) {
+      ok('010 客户端：钩子 ' + hook + ' 存在', clientSrc.includes(hook))
+    }
+    ok('010 客户端：月份查询只发 ?month=YYYY-MM',
+      clientSrc.includes('"?month=" +'))
+    ok('010 客户端：usage-bad-month 映射成本地文案（不回显宿主原文）',
+      clientSrc.includes('"usage-bad-month"') && clientSrc.includes('usageMonthBad'))
+    for (const key of ['usageMonthPreset', 'usageMonthLabel', 'usageMonthApply', 'usageMonthBad', 'usageRangeMonthTitle']) {
+      const hits = (clientSrc.match(new RegExp('\\b' + key + ':', 'g')) || []).length
+      ok('010 i18n：' + key + ' 在 zh / en 两份 COPY 里都有（命中 ' + hits + '）', hits >= 2)
+    }
+    const monthCopy = clientSrc.split('\n').filter(line => /usageRangeMonthTitle|usageMonthPreset|usageMonthLabel/.test(line))
+    ok('010 i18n：月份文案不含百分比与 Credits',
+      monthCopy.length > 0 && monthCopy.every(line => !line.includes('%') && !/credit/i.test(line)))
+
+    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
+    const readmeEn = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+    ok('010 文档：中英 README 都写了 month 路由与 usage-bad-month',
+      readme.includes('usage?month=') && readme.includes('usage-bad-month')
+      && readmeEn.includes('usage?month=') && readmeEn.includes('usage-bad-month'))
+    ok('010 规格目录存在（spec/plan/tasks/INTERFACE）',
+      ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+        .every(name => existsSync(join(ROOT, 'specs', '010-month-range', name))))
+    const shotsManifest = readFileSync(join(ROOT, 'scripts', 'check-docs.mjs'), 'utf8')
+    ok('010 截图清单：中英 month 图都在',
+      shotsManifest.includes('docs/images/usage-month-2d.png')
+      && shotsManifest.includes('docs/images/en/usage-month-2d.png'))
+    ok('010 出站主机没有被这份功能扩表（仍 8 条 https）',
+      __internals.DECLARED_HOSTS.length === 8 && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

@@ -1666,7 +1666,8 @@ function findChip(node) {
   const en = keysOf(enBlock?.[1] ?? '')
   // 007 增了 9 个自定义区间键（109 → 118）；008 增了 10 个官方对照键（INTERFACE §3.3 的 8 个
   // + 「官方」格标签 + clampedFrom 说明），118 → 128；009 增 usageScanRescued（008 的 128 → 129）。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [129, 129])
+  // 010 增了 5 个月份键（Preset/Label/Apply/Bad/MonthTitle），129 → 134。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [134, 134])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -1932,6 +1933,8 @@ async function mountUsage(options = {}) {
   const main = bundle.registered.find((entry) => entry.options.name === 'main')
   const panelIcon = bundle.registered.find((entry) => entry.options.name === 'sidebar.panellist')
   const handle = main?.options.store
+  // 010：恢复态用例要在首帧之前把 store 预置成某个状态（宿主重进屏时会带上次的 rangeMode）。
+  if (typeof options.seedStore === 'function') options.seedStore(handle)
   const props = {
     useStore: (selector) => selector(handle.create().getSnapshot()),
     actions: handle ?? {},
@@ -3369,6 +3372,391 @@ function rescuedFetch(n) {
   const own = collectText(node).join('')
   ok('T009 en 该行不带百分比、不提 Credits', !own.includes('%') && !/credit/i.test(own), own)
   ok('T009 en 既有「仅统计本机」来源声明仍是英文', collectText(tree).join(' ').includes('Only calls made by this DSH instance are counted'))
+}
+
+/* ======================================================== T010（spec 010）按月查询 */
+
+/** 某个月的假快照：range.kind="month"；末日超过 fixture 的「今天」（2026-11-13）就夹到今天。 */
+function makeMonthSnapshot(month) {
+  const parts = String(month).split('-')
+  const year = Number(parts[0])
+  const mm = Number(parts[1])
+  const monthDays = new Date(Date.UTC(year, mm, 0)).getUTCDate()
+  const startMs = Date.UTC(year, mm - 1, 1)
+  const endMs = Date.UTC(year, mm - 1, monthDays)
+  const fixtureTodayMs = Date.UTC(2026, 10, 13)
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
+  const lastMs = Math.min(endMs, fixtureTodayMs)
+  const span = Math.max(1, Math.round((lastMs - startMs) / 86400000) + 1)
+  const snap = makeUsageSnapshot(span)
+  snap.range = { kind: 'month', month, days: span, from: iso(startMs), to: iso(lastMs) }
+  return snap
+}
+
+/** 月份查询的假路由：带 month 参数回月份快照，其余回天数快照；options.handler 可接管本机路由。 */
+function usageMonthFetch(options = {}) {
+  return async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    const parsed = new URL(String(url), 'http://localhost')
+    if (String(url).startsWith('/token-plan-quota/usage-official')) {
+      const officialDays = Number(parsed.searchParams.get('days')) || 7
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(officialDays) }
+    }
+    const month = parsed.searchParams.get('month')
+    if (typeof options.handler === 'function') {
+      const handled = options.handler({ month, url: String(url), parsed })
+      if (handled !== undefined) return handled
+    }
+    if (month !== null) return { ok: true, status: 200, json: async () => makeMonthSnapshot(month) }
+    const days = Number(parsed.searchParams.get('days')) || 7
+    return { ok: true, status: 200, json: async () => makeUsageSnapshot(days) }
+  }
+}
+
+function monthChipOf(tree) {
+  return findNodes(tree, 'tpq-usage-day').find((node) => node.props?.['data-usage-preset'] === 'month')
+}
+function monthRowOf(tree) {
+  return findNodes(tree, 'tpq-usage-month')[0]
+}
+function monthInputOf(tree) {
+  return findNodes(tree, 'tpq-usage-month-input').find((node) => node.props?.['data-usage-month-input'] === '1')
+}
+function monthApplyOf(tree) {
+  return findNodes(tree, 'tpq-usage-apply').find((node) => node.props?.['data-usage-month-apply'] === '1')
+}
+function monthErrorTextOf(tree) {
+  const node = findNodes(tree, 'tpq-usage-range-error').find((item) => item.props?.['data-usage-month-error'] === '1')
+  return node === undefined ? null : collectText(node).join('')
+}
+function monthRangeTextOf(tree) {
+  const node = findNodes(tree, 'tpq-usage-range')[0]
+  return node === undefined ? '' : collectText(node).join('')
+}
+function openMonth(bundle) {
+  const chip = monthChipOf(bundle.renderUsage())
+  ok('T010 月份 chip 存在', chip !== undefined)
+  chip.props.onClick()
+  return bundle.renderUsage()
+}
+const monthParamOf = (url) => new URL(String(url), 'http://localhost').searchParams.get('month')
+
+/* T010 ①：静态契约 + 五个新文案键双语齐备（禁 % 与 Credits）。 */
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const hooks = [
+    '"data-usage-preset": "month"',
+    '"data-usage-month": "1"',
+    '"data-usage-month-input": "1"',
+    '"data-usage-month-apply": "1"',
+    '"data-usage-month-error": "1"',
+  ]
+  hooks.forEach((hook) => ok('T010 静态契约：源码含 ' + hook, source.includes(hook)))
+  ok('T010 月份请求串只带 month（不带 days/from/to）', source.includes('"?month=" + checked.month'))
+  ok('T010 月份行用原生 input[type=month]', source.includes('type: "month"'))
+  ok('T010 月份行沿用量卡片底色变量', /\.tpq-usage-month\{[^}]*var\(--dsw-alias-bg-layer-2/.test(source))
+  ok('T010 月份输入框限宽（375px 不横向溢出）', /\.tpq-usage-month-input\{width:150px\}/.test(source))
+  ok('T010 月份输入框进焦点环名单', source.includes('.tpq-usage-month-input:focus-visible,'))
+  const zhBlock = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(source)?.[1] ?? ''
+  const enBlock = /\n      en: \{([\s\S]*?)\n      \},/.exec(source)?.[1] ?? ''
+  const copyEntriesOf = (blockText) => blockText.split('\n').flatMap((line) => {
+    const trimmed = line.trim()
+    const colon = trimmed.indexOf(': "')
+    if (colon <= 0) return []
+    const rest = trimmed.slice(colon + 3)
+    const end = rest.lastIndexOf('"')
+    if (end < 0) return []
+    return [{ key: trimmed.slice(0, colon), value: rest.slice(0, end) }]
+  })
+  const zhEntries = copyEntriesOf(zhBlock)
+  const enEntries = copyEntriesOf(enBlock)
+  const monthKeys = ['usageMonthPreset', 'usageMonthLabel', 'usageMonthApply', 'usageMonthBad', 'usageRangeMonthTitle']
+  const pick = (entries, key) => entries.find((entry) => entry.key === key)?.value
+  check('T010 中文月份文案逐字照 INTERFACE §3.4',
+    monthKeys.map((key) => pick(zhEntries, key)),
+    ['按月', '月份', '查询', '月份不合法', '{y} 年 {m} 月 · {n} 天'])
+  check('T010 英文月份文案逐字照 INTERFACE §3.4',
+    monthKeys.map((key) => pick(enEntries, key)),
+    ['Month', 'Month', 'Apply', 'Invalid month', '{y}-{mm} · {n} days'])
+  const zhMonthCopy = monthKeys.map((key) => pick(zhEntries, key) ?? '').join(' ')
+  const enMonthCopy = monthKeys.map((key) => pick(enEntries, key) ?? '').join(' ')
+  ok('T010 zh 月份文案不含 % 与 Credits', !zhMonthCopy.includes('%') && !zhMonthCopy.includes('Credits'), zhMonthCopy)
+  ok('T010 en 月份文案不含 % / Credits、也不混中文',
+    !enMonthCopy.includes('%') && !enMonthCopy.includes('Credits') && !/[\u3400-\u9fff]/u.test(enMonthCopy), enMonthCopy)
+  // zh 用不补零的 {m}、en 用两位零填充的 {mm}：同一个 range.month 两种读法（INTERFACE §3.2）。
+  ok('T010 标题模板 zh 带 {y} / {m} / {n}、en 带 {y} / {mm} / {n}',
+    monthKeys.slice(4).every((key) => ['{y}', '{m}', '{n}'].every((token) => String(pick(zhEntries, key)).includes(token))
+      && ['{y}', '{mm}', '{n}'].every((token) => String(pick(enEntries, key)).includes(token))))
+}
+
+/* T010 ②：__internals 的月份纯函数 —— 校验只认 YYYY-MM、请求串唯一构造、月份快照只认 month。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  const internals = bundle.api.__internals
+  ok('T010 __internals 暴露月份校验与查询描述',
+    typeof internals.validateUsageMonth === 'function' && typeof internals.usageQueryOf === 'function')
+  const today = '2026-11-13'
+  const badMonths = ['', '2026-9', '2026-13', '2026-00', '0000-01', '2030-01', '2026/09', '  ', '2026-9 '.trim()]
+  const badResults = badMonths.map((value) => internals.validateUsageMonth(value, today).ok)
+  ok('T010 非法月份一律拒绝（空 / 缺零 / 13 月 / 00 月 / 未来月 / 斜杠）',
+    badResults.every((flag) => flag === false), JSON.stringify(badResults))
+  check('T010 合法月份 trim 后返回规范值',
+    internals.validateUsageMonth(' 2026-09 ', today), { ok: true, month: '2026-09' })
+  check('T010 当月合法（不晚于今天所在月）', internals.validateUsageMonth('2026-11', today).month, '2026-11')
+  check('T010 usageQueryOf 月份态只带 month',
+    internals.usageQueryOf('month', 7, '2026-09-01', '2026-09-30', '2026-09'), { mode: 'month', month: '2026-09' })
+  check('T010 月份请求串 / 非法月份零请求',
+    [internals.usageQueryPath({ mode: 'month', month: '2026-09' }),
+      internals.usageQueryPath({ mode: 'month', month: '2026-9' })],
+    ['?month=2026-09', null])
+  check('T010 官方查询 key 按月区分',
+    [internals.officialQueryKeyOf({ mode: 'month', month: '2026-09' }),
+      internals.officialQueryKeyOf({ mode: 'month', month: 'bad' })],
+    ['month:2026-09', null])
+  const monthSnap = makeMonthSnapshot('2026-09')
+  const monthQuery = { mode: 'month', month: '2026-09' }
+  check('T010 月份快照与月份查询一致', internals.usageSnapshotMatchesQuery(monthSnap, monthQuery), true)
+  check('T010 月份不同 → 不一致（不拿旧月数据冒充）',
+    internals.usageSnapshotMatchesQuery(makeMonthSnapshot('2026-10'), monthQuery), false)
+  check('T010 自定义快照不算月份查询',
+    internals.usageSnapshotMatchesQuery({ range: { kind: 'custom', from: '2026-09-01', to: '2026-09-30' } }, monthQuery), false)
+  check('T010 月份快照不算天数查询',
+    internals.usageSnapshotMatchesQuery(monthSnap, { mode: 'days', days: 30 }), false)
+  const monthTitleCopy = { usageRangeMonthTitle: '{y} 年 {m} 月 · {n} 天' }
+  check('T010 月份标题 zh 不补零、天数取自 snapshot.range',
+    internals.usageRangeText(monthTitleCopy, monthSnap, 7), '2026 年 9 月 · 30 天')
+  check('T010 月份标题 en 补零成 ISO 月',
+    internals.usageRangeText({ usageRangeMonthTitle: '{y}-{mm} · {n} days' }, monthSnap, 7), '2026-09 · 30 days')
+  check('T010 month 字段缺失时从 range.from 兜底',
+    internals.usageRangeText(monthTitleCopy, { range: { kind: 'month', from: '2026-08-01', to: '2026-08-31', days: 31 } }, 7),
+    '2026 年 8 月 · 31 天')
+}
+
+/* T010 ③：点「按月」展开月份行、预填当前月、立刻按该月取数（不带 days/from/to）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T010 默认（天数态）不展开月份行', monthRowOf(tree), undefined)
+  const currentMonth = bundle.api.__internals.usageTodayKey().slice(0, 7)
+  tree = openMonth(bundle)
+  ok('T010 点按月展开月份行', monthRowOf(tree) !== undefined && monthRowOf(tree).props['data-usage-month'] === '1')
+  check('T010 月份输入预填本机当前月', monthInputOf(tree).props.value, currentMonth)
+  check('T010 月份 chip 进入按下态', monthChipOf(tree).props['data-active'], '1')
+  check('T010 月份态下预设与自定义都不处于按下态',
+    findNodes(tree, 'tpq-usage-day')
+      .filter((node) => node.props?.['data-usage-preset'] !== 'month')
+      .map((node) => node.props['data-active']),
+    ['0', '0', '0', '0', '0'])
+  tree = await settle(bundle.renderUsage, 4)
+  check('T010 切按月立刻按当前月取数', usageRequests().at(-1)?.url, '/token-plan-quota/usage?month=' + currentMonth)
+  ok('T010 月份请求不夹带 days / from / to',
+    !String(usageRequests().at(-1)?.url).includes('days=') && !String(usageRequests().at(-1)?.url).includes('from='))
+  ok('T010 月份标题来自 snapshot.range（年 月 · N 天）',
+    /20\d\d 年 \d\d 月 · \d+ 天/.test(monthRangeTextOf(tree)), monthRangeTextOf(tree))
+}
+
+/* T010 ④：非法月份点「查询」只出行内提示、零请求（SC-004），宿主一次都没被打扰。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openMonth(bundle)
+  tree = await settle(bundle.renderUsage, 3)
+  const cases = [['空值', ''], ['缺零', '2026-9'], ['13 月', '2026-13'], ['未来月', '2099-01']]
+  for (const pair of cases) {
+    tree = bundle.renderUsage()
+    monthInputOf(tree).props.onChange({ target: { value: pair[1] } })
+    tree = bundle.renderUsage()
+    const before = usageRequests().length
+    monthApplyOf(tree).props.onClick()
+    check('T010 非法月份（' + pair[0] + '）点查询零请求', usageRequests().length, before)
+    tree = bundle.renderUsage()
+    check('T010 非法月份（' + pair[0] + '）行内提示', monthErrorTextOf(tree), '月份不合法')
+  }
+  tree = bundle.renderUsage()
+  ok('T010 行内提示挂在 role=alert 上',
+    findNodes(tree, 'tpq-usage-range-error').every((node) => node.props.role === 'alert'))
+  ok('T010 全程没有发出 month= 非法值的请求',
+    usageRequests().every((entry) => {
+      const month = monthParamOf(entry.url)
+      return month === null || /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+    }))
+  tree = bundle.renderUsage()
+  monthInputOf(tree).props.onChange({ target: { value: '2026-09' } })
+  tree = bundle.renderUsage()
+  check('T010 改回合法月份后行内提示消失', monthErrorTextOf(tree), '')
+}
+
+/* T010 ⑤：合法月份 → 请求只带 month、标题与快照同源、不标 stale、store 记住。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openMonth(bundle)
+  monthInputOf(tree).props.onChange({ target: { value: '2026-09' } })
+  tree = bundle.renderUsage()
+  monthApplyOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T010 合法月份请求只带 month', usageRequests().at(-1)?.url, '/token-plan-quota/usage?month=2026-09')
+  ok('T010 月份标题与快照同源（2026 年 9 月 · 30 天）',
+    monthRangeTextOf(tree).includes('2026 年 9 月 · 30 天'), monthRangeTextOf(tree))
+  check('T010 月份数据到了不标 stale',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+  const snapshot = bundle.handle.create().getSnapshot()
+  check('T010 查询的月份写进 store（重开屏能恢复）', [snapshot.rangeMode, snapshot.month], ['month', '2026-09'])
+  // 假 React 每次 render 都会重跑 effect（会发一条），所以计数要在 render 之后取。
+  const applyTree = bundle.renderUsage()
+  const before = usageRequests().length
+  monthApplyOf(applyTree).props.onClick()
+  check('T010 同月重复点查询再发一次', usageRequests().length, before + 1)
+  check('T010 重发的是同一个月', usageRequests().at(-1)?.url, '/token-plan-quota/usage?month=2026-09')
+  ok('T010 月份态整屏不出现百分比',
+    !collectText(bundle.renderUsage()).join(' ').includes('%'))
+}
+
+/* T010 ⑥：换月份、新响应没到时标 stale（旧月数据不许冒充新月）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openMonth(bundle)
+  monthInputOf(tree).props.onChange({ target: { value: '2026-09' } })
+  tree = bundle.renderUsage()
+  monthApplyOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  check('T010 前置：9 月数据到位', findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+  monthInputOf(tree).props.onChange({ target: { value: '2026-10' } })
+  tree = bundle.renderUsage()
+  monthApplyOf(tree).props.onClick()
+  tree = bundle.renderUsage()
+  check('T010 换了月份、数据没到时标 stale',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['1', '1', '1'])
+  tree = await settle(bundle.renderUsage, 4)
+  check('T010 新月份数据到了 stale 落回 0',
+    findNodes(tree, 'tpq-usage-card').map((node) => node.props['data-stale']), ['0', '0', '0'])
+  ok('T010 新月份标题跟着快照走', monthRangeTextOf(tree).includes('2026 年 10 月 · 31 天'), monthRangeTextOf(tree))
+}
+
+/* T010 ⑦：点预设必须真的切回天数模式（收起月份行、请求 days、store 清月份）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openMonth(bundle)
+  tree = await settle(bundle.renderUsage, 4)
+  const presets = findNodes(tree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)
+  check('T010 预设按钮仍是 4 个', presets.length, 4)
+  presets[1].props.onClick()
+  tree = await settle(bundle.renderUsage, 3)
+  check('T010 点预设后月份行收起', monthRowOf(tree), undefined)
+  check('T010 点预设后请求回到天数', usageRequests().at(-1)?.url, '/token-plan-quota/usage?days=7')
+  check('T010 点预设后月份 chip 退出按下态', monthChipOf(tree).props['data-active'], '0')
+  const snapshot = bundle.handle.create().getSnapshot()
+  check('T010 点预设后 store 清掉月份', [snapshot.rangeMode, snapshot.month], ['days', ''])
+}
+
+/* T010 ⑧：store 三态互不覆盖（月份 / 天数 / 2D-3D 视图）。 */
+{
+  const bundle = await mountUsage({ fetchImpl: usageMonthFetch() })
+  const store = bundle.handle
+  const snapshot = () => store.create().getSnapshot()
+  check('T010 store 初值带空月份',
+    [snapshot().rangeMode, snapshot().month], ['days', ''])
+  store.setRange({ rangeMode: 'month', month: '2026-09', from: '', to: '' })
+  check('T010 store 记住月份',
+    [snapshot().rangeMode, snapshot().month, snapshot().from, snapshot().to], ['month', '2026-09', '', ''])
+  store.setMode('3d')
+  check('T010 切 3D 不污染月份',
+    [snapshot().mode, snapshot().rangeMode, snapshot().month], ['3d', 'month', '2026-09'])
+  store.setRange({ rangeMode: 'days', from: '', to: '' })
+  check('T010 回天数模式清掉月份', [snapshot().rangeMode, snapshot().month], ['days', ''])
+  store.setRange({ rangeMode: 'month', month: '2026-11' })
+  check('T010 setRange 缺 from/to 时保底为空串',
+    [snapshot().from, snapshot().to], ['', ''])
+}
+
+/* T010 ⑨：重开屏恢复 —— 合法月份才恢复，非法/未来月份回落天数（不发注定的 400）。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageMonthFetch(),
+    seedStore: (handle) => handle.setRange({ rangeMode: 'month', month: '2026-09', from: '', to: '' }),
+  })
+  resetHooks()
+  const startIndex = usageRequests().length
+  let tree = await settle(bundle.renderUsage, 4)
+  ok('T010 恢复态首帧就展开月份行', monthRowOf(tree) !== undefined)
+  check('T010 恢复的月份进输入框', monthInputOf(tree).props.value, '2026-09')
+  check('T010 恢复后首个请求就是月份查询', usageRequests()[startIndex]?.url, '/token-plan-quota/usage?month=2026-09')
+  ok('T010 恢复态标题同源', monthRangeTextOf(tree).includes('2026 年 9 月 · 30 天'), monthRangeTextOf(tree))
+}
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageMonthFetch(),
+    seedStore: (handle) => handle.setRange({ rangeMode: 'month', month: '2099-01', from: '', to: '' }),
+  })
+  resetHooks()
+  const startIndex = usageRequests().length
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T010 未来月份不恢复月份行', monthRowOf(tree), undefined)
+  check('T010 未来月份回落天数查询', usageRequests()[startIndex]?.url, '/token-plan-quota/usage?days=7')
+}
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageMonthFetch(),
+    seedStore: (handle) => handle.setRange({ rangeMode: 'month', month: '2026-13', from: '', to: '' }),
+  })
+  resetHooks()
+  const startIndex = usageRequests().length
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T010 格式非法的旧月份同样回落天数', monthRowOf(tree), undefined)
+  check('T010 格式非法旧月份不发月份请求', usageRequests()[startIndex]?.url, '/token-plan-quota/usage?days=7')
+}
+
+/* T010 ⑩：宿主 400 usage-bad-month → 本地文案 + 重试；宿主原文与错误码不上屏。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageMonthFetch({
+      handler: ({ month }) => (month === null ? undefined
+        : { ok: false, status: 400, json: async () => ({ error: 'usage-bad-month', message: 'month must be YYYY-MM' }) }),
+    }),
+  })
+  resetHooks()
+  await settle(bundle.renderUsage, 4)
+  let tree = openMonth(bundle)
+  tree = await settle(bundle.renderUsage, 3)
+  const text = collectText(tree).join(' ')
+  ok('T010 400 usage-bad-month 用本地文案', text.includes('月份不合法'), text.slice(0, 240))
+  ok('T010 错误码与宿主原文不上屏',
+    !text.includes('usage-bad-month') && !text.includes('month must be'), text.slice(0, 240))
+  check('T010 月份错误态带重试按钮', findNodes(tree, 'tpq-usage-retry').length, 1)
+  const before = usageRequests().length
+  findNodes(tree, 'tpq-usage-retry')[0].props.onClick()
+  ok('T010 重试重发同一条月份查询',
+    usageRequests().length > before && String(usageRequests().at(-1)?.url).includes('month='))
+  check('T010 重试的仍是失败的那个月', monthParamOf(usageRequests().at(-1)?.url), '2026-11')
+}
+
+/* T010 ⑪：英文界面走英文文案，不混中文、不带百分比。 */
+{
+  const bundle = await mountUsage({ lang: 'en-US', fetchImpl: usageMonthFetch() })
+  resetHooks()
+  let tree = await settle(bundle.renderUsage, 4)
+  check('T010 en：月份 chip 文案', collectText(monthChipOf(tree)).join(''), 'Month')
+  tree = openMonth(bundle)
+  check('T010 en：查询按钮文案', collectText(monthApplyOf(tree)).join(''), 'Apply')
+  check('T010 en：月份输入框 aria-label 走 COPY', monthInputOf(tree).props['aria-label'], 'Month')
+  monthInputOf(tree).props.onChange({ target: { value: '2026-09' } })
+  tree = bundle.renderUsage()
+  monthApplyOf(tree).props.onClick()
+  tree = await settle(bundle.renderUsage, 4)
+  const text = collectText(tree).join(' ')
+  ok('T010 en：月份标题', text.includes('2026-09 · 30 days'), text.slice(0, 240))
+  ok('T010 en：整屏不混中文', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 240))
+  ok('T010 en：整屏无百分比', !text.includes('%'), text.slice(0, 240))
+  ok('T010 en：月份行不带 Credits', !/credit/i.test(collectText(monthRowOf(tree)).join(' ')))
+  ok('T010 en：脚注仍是英文「仅统计本机」',
+    text.includes('Only calls made by this DSH instance are counted'))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

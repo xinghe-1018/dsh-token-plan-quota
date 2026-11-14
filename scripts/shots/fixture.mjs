@@ -429,6 +429,86 @@ function clampUsageDays(value) {
   return rounded
 }
 
+/** 月份字符串（YYYY-MM）的正则 —— 与 lib/usage-stats.js resolveMonthRange 同一判据（010 INTERFACE §1.1）。 */
+const USAGE_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
+
+/** 010：range 多出一个 month 字段（INTERFACE §1.2 的整月分支形状）。 */
+const USAGE_MONTH_RANGE_KEYS = ['kind', 'month', 'days', 'from', 'to']
+
+/**
+ * 010：把 `month` 解析成**夹紧后**的整月区间；不是合法月份返回 null（宿主会回 400 usage-bad-month）。
+ *
+ * 与 resolveMonthRange 同口径：trim → 格式 → 真实月份（回读年月，防 `0000-01` / `0099-01` 这类
+ * `new Date` 把 0–99 当 19xx 的滚年）→ 月份晚于当前月拒绝 → `to` 夹到今天 → `days` 用闭区间天数。
+ * 不套用 usageBackfillDays 上界：自然月最多 31 天，本就不受 365 天跨度限制影响。
+ */
+function usageMonthRange({ now, month }) {
+  const text = typeof month === 'string' ? month.trim() : ''
+  if (!USAGE_MONTH_PATTERN.test(text)) return null
+  const year = Number(text.slice(0, 4))
+  const monthIndex = Number(text.slice(5, 7)) - 1
+  const probe = new Date(year, monthIndex, 1)
+  if (probe.getFullYear() !== year || probe.getMonth() !== monthIndex) return null
+  const today = usageDayKey(new Date(now))
+  if (text > today.slice(0, 7)) return null
+  const from = text + '-01'
+  const monthEnd = usageDayKey(new Date(year, monthIndex + 1, 0))
+  const to = monthEnd > today ? today : monthEnd
+  return { month: text, from, to, days: usageCountDays(from, to) }
+}
+
+/**
+ * 010：请求里的 month。与宿主 resolveUsageMonth 同判据：
+ * 缺省 / **空串**（`?month=`）→ null（退回 days 分支）；只有空白的串**不是**空串，
+ * 按§1.1 的 trim→格式 校验会失败，宿主回 400 usage-bad-month —— 这里也让它进校验流程。
+ */
+function usageMonthArg(options) {
+  const raw = options.month
+  if (raw === undefined || raw === null) return null
+  const text = String(raw)
+  if (text === '') return null
+  return text.trim()
+}
+
+/**
+ * 三种查询的统一解析（010 优先级：month > from/to > days，INTERFACE §1.2）。
+ *
+ * 宿主会把「month 与 from/to 混用」「from/to 只给一端」「month 非法」都收口成 400；
+ * fixture 直接抛错 —— 拿别的分支糊过去，会拍出一张"查询条件与数据不一致"的图。
+ *
+ * @returns {{mode: 'month'|'custom'|'days', from: string, to: string, days: number, month?: string}}
+ */
+function usageQueryShape(options = {}) {
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  const month = usageMonthArg(options)
+  const hasRange = usageIsDayKey(options.from) || usageIsDayKey(options.to)
+  if (month !== null && hasRange) {
+    throw new Error('usage fixture：month 与 from/to 混用，宿主会回 400 usage-bad-range，不造图')
+  }
+  if (month !== null) {
+    const resolved = usageMonthRange({ now, month })
+    if (resolved === null) {
+      throw new Error('usage fixture：month=' + month + ' 不是合法月份或晚于当前月，宿主会回 400 usage-bad-month，不造图')
+    }
+    return { mode: 'month', from: resolved.from, to: resolved.to, days: resolved.days, month: resolved.month }
+  }
+  const today = usageDayKey(new Date(now))
+  if (hasRange) {
+    if (!(usageIsDayKey(options.from) && usageIsDayKey(options.to))) {
+      throw new Error('usage fixture：请求只带了 from/to 之一，宿主会回 400，不造图')
+    }
+    const from = options.from
+    const to = options.to > today ? today : options.to
+    if (from > to) throw new Error('usage fixture：from 晚于 to（' + from + ' > ' + to + '），宿主会回 400')
+    const days = usageCountDays(from, to)
+    if (days > 365) throw new Error('usage fixture：区间 ' + days + ' 天超过 usageBackfillDays，宿主会回 400')
+    return { mode: 'custom', from, to, days }
+  }
+  const days = clampUsageDays(options.days)
+  const to = today
+  return { mode: 'days', from: usageAddDays(to, -(days - 1)), to, days }
+}
+
 /** totalsOf（lib/usage-stats.js 同公式）：tokens = 四类之和，steps = calls。 */
 function usageTotals(counters) {
   return {
@@ -504,29 +584,20 @@ function usageSplitByModel(counters) {
 }
 
 /**
- * 造一份 /usage?days=N 的响应。
- * @param {{now?: number, days?: number}} [options]
+ * 造一份 /token-plan-quota/usage 的响应。
+ *
+ * 三种查询上线顺序：`days`（006）→ `from`+`to`（007）→ `month`（010）。
+ * 010 的优先级是 month > from/to > days（INTERFACE §1.2），解析统一在 usageQueryShape 里，
+ * 非法组合（month 与 from/to 混用、单端、非法月份）直接抛错而不是退化成别的分支。
+ *
+ * @param {{now?: number, days?: number, from?: string, to?: string, month?: string}} [options]
  * @returns {object} 与 lib/index.js buildUsageSnapshot 同形的 payload。
  */
 export function makeUsageSnapshot(options = {}) {
   const now = Number.isFinite(options.now) ? options.now : Date.now()
-  const today = usageDayKey(new Date(now))
-  // 007：两端都给才走自定义区间（与宿主路由同一条判据）；to 晚于今天要夹到今天，abusrd 组合直接拒绝而不是造一张宿主发不出的图。
-  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
-  let from
-  let to
-  let days
-  if (custom) {
-    from = options.from
-    to = options.to > today ? today : options.to
-    if (from > to) throw new Error('makeUsageSnapshot：from 晚于 to（' + from + ' > ' + to + '），宿主会回 400')
-    days = usageCountDays(from, to)
-    if (days > 365) throw new Error('makeUsageSnapshot：区间 ' + days + ' 天超过 usageBackfillDays，宿主会回 400')
-  } else {
-    days = clampUsageDays(options.days)
-    to = today
-    from = usageAddDays(to, -(days - 1))
-  }
+  const query = usageQueryShape({ ...options, now })
+  const { mode, from, to, days } = query
+  const custom = mode === 'custom'
   const granularity = days > USAGE_WEEK_THRESHOLD_DAYS ? 'week' : 'day'
 
   // 逐日计数只覆盖区间内（与 aggregateUsageRange 一致：周桶跨到 from 之前的周一，但不累计 from 之前的天）。
@@ -600,7 +671,10 @@ export function makeUsageSnapshot(options = {}) {
   return {
     generatedAt: now,
     enabled: true,
-    range: custom ? { kind: 'custom', days, from, to } : { kind: days === 1 ? 'today' : days + 'd', days, from, to },
+    // 010：整月分支的 range 多一个 month（INTERFACE §1.2）；客户端标题以它为准渲染「2026 年 10 月 · 31 天」。
+    range: mode === 'month'
+      ? { kind: 'month', month: query.month, days, from, to }
+      : custom ? { kind: 'custom', days, from, to } : { kind: days === 1 ? 'today' : days + 'd', days, from, to },
     granularity,
     totals: usageTotals(rangeCounters),
     buckets,
@@ -617,8 +691,12 @@ export function makeUsageSnapshot(options = {}) {
 /**
  * /usage fixture 的自检：三层 totals 恒等、日期连续、周桶对齐周一、白名单、无百分比/Credits、
  * 无真实痕迹。任何一条不过就不该拍照。
+ *
+ * 010 起还要验整月：range.kind = month 且带 month 字段、from 是 1 号、to 是夹到今天的月末、
+ * 日桶恰好铺满该月（首桶 = 1 号，末桶 = to）。
+ *
  * @param {object} usage makeUsageSnapshot 的产物
- * @param {{lang?: 'zh'|'en', days?: number}} [options]
+ * @param {{lang?: 'zh'|'en', now?: number, days?: number, from?: string, to?: string, month?: string}} [options]
  * @returns {string[]} 通过的断言说明（抛错表示不通过）
  */
 export function assertUsageFixture(usage, options = {}) {
@@ -627,20 +705,13 @@ export function assertUsageFixture(usage, options = {}) {
     if (!cond) throw new Error('usage fixture 自检失败：' + label)
     checks.push(label)
   }
-  const today = usageDayKey(new Date(Number.isFinite(options.now) ? options.now : Date.now()))
-  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
-  let days
-  let expectFrom
-  let expectTo
-  if (custom) {
-    expectFrom = options.from
-    expectTo = options.to > today ? today : options.to
-    days = usageCountDays(expectFrom, expectTo)
-  } else {
-    days = clampUsageDays(options.days)
-    expectTo = today
-    expectFrom = usageAddDays(expectTo, -(days - 1))
-  }
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  const today = usageDayKey(new Date(now))
+  // 与 makeUsageSnapshot 共用同一条解析（month > from/to > days）：断言自己再推一遍，迟早会漂。
+  const query = usageQueryShape({ ...options, now })
+  const { mode, days, from: expectFrom, to: expectTo } = query
+  const custom = mode === 'custom'
+  const isMonth = mode === 'month'
   const allowed = new Set(USAGE_TOP_KEYS)
   for (const key of Object.keys(usage)) need('顶层键 ' + key + ' ⊆ /usage 白名单', allowed.has(key))
 
@@ -653,7 +724,8 @@ export function assertUsageFixture(usage, options = {}) {
     usage.coverage.sessions > 0 && usage.coverage.indexed === usage.coverage.sessions)
 
   need('range 键集正确',
-    JSON.stringify(Object.keys(usage.range).sort()) === JSON.stringify([...USAGE_RANGE_KEYS].sort()))
+    JSON.stringify(Object.keys(usage.range).sort())
+      === JSON.stringify([...(isMonth ? USAGE_MONTH_RANGE_KEYS : USAGE_RANGE_KEYS)].sort()))
   need('range.days 与请求一致', usage.range.days === days)
   need('range.from 是日期', usageIsDayKey(usage.range.from))
   need('range.to 是日期', usageIsDayKey(usage.range.to))
@@ -662,6 +734,15 @@ export function assertUsageFixture(usage, options = {}) {
     need('range.kind 是 custom', usage.range.kind === 'custom')
     need('range.from = 请求的 from', usage.range.from === expectFrom)
     need('range.to = 请求的 to（夹到今天后）', usage.range.to === expectTo)
+  } else if (isMonth) {
+    // 010：整月分支。month 必须是请求的那个月，from 该月 1 号，to 是夹到今天后的月末（当月的未来日不出现）。
+    need('range.kind 是 month', usage.range.kind === 'month')
+    need('range.month = 请求的 month（' + query.month + '）', usage.range.month === query.month)
+    need('range.month 与 range.from 同月', usage.range.from.slice(0, 7) === usage.range.month)
+    need('range.from = 该月 1 号', usage.range.from === expectFrom && usage.range.from.endsWith('-01'))
+    need('range.to = 夹到今天后的月末', usage.range.to === expectTo)
+    need('range.days 与整月一致', usage.range.days === days)
+    need('整月不走周粒度（自然月 <= 31 天）', days <= 31)
   } else {
     need('range.kind 与天数一致', usage.range.kind === (days === 1 ? 'today' : days + 'd'))
     need('range.from = to - (days-1)', usageAddDays(usage.range.to, -(days - 1)) === usage.range.from)
@@ -850,27 +931,14 @@ export function makeUsageOfficialSnapshot(options = {}) {
   const now = Number.isFinite(options.now) ? options.now : Date.now()
   const today = usageDayKey(new Date(now))
   const earliest = usageOfficialEarliestKey(now)
-  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
-  let from
-  let to
-  let days
-  let kind
-  if (custom) {
-    from = options.from
-    to = options.to
-    if (to > today) {
-      throw new Error('makeUsageOfficialSnapshot：to（' + to + '）晚于今天（' + today
-        + '），截图请用今天为止的区间（宿主会把 to 夹到今天，fixture 不模拟夹紧）')
-    }
-    if (from > to) throw new Error('makeUsageOfficialSnapshot：from 晚于 to（' + from + ' > ' + to + '），宿主会回 400')
-    days = usageCountDays(from, to)
-    kind = 'custom'
-  } else {
-    days = clampUsageDays(options.days)
-    to = today
-    from = usageAddDays(to, -(days - 1))
-    kind = days === 1 ? 'today' : days + 'd'
+  // 010：与本机那一路共用三种查询的解析（month > from/to > days），两边区间必然一致。
+  const query = usageQueryShape({ ...options, now })
+  const { mode, from, to, days } = query
+  if (mode === 'custom' && options.to > today) {
+    throw new Error('makeUsageOfficialSnapshot：to（' + options.to + '）晚于今天（' + today
+      + '），截图请用今天为止的区间（宿主会把 to 夹到今天，fixture 不模拟夹紧）')
   }
+  const kind = mode === 'custom' ? 'custom' : mode === 'month' ? 'month' : (days === 1 ? 'today' : days + 'd')
   if (from < earliest) {
     throw new Error('makeUsageOfficialSnapshot：from（' + from + '）早于最早可查日 ' + earliest
       + '（当前月往前 5 个月的 1 号），宿主会夹紧并回 clampedFrom；fixture 不模拟夹紧')
@@ -892,7 +960,9 @@ export function makeUsageOfficialSnapshot(options = {}) {
 
   return {
     generatedAt: now,
-    range: { kind, days, from, to },
+    // 010：官方侧 range 与本机那一路同源 —— month 分支多带一个 month 字段（host-core 的契约外加固：
+    // month 与 from/to 的 from|to 可能完全同值，缓存按 from/to 命中时靠它区分两个月份查询）。
+    range: mode === 'month' ? { kind, month: query.month, days, from, to } : { kind, days, from, to },
     granularity: 'day',
     totals,
     buckets,
@@ -915,7 +985,7 @@ export function makeUsageOfficialSnapshot(options = {}) {
  * 任何一条不过就不该拍照。
  *
  * @param {object} official makeUsageOfficialSnapshot 的产物
- * @param {{lang?: 'zh'|'en', now?: number, days?: number, from?: string, to?: string}} [options]
+ * @param {{lang?: 'zh'|'en', now?: number, days?: number, from?: string, to?: string, month?: string}} [options]
  * @returns {string[]} 通过的断言说明（抛错表示不通过）
  */
 export function assertUsageOfficialFixture(official, options = {}) {
@@ -928,22 +998,13 @@ export function assertUsageOfficialFixture(official, options = {}) {
   const now = Number.isFinite(options.now) ? options.now : Date.now()
   const today = usageDayKey(new Date(now))
   const earliest = usageOfficialEarliestKey(now)
-  const custom = usageIsDayKey(options.from) && usageIsDayKey(options.to)
-  let expectFrom
-  let expectTo
-  let expectDays
-  let expectKind
-  if (custom) {
-    expectFrom = options.from
-    expectTo = options.to
-    expectDays = usageCountDays(expectFrom, expectTo)
-    expectKind = 'custom'
-  } else {
-    expectDays = clampUsageDays(options.days)
-    expectTo = today
-    expectFrom = usageAddDays(expectTo, -(expectDays - 1))
-    expectKind = expectDays === 1 ? 'today' : expectDays + 'd'
-  }
+  // 010：与 makeUsageOfficialSnapshot 共用同一条解析（month > from/to > days）。
+  const query = usageQueryShape({ ...options, now })
+  const { mode } = query
+  const expectFrom = query.from
+  const expectTo = query.to
+  const expectDays = query.days
+  const expectKind = mode === 'custom' ? 'custom' : mode === 'month' ? 'month' : (expectDays === 1 ? 'today' : expectDays + 'd')
   need('请求区间不晚于今天（否则该用例根本不该拍照）', expectTo <= today)
   need('请求区间不早于最早可查日 ' + earliest + '（否则宿主会夹紧）', expectFrom >= earliest)
 
@@ -952,11 +1013,16 @@ export function assertUsageOfficialFixture(official, options = {}) {
   need('generatedAt 是毫秒时间戳', isClockMillis(official.generatedAt))
 
   // 2) range 回显请求（不夹紧：夹紧的响应一定带 coverage.clampedFrom，那是另一种图）。
-  need('range 键集 = kind/days/from/to', sameKeys(official.range, USAGE_RANGE_KEYS))
+  // 010：month 分支的 range 多带 month（宿主用它区分「同一 from/to 的两个月」）⇒ 五键。
+  const isMonthQuery = mode === 'month'
+  need('range 键集 = ' + (isMonthQuery ? 'kind/month/days/from/to' : 'kind/days/from/to'),
+    sameKeys(official.range, isMonthQuery ? USAGE_MONTH_RANGE_KEYS : USAGE_RANGE_KEYS))
   need('range.kind 回显请求（' + expectKind + '）', official.range.kind === expectKind)
+  if (isMonthQuery) need('range.month = 请求的 month（' + query.month + '）', official.range.month === query.month)
   need('range.days = ' + expectDays, official.range.days === expectDays)
   need('range.from 回显请求的 from', official.range.from === expectFrom)
-  need('range.to 回显请求的 to（不夹紧）', official.range.to === expectTo)
+  // 自定义区间不夹紧；010 的整月分支里「当月」的 to 是宿主夹到今天的真值（与 expectTo 一致）。
+  need('range.to 回显请求的 to（自定义不夹紧；当月夹到今天）', official.range.to === expectTo)
 
   // 3) 官方这一路恒为日桶。
   need('granularity 恒为 day', official.granularity === 'day')

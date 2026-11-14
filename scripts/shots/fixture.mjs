@@ -544,12 +544,59 @@ function usageEmptyCounters() {
 /**
  * 模型配比：id 与宿主 fixture 的模型目录对得上（deepseek / qwen-token-plan-cn / openai），
  * 这样「用量统计」里的模型名与其它截图里的当前模型不会互相打脸。
+ *
+ * 012「用量构成」起，模型行要显示四类拆分各占**该模型** tokens 的百分比与缓存命中率，
+ * 所以每条模型不再只有一个总权重，而是逐字段给权重（usageSplitByModel 按字段拆）。
+ * 首条模型的四个权重刻意取 400:200:50:0 的比例（分母是默认 7 天区间的四类总量），
+ * 让它的行内占比恰好是 61.5% / 30.8% / 7.7% / 0，命中率 = 50 ÷ (400 + 50 + 0) = 11.1%，
+ * 与 INTERFACE §4 的示例同形；占比与命中率的真值另见下面的 USAGE_COMPOSITION_* 常量与断言。
+ * 8 条模型是为了撑出模型列表的内部滚动（FR-005，max-height 252px）；
+ * 前 7 条按权重拆、最后一条吃余数，逐字段求和仍等于桶 totals。
  */
 const USAGE_MODEL_MIX = [
-  { provider: 'deepseek', model: 'deepseek-v4-flash', weight: 0.58 },
-  { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash', weight: 0.27 },
-  { provider: 'openai', model: 'gpt-5', weight: 0.15 },
+  {
+    provider: 'deepseek',
+    model: 'deepseek-v4-flash',
+    weights: {
+      // 目标总量 ÷ 默认 7 天区间的总量：input 1,200,000 / 5,493,090、output 600,000 / 1,252,810、
+      // cacheRead 150,000 / 2,312,880、cacheWrite 0（该模型不写缓存）。
+      input: 1_200_000 / 5_493_090,
+      output: 600_000 / 1_252_810,
+      cacheRead: 150_000 / 2_312_880,
+      cacheWrite: 0,
+      calls: 0.22,
+    },
+  },
+  { provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash', weights: { input: 0.20, output: 0.10, cacheRead: 0.22, cacheWrite: 0.24, calls: 0.18 } },
+  { provider: 'openai', model: 'gpt-5', weights: { input: 0.16, output: 0.09, cacheRead: 0.18, cacheWrite: 0.20, calls: 0.15 } },
+  { provider: 'deepseek', model: 'deepseek-chat', weights: { input: 0.13, output: 0.08, cacheRead: 0.15, cacheWrite: 0.16, calls: 0.12 } },
+  { provider: 'qwen-token-plan-cn', model: 'qwen3-coder-plus', weights: { input: 0.10, output: 0.07, cacheRead: 0.12, cacheWrite: 0.13, calls: 0.10 } },
+  { provider: 'openai', model: 'gpt-5-mini', weights: { input: 0.08, output: 0.06, cacheRead: 0.09, cacheWrite: 0.10, calls: 0.08 } },
+  { provider: 'deepseek', model: 'deepseek-reasoner', weights: { input: 0.06, output: 0.05, cacheRead: 0.07, cacheWrite: 0.08, calls: 0.07 } },
+  { provider: 'qwen-token-plan-cn', model: 'qwen3-max', weights: { input: 0.05, output: 0.04, cacheRead: 0.05, cacheWrite: 0.05, calls: 0.05 } },
 ]
+
+/** 012 ⑮ 的断言真值：模型条数、首条 id、首条行内四类占比与缓存命中率（SC-003 的验收值）。 */
+export const USAGE_COMPOSITION_MODEL_COUNT = 8
+export const USAGE_COMPOSITION_FIRST_MODEL_ID = 'deepseek/deepseek-v4-flash'
+export const USAGE_COMPOSITION_FIRST_MODEL_SHARES = { input: 61.5, output: 30.8, cacheRead: 7.7, cacheWrite: 0 }
+export const USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE = 11.1
+
+/** 某个模型行内某一类的占比（百分比，一位小数；分母是该模型 tokens）。tokens 为 0 时 null。 */
+export function usageModelSharePercent(value, tokens) {
+  if (!(tokens > 0)) return null
+  return Math.round(value / tokens * 1000) / 10
+}
+
+/**
+ * 缓存命中率（百分比，一位小数）：cacheRead ÷ (input + cacheRead + cacheWrite)，与 INTERFACE §2 FR-002 同式。
+ * 分母为 0 时返回 null（客户端渲染「—」）。
+ */
+export function usageCacheHitRatePercent(totals) {
+  const denominator = totals.input + totals.cacheRead + totals.cacheWrite
+  if (!(denominator > 0)) return null
+  return Math.round(totals.cacheRead / denominator * 1000) / 10
+}
 
 /**
  * 某一天的计数。用「桶序号」而不是真实日期派生：同一组 --shots 反复跑会得到相同的柱形，
@@ -565,7 +612,7 @@ function usageDayCounters(index) {
   return { input, output, cacheRead, cacheWrite, calls }
 }
 
-/** 把一天的四类计数按固定配比拆到各模型，取整后余数归最后一个（保证逐字段求和相等）。 */
+/** 把一天的四类计数按各模型的**逐字段**权重拆开，取整后余数归最后一个（保证逐字段求和相等）。 */
 function usageSplitByModel(counters) {
   const out = {}
   for (const one of USAGE_MODEL_MIX) out[one.provider + '/' + one.model] = usageEmptyCounters()
@@ -575,7 +622,7 @@ function usageSplitByModel(counters) {
       const id = one.provider + '/' + one.model
       const value = index === USAGE_MODEL_MIX.length - 1
         ? counters[field] - assigned
-        : Math.round(counters[field] * one.weight)
+        : Math.round(counters[field] * one.weights[field])
       out[id][field] = value
       assigned += value
     })
@@ -881,6 +928,22 @@ export function assertUsageFixture(usage, options = {}) {
   for (const key of USAGE_MODEL_KEYS) {
     need('模型 totals 之和 = 区间 totals.' + key, topTotals[key] === usage.totals[key])
   }
+
+  // 012：模型行要显示行内四类占比与缓存命中率（INTERFACE §4）。条数与首条占比是 ⑮ 的
+  // 断言真值，写死在这里；改 fixture 配比时先在造数阶段报错，而不是拍完图才发现行里是别的数。
+  need('模型条数 = ' + USAGE_COMPOSITION_MODEL_COUNT + '（8 条才撑出列表内滚动，实际 ' + usage.models.length + '）',
+    usage.models.length === USAGE_COMPOSITION_MODEL_COUNT)
+  const firstModel = usage.models[0]
+  need('首条模型是 ' + USAGE_COMPOSITION_FIRST_MODEL_ID + '（实际 ' + firstModel.id + '）',
+    firstModel.id === USAGE_COMPOSITION_FIRST_MODEL_ID)
+  for (const key of ['input', 'output', 'cacheRead', 'cacheWrite']) {
+    const share = usageModelSharePercent(firstModel.totals[key], firstModel.totals.tokens)
+    need('首条模型 ' + key + ' 占比 = ' + USAGE_COMPOSITION_FIRST_MODEL_SHARES[key] + '%（实际 ' + share + '%）',
+      share === USAGE_COMPOSITION_FIRST_MODEL_SHARES[key])
+  }
+  const firstHitRate = usageCacheHitRatePercent(firstModel.totals)
+  need('首条模型缓存命中率 = ' + USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE + '%（实际 ' + firstHitRate + '%）',
+    firstHitRate === USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE)
 
   need('source.kind 是 session-index', usage.source.kind === 'session-index')
   need('source.veracity 是 measured', usage.source.veracity === 'measured')

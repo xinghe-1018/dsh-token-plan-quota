@@ -25,6 +25,13 @@ function ok(label, condition, context) {
     console.log(`FAIL ${label}${context === undefined ? '' : `\n  现场 ${String(context).replace(/\\s+/g, ' ').slice(0, 900)}`}`)
   }
 }
+/** 012：屏幕文本里的百分比只允许是「单项百分比片段」（构成比 x% / 命中率 x% / 模型行 (x%) / <0.1%）。
+ *  拼在句子里的百分比（「使用率 80%」这类）或来路不明的 % 都算越界——这是旧「整屏无 %」断言的替代纪律：
+ *  百分比只能来自两项实测比值，且只以白名单段拼出的片段出现。 */
+function strayPercentFragments(text) {
+  return String(text).split(/\s+/).filter((fragment) => fragment.includes('%')
+    && !/^(?:\(\d+(?:\.\d+)?%\)|\d+(?:\.\d+)?%|<0\.1%)$/.test(fragment))
+}
 
 /* ------------------------------------------------------ 假 React */
 
@@ -1682,7 +1689,8 @@ function findChip(node) {
   // 007 增了 9 个自定义区间键（109 → 118）；008 增了 10 个官方对照键（INTERFACE §3.3 的 8 个
   // + 「官方」格标签 + clampedFrom 说明），118 → 128；009 增 usageScanRescued（008 的 128 → 129）。
   // 010 增了 5 个月份键（Preset/Label/Apply/Bad/MonthTitle），129 → 134。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [134, 134])
+  // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [138, 138])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -2027,8 +2035,23 @@ async function mountUsage(options = {}) {
   const text = collectText(tree).join(' ')
   ok('标题 + 区间副标题', text.includes('Token 计划用量') && text.includes('近 7 天'), text.slice(0, 200))
   ok('区间总数走 formatTokens（1,000,000 → 100.0万）', text.includes('100.0万'), text.slice(0, 300))
-  ok('五项拆分都在（input / output / cacheRead / cacheWrite / 调用次数）',
-    ['input', 'output', 'cacheRead', 'cacheWrite', '调用次数'].every((label) => text.includes(label)))
+  // 012：中文界面不许再露出四个英文标签（用户原话「下面的用量改成中文」）。
+  const splitLabels = ['输入', '输出', '缓存命中', '缓存写入', '缓存命中率', '调用次数']
+  const englishLabels = ['input', 'output', 'cacheRead', 'cacheWrite']
+  // 「当前宿主大多不上报 cacheWrite」是既有脚注在点名宿主字段，不是 UI 标签，扫描时排除。
+  const labelSurface = text.split('当前宿主大多不上报 cacheWrite，这个数常年为 0 属正常。').join('')
+  ok('拆分项在中文界面全中文（输入 / 输出 / 缓存命中 / 缓存写入 / 命中率 / 调用次数）',
+    splitLabels.every((label) => text.includes(label))
+      && englishLabels.every((label) => !labelSurface.includes(label)),
+    'missing=' + splitLabels.filter((label) => !text.includes(label)).join(',')
+      + ' stray=' + englishLabels.filter((label) => labelSurface.includes(label)).join(',')
+      + ' text=' + text.slice(0, 500))
+  ok('总量卡给出四项构成比（分母 = 区间 tokens 总量）',
+    text.includes('输入 60.0万 占 60%') && text.includes('输出 30.0万 占 30%')
+      && text.includes('缓存命中 10.0万 占 10%'),
+    text.slice(0, 500))
+  ok('总量卡给出缓存命中率（cacheRead ÷ (input + cacheRead + cacheWrite)）',
+    text.includes('缓存命中率 14.3%'), text.slice(0, 500))
   ok('数字来源打「本实例实测」徽标（不是官方余额）', text.includes('本实例实测'))
   ok('数据源脚注按 source.kind 本地化（session-index → 本地 COPY 句，不照抄宿主 label）',
    text.includes('数据源：本实例实测（来自本地会话记录），不是官方余额。'), text.slice(-260))
@@ -2234,15 +2257,26 @@ async function mountUsage(options = {}) {
     /new ResizeObserver\(/.test(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')))
 }
 
-/* §4 ⑧：数字纪律——画面里没有百分比，除脚注白名单外不出现 Credits。 */
+/* §4 ⑧：数字纪律——012 起画面允许两处实测比值（构成比 / 命中率），
+ * 但百分比必须只以白名单段拼出的单值片段出现；除此之外不出现 Credits。 */
 {
   const bundle = await mountUsage()
   resetHooks()
   const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
-  ok('画面里没有百分比符号（原则 I：没有官方分母就不派生百分比）', !text.includes('%'), text.slice(0, 300))
+  const fragments = text.match(/\d+(?:\.\d+)?%|<0\.1%/g) ?? []
+  // 7 天 fixture：总量 3 个占比 + 1 个命中率；两个模型各 3 个占比 + 1 个命中率（缓存写入 0 不出占比）。
+  check('画面的百分比只有实测比值这一种来源（3+1 + 3+1 + 3+1 = 12 处）', fragments.length, 12)
+  ok('% 只来自构成比与命中率（没有别的派生百分比）',
+    fragments.every((fragment) => ['60%', '30%', '10%', '14.3%', '61.5%', '30.8%', '7.7%', '11.1%', '57.1%', '28.6%', '20%']
+      .includes(fragment)), fragments.join(','))
+  ok('百分比片段都长成「x%」或「(x%)」，不拼进句子',
+    strayPercentFragments(text).length === 0, strayPercentFragments(text).join(' | '))
   const withoutWhitelist = text.split('不折算 Credits，也不估算余量。').join('')
   ok('除那一条脚注白名单外不出现 Credits', !withoutWhitelist.includes('Credits'))
   ok('白名单脚注本身确实渲染出来了', text.includes('不折算 Credits，也不估算余量。'))
+  ok('比例口径脚注跟着数据一起渲染（公式写在屏上）',
+    text.includes('占比与命中率都是本机实测 tokens 的比值')
+      && text.includes('不是配额比例'), text.slice(-400))
 }
 
 /* 英文界面不许混进中文（COPY 是两张完整字典，不是中文兜底）。
@@ -2491,10 +2525,10 @@ async function mountUsage(options = {}) {
 {
   const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok('窄视口：图表容器自己横向滚动（不撑破整页）', /\.tpq-usage-scroll\{[^}]*overflow-x:auto/.test(code))
-  ok('375px：操作区整行铺开、拆分两列',
+  ok('375px：操作区整行铺开、拆分两列（012 六格偶数，不再需要最后格整行补丁）',
     /@media \(max-width:520px\)\{[\s\S]{0,400}\.tpq-usage-actions\{width:100%;margin-left:0\}/.test(code)
       && /\.tpq-usage-splits\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/.test(code)
-      && /\.tpq-usage-splits \.tpq-usage-split:last-child\{grid-column:1\/-1\}/.test(code))
+      && !/\.tpq-usage-splits \.tpq-usage-split:last-child\{grid-column/.test(code))
   ok('格宽是有限范围（窄视口保读性 / 宽卡片铺满 / 兜底画布宽）',
     /const STEP_MIN = 26/.test(code) && /const STEP_MAX = 120/.test(code)
       && /const BAR_MIN = 8/.test(code) && /const BAR_MAX = 64/.test(code)
@@ -2750,8 +2784,11 @@ function openCustom(bundle) {
   const screenStart = code.indexOf('function UsageScreen')
   ok('T004 能定位到 UsageScreen 区域', screenStart > 0)
   const region = code.slice(screenStart)
-  ok('T004 客户端用量面不出现百分比', region.includes('%') === false,
-    (region.match(/.{0,20}%.{0,20}/g) ?? []).join(' | '))
+  // 012：百分比只许在白名单段里拼（那些函数在 UsageScreen 之前），UsageScreen 自身若出现 % 字面量，
+  // 说明有人绕开白名单硬编码了比例。注释里提到 0% / <0.1% 不算渲染路径，先剥注释再判。
+  const regionCode = region.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  ok('T004 客户端用量面不出现百分比字面量（比例只在白名单段拼）', regionCode.includes('%') === false,
+    (regionCode.match(/.{0,20}%.{0,20}/g) ?? []).join(' | '))
   const creditLines = region.split('\n').filter((line) => /credit/i.test(line))
   ok('T004 Credits 只出现在白名单脚注行（脚注只说「不折算 Credits」）',
     creditLines.every((line) => line.includes('usageNoteNoCredits')), creditLines.join(' | '))
@@ -3097,9 +3134,10 @@ function officialFetchOf(bodyOrFactory) {
   check('T006 差额 = 官方 − 本机（正号必显）',
     [officialCellTextOf(tree, 'gap'), findNodes(tree, 'tpq-usage-official-gap')[0].props['data-sign']],
     ['+2099000000', 'pos'])
+  // 012：中文界面标签中文化（顺序沿用官方 payload 的 input / cacheRead / output）。
   check('T006 官方四项拆分同源且不与 tokens 相加',
     collectText(findNodes(tree, 'tpq-usage-official-split')[0]).join(''),
-    'input 1260000000 · cacheRead 1134000000 · output 840000000')
+    '输入 1260000000 · 缓存命中 1134000000 · 输出 840000000')
   const note = collectText(findNodes(tree, 'tpq-usage-official-note')[0]).join('')
   ok('T006 脚注点明口径差异（其他设备 + 不相加）',
     note.includes('其他设备') && note.includes('不相加') && note.includes('本机会话记录'), note)
@@ -3349,8 +3387,9 @@ function rescuedFetch(n) {
     '另有 2 个会话不在宿主的会话列表里，已按日志目录补扫。')
   ok('T009 新行落在同一块脚注里（官方对照条下方、来源声明旁边）',
     notes[0] !== undefined && nodesWithProp(notes[0], 'data-usage-rescued').length === 1)
-  check('T009 有 rescued 时脚注行数 = 既有 5 行 + 1',
-    notes[0] === undefined ? -1 : notes[0].children.length, 6)
+  // 既有 5 行 + rescued 1 行 + 012 比例口径 1 行 = 7。
+  check('T009 有 rescued 时脚注行数 = 既有 5 行 + rescued 1 行 + 比例口径 1 行',
+    notes[0] === undefined ? -1 : notes[0].children.length, 7)
   const text = collectText(tree).join(' ')
   ok('T009 既有「仅统计本机」脚注仍渲染（新行不替换来源声明）',
     text.includes('仅统计本机 DSH 发出的调用；其他设备的用量不在此列。'), text.slice(-260))
@@ -3364,8 +3403,9 @@ function rescuedFetch(n) {
   const tree = await settle(bundle.renderUsage, 8)
   const notes = findNodes(tree, 'tpq-usage-notes')
   check('T009 rescued=0 时一行都不渲染', nodesWithProp(tree, 'data-usage-rescued').length, 0)
-  check('T009 rescued=0 时脚注仍是既有 5 行（DOM 与 008 相同）',
-    notes[0] === undefined ? -1 : notes[0].children.length, 5)
+  // 008 的 5 行 + 012 比例口径 1 行；rescue 行不出现。
+  check('T009 rescued=0 时脚注 = 既有 5 行 + 比例口径 1 行',
+    notes[0] === undefined ? -1 : notes[0].children.length, 6)
   const text = collectText(tree).join(' ')
   ok('T009 rescued=0 时既有脚注照旧（含「仅统计本机」与「不折算 Credits」）',
     text.includes('仅统计本机 DSH 发出的调用') && text.includes('不折算 Credits，也不估算余量。'), text.slice(-260))
@@ -3643,8 +3683,10 @@ const monthParamOf = (url) => new URL(String(url), 'http://localhost').searchPar
   monthApplyOf(applyTree).props.onClick()
   check('T010 同月重复点查询再发一次', usageRequests().length, before + 1)
   check('T010 重发的是同一个月', usageRequests().at(-1)?.url, '/token-plan-quota/usage?month=2026-09')
-  ok('T010 月份态整屏不出现百分比',
-    !collectText(bundle.renderUsage()).join(' ').includes('%'))
+  const monthText = collectText(bundle.renderUsage()).join(' ')
+  ok('T010 月份态的百分比同样只来自实测比值（不拼进句子）',
+    monthText.includes('占 ') && monthText.includes('缓存命中率 ') && strayPercentFragments(monthText).length === 0,
+    strayPercentFragments(monthText).join(' | ') || monthText.slice(0, 300))
 }
 
 /* T010 ⑥：换月份、新响应没到时标 stale（旧月数据不许冒充新月）。 */
@@ -3785,7 +3827,10 @@ const monthParamOf = (url) => new URL(String(url), 'http://localhost').searchPar
   const text = collectText(tree).join(' ')
   ok('T010 en：月份标题', text.includes('2026-09 · 30 days'), text.slice(0, 240))
   ok('T010 en：整屏不混中文', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 240))
-  ok('T010 en：整屏无百分比', !text.includes('%'), text.slice(0, 240))
+  ok('T010 en：百分比只来自实测比值（of total / hit rate；不混中文标签）',
+    text.includes('% of total') && text.includes('hit rate ')
+      && strayPercentFragments(text).length === 0 && !text.includes('占 '),
+    strayPercentFragments(text).join(' | ') || text.slice(0, 300))
   ok('T010 en：月份行不带 Credits', !/credit/i.test(collectText(monthRowOf(tree)).join(' ')))
   ok('T010 en：脚注仍是英文「仅统计本机」',
     text.includes('Only calls made by this DSH instance are counted'))
@@ -3872,10 +3917,11 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   check('T011 首行日期（日桶只印一天）', collectText(tipPartOf(tree, 'range')).join(''), fixture.from)
   check('T011 总量行 = formatTokens + 单位（无空格、无百分比）',
     collectText(tipPartOf(tree, 'tokens')).join(''), '4,000tokens')
-  check('T011 input 行', tipRowText(tree, 'input'), 'input|2,000')
-  check('T011 output 行', tipRowText(tree, 'output'), 'output|1,000')
-  check('T011 cache-read 行', tipRowText(tree, 'cache-read'), 'cacheRead|1,000')
-  check('T011 cache-write 行（0 也照样印，不隐藏）', tipRowText(tree, 'cache-write'), 'cacheWrite|0')
+  // 012：浮层内容与行为一字不改，只跟着 COPY 换标签（中文界面）。
+  check('T011 input 行', tipRowText(tree, 'input'), '输入|2,000')
+  check('T011 output 行', tipRowText(tree, 'output'), '输出|1,000')
+  check('T011 cache-read 行', tipRowText(tree, 'cache-read'), '缓存命中|1,000')
+  check('T011 cache-write 行（0 也照样印，不隐藏）', tipRowText(tree, 'cache-write'), '缓存写入|0')
   check('T011 调用次数行', tipRowText(tree, 'calls'), '调用次数|4')
   const tipText = collectText(tip).join(' ')
   ok('T011 浮层不出现百分比 / Credits / 估算余量字样',
@@ -4122,7 +4168,7 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   tree = hoverPointer(bundle, tree, 3, 40, 60)
   check('T011 0 token：总量行印 0 而不是空', collectText(tipPartOf(tree, 'tokens')).join(''), '0tokens')
   check('T011 0 token：五行全 0（不省略行）',
-    tipRowsOf(tree).map((row) => collectText(row).join('')), ['input0', 'output0', 'cacheRead0', 'cacheWrite0', '调用次数0'])
+    tipRowsOf(tree).map((row) => collectText(row).join('')), ['输入0', '输出0', '缓存命中0', '缓存写入0', '调用次数0'])
 }
 
 /* T011 ⑩：切区间（数据变化）同样清空 hover。 */
@@ -4185,6 +4231,216 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
   ok('T011 回退路径锚到柱上方且不出负坐标',
     tip.props.style.left >= 0 && tip.props.style.top >= 0, JSON.stringify(tip.props.style))
   check('T011 回退路径不 portal', tip.portalTo, undefined)
+}
+
+/* ============================================ T012 按模型用量的中文标签、占比与缓存命中
+ *
+ * 规格：specs/012-usage-composition/INTERFACE.md（唯一真值）+ spec.md 的 SC-001..SC-007。
+ * 012 把 006「整屏无百分比」收窄为「百分比只能来自本机实测 tokens 的两项比值」：
+ * 构成比（四项 ÷ 区间 tokens）与缓存命中率（cacheRead ÷ (input + cacheRead + cacheWrite)）。
+ * fixture 数字按 INTERFACE §9 手算，不复用实现里的比例函数，避免自证。
+ */
+
+/* SC-001 / SC-002：总量卡六格、四项构成比、命中率、逐字中文。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const cells = findNodes(tree, 'tpq-usage-split')
+  check('T012 总量卡拆分成 6 格（012 从 5 格变 6 格）', cells.length, 6)
+  check('T012 六格逐字内容（中文标签 + 数值 + 占比子行）',
+    cells.map((cell) => collectText(cell).join('')),
+    ['输入60.0万占 60%', '输出30.0万占 30%', '缓存命中10.0万占 10%',
+      '缓存写入0', '缓存命中率14.3%', '调用次数30'])
+  const shares = findNodes(tree, 'tpq-usage-split-share')
+  check('T012 占比子行只挂 3 格（缓存写入 0 / 命中率 / 调用次数不挂）', shares.length, 3)
+  check('T012 占比子行文案逐字（模板来自 COPY.usageShareOf）',
+    shares.map((node) => collectText(node).join('')), ['占 60%', '占 30%', '占 10%'])
+  const text = collectText(tree).join(' ')
+  // 既有脚注「当前宿主大多不上报 cacheWrite」在点名宿主字段，不是 UI 标签。
+  const labelSurface = text.split('当前宿主大多不上报 cacheWrite，这个数常年为 0 属正常。').join('')
+  ok('T012 中文界面不再出现四个英文标签',
+    ['input', 'output', 'cacheRead', 'cacheWrite'].every((label) => !labelSurface.includes(label)),
+    labelSurface.slice(0, 500))
+}
+
+/* SC-001 / SC-003：模型行中文标签、占比后缀与命中率；分母是该模型自己的 tokens。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const models = findNodes(tree, 'tpq-usage-model')
+  check('T012 模型行数不变（fixture 两个模型都渲染）', models.length, 2)
+  check('T012 模型顺序不变（按 tokens 降序：qwen 在前）',
+    models.map((row) => collectText(findNodes(row, 'tpq-usage-model-id')[0]).join('')),
+    ['qwen/qwen3-max', 'deepseek/deepseek-chat'])
+  check('T012 首条模型第二行逐字（占比分母 = 该模型 tokens）',
+    collectText(findNodes(models[0], 'tpq-usage-model-splits')[0]).join(''),
+    '输入 40.0万 (61.5%) · 输出 20.0万 (30.8%) · 缓存命中 5.0万 (7.7%) · 缓存写入 0 · 命中率 11.1%')
+  check('T012 第二条模型第二行逐字（50,000 / 350,000 = 14.3%，命中率 50,000 / 300,000 = 20%）',
+    collectText(findNodes(models[1], 'tpq-usage-model-splits')[0]).join(''),
+    '输入 20.0万 (57.1%) · 输出 10.0万 (28.6%) · 缓存命中 5.0万 (14.3%) · 缓存写入 0 · 命中率 20%')
+  ok('T012 模型行数值仍走 formatTokens（中文万量纲，不换单位）',
+    collectText(models[0]).join(' ').includes('65.0万'), collectText(models[0]).join(' '))
+  ok('T012 值为 0 的拆分不挂 (0%) 后缀',
+    !collectText(findNodes(models[0], 'tpq-usage-model-splits')[0]).join('').includes('缓存写入 0 (0%)'))
+}
+
+/* SC-004：比例纯函数的边界（0 分母 / <0.1% / 100% / 负数 / 非有限数）。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T012 __internals 导出比例白名单段的四个纯函数',
+    ['usagePercentText', 'usageShareText', 'usagePercentSuffix', 'usageHitRateText']
+      .every((name) => typeof internals[name] === 'function'))
+  const pct = internals.usagePercentText
+  check('T012 分母 0 → null（不印 0% 冒充比例）', [pct(0, 0), pct(5, 0), pct(5, -1)], [null, null, null])
+  check('T012 负数 / 非有限数 → null',
+    [pct(-1, 10), pct(NaN, 10), pct(10, NaN), pct(10, Infinity)], [null, null, null, null])
+  check('T012 0 与 100 写成整数百分比', [pct(0, 100), pct(100, 100)], ['0%', '100%'])
+  check('T012 0 < pct < 0.1 写成 <0.1%', [pct(5, 10000), pct(1, 2000)], ['<0.1%', '<0.1%'])
+  check('T012 一位小数四舍五入', [pct(571, 1000), pct(2, 3), pct(1, 3)], ['57.1%', '66.7%', '33.3%'])
+  check('T012 整数百分比不带 .0', [pct(57, 100), pct(100, 100)], ['57%', '100%'])
+  check('T012 usageShareText 套模板 / null → 空串',
+    [internals.usageShareText({ usageShareOf: '占 {percent}' }, 571, 1000),
+      internals.usageShareText({ usageShareOf: '占 {percent}' }, 5, 0)], ['占 57.1%', ''])
+  check('T012 usagePercentSuffix 带前导空格 / null → 空串',
+    [internals.usagePercentSuffix(571, 1000), internals.usagePercentSuffix(5, 0)], [' (57.1%)', ''])
+  check('T012 usageHitRateText 分母 = input + cacheRead + cacheWrite',
+    internals.usageHitRateText({ usageHitRate: '命中率 {percent}' },
+      { input: 600000, cacheRead: 100000, cacheWrite: 0 }), '命中率 14.3%')
+  check('T012 命中率分母 0 → 空串（整段省略，不写 命中率 —）',
+    [internals.usageHitRateText({ usageHitRate: '命中率 {percent}' },
+      { input: 0, cacheRead: 0, cacheWrite: 0 }),
+      internals.usageHitRateText({ usageHitRate: '命中率 {percent}' }, null)], ['', ''])
+}
+
+/* SC-004：分母为 0 时总量卡命中率印 —（不是 0%）。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({
+      ...snap,
+      totals: { input: 0, output: 5000, cacheRead: 0, cacheWrite: 0, calls: 2, steps: 2, tokens: 5000 },
+      models: [],
+    })),
+  })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const cells = findNodes(tree, 'tpq-usage-split')
+  check('T012 命中率分母为 0 → 印 —', collectText(cells[4]).join(''), '缓存命中率—')
+  ok('T012 分母为 0 时不出现 0% 命中率', !collectText(cells[4]).join('').includes('%'), collectText(cells[4]).join(''))
+}
+
+/* SC-005：百分比只可能来自白名单段；客户端其余代码 0 个 % 字面量。 */
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const startMarker = '/* 012 比例白名单段：本产品唯一允许出现百分号的地方（实测 token 的构成比与命中率）。 */'
+  const endMarker = '/* 012 比例白名单段结束 */'
+  check('T012 白名单段起始标记恰一处', source.split(startMarker).length - 1, 1)
+  check('T012 白名单段结束标记恰一处', source.split(endMarker).length - 1, 1)
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker)
+  const segment = source.slice(start + startMarker.length, end)
+  ok('T012 白名单段内四个比例函数都在',
+    ['function usagePercentText', 'function usageShareText', 'function usagePercentSuffix', 'function usageHitRateText']
+      .every((signature) => segment.includes(signature)))
+  const outside = source.slice(0, start) + source.slice(end + endMarker.length)
+  // 只剥注释与模板串（CSS 里的 100% 宽度合法）；剩下的 JS 里一个 % 都不许有。
+  const TICK = String.fromCharCode(96)
+  const stripped = outside
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .split(TICK)
+    .filter((_, index) => index % 2 === 0)
+    .join('')
+  // 「index % labelStep」是取模运算符（两侧空格），不是百分号；其余 % 一律不许有。
+  const stray = (stripped.replace(/ % /g, ' ').match(/.{0,18}%.{0,18}/g) ?? [])
+  ok('T012 白名单段之外没有 % 字面量（注释、CSS 模板与取模运算符已剥）', stray.length === 0, stray.join(' | '))
+  const templates = source.match(/usage(?:ShareOf|HitRate): "[^"]*\{percent\}[^"]*"/g) ?? []
+  check('T012 {percent} 模板只出现在 COPY 的两个键（zh/en 各一）', templates.length, 4)
+}
+
+/* SC-006：模型列表自己内滚动、可聚焦、有可访问名称；行数与排序不变。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const container = findNodes(tree, 'tpq-usage-models')[0]
+  check('T012 模型容器带滚动钩子', container?.props?.['data-usage-models-scroll'], '1')
+  check('T012 模型容器可聚焦（键盘可翻动）', container?.props?.tabIndex, 0)
+  check('T012 模型容器可访问名称走 COPY', container?.props?.['aria-label'], '按模型用量')
+  check('T012 模型容器有 group 语义', container?.props?.role, 'group')
+  check('T012 模型容器不用 aria-live（不抢读屏）', container?.props?.['aria-live'], undefined)
+  const code = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T012 模型列表 max-height + 纵向滚动 + 滚动链隔离',
+    /\.tpq-usage-models\{[^}]*max-height:252px/.test(code)
+      && /\.tpq-usage-models\{[^}]*overflow-y:auto/.test(code)
+      && /\.tpq-usage-models\{[^}]*overscroll-behavior:contain/.test(code),
+    code.slice(code.indexOf('.tpq-usage-models{'), code.indexOf('.tpq-usage-models{') + 260))
+  ok('T012 滚动条细、thumb 用既有 border 变量（深色主题不写死颜色）',
+    /\.tpq-usage-models\{[^}]*scrollbar-width:thin/.test(code)
+      && /\.tpq-usage-models\{[^}]*scrollbar-color:var\(--dsw-alias-border-l2/.test(code)
+      && /\.tpq-usage-models::-webkit-scrollbar\{width:8px\}/.test(code))
+  ok('T012 焦点环用品牌色变量并留 offset',
+    /\.tpq-usage-models:focus-visible\{[^}]*outline:2px solid var\(--dsw-alias-brand-primary/.test(code)
+      && /\.tpq-usage-models:focus-visible\{[^}]*outline-offset:2px/.test(code))
+  check('T012 滚动容器里仍是全部模型行（滚动不裁数据）',
+    findNodes(container, 'tpq-usage-model').length, 2)
+}
+
+/* SC-007：脚注中英各一条、含两条公式；无 Credits 之外的措辞、无「还剩」。 */
+{
+  const bundle = await mountUsage()
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const notes = findNodes(tree, 'tpq-usage-notes')[0]
+  const noteRows = (notes?.children ?? []).map((child) => collectText(child).join(''))
+  const ratioRow = noteRows.find((row) => row.includes('占比与命中率都是本机实测 tokens 的比值'))
+  ok('T012 比例口径脚注渲染出来了', ratioRow !== undefined, noteRows.join(' | '))
+  ok('T012 脚注含两条公式（命中率分母三项 / 占比分母区间总量）',
+    ratioRow !== undefined
+      && ratioRow.includes('缓存命中率 = 缓存命中 ÷ (输入 + 缓存命中 + 缓存写入)')
+      && ratioRow.includes('各自 ÷ 区间 tokens 总量'), String(ratioRow))
+  ok('T012 脚注明说不是配额比例', String(ratioRow).includes('不是配额比例'), String(ratioRow))
+  const text = collectText(tree).join(' ')
+  ok('T012 全屏不出现「还剩」类措辞', !/还剩|剩余/.test(text), text.slice(0, 400))
+}
+{
+  const bundle = await mountUsage({ lang: 'en-US' })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
+  ok('T012 en：总量卡标签与占比模板（of total）',
+    text.includes('input 600K 60% of total') && text.includes('output 300K 30% of total')
+      && text.includes('cache hit 100K 10% of total'), text.slice(0, 500))
+  ok('T012 en：缓存命中率标签与数值', text.includes('cache hit rate 14.3%'), text.slice(0, 500))
+  ok('T012 en：模型行中文标签换成英文',
+    text.includes('input 400K (61.5%) · output 200K (30.8%) · cache hit 50K (7.7%) · cache write 0 · hit rate 11.1%'),
+    text.slice(0, 900))
+  ok('T012 en：比例脚注是英文且含两条公式',
+    text.includes('cache hit rate = cache hit ÷ (input + cache hit + cache write)')
+      && text.includes('each ÷ total tokens in the range'), text.slice(-500))
+  ok('T012 en：整屏无中文（en 不是中文兜底）', !/[\u3400-\u9fff]/u.test(text), text.slice(0, 400))
+}
+
+/* SC-007 边界：关闭态与错误态都不渲染比例口径脚注（没有数据就不谈口径）。 */
+{
+  const bundle = await mountUsage({
+    fetchImpl: usageFetch((snap) => ({ ...snap, enabled: false, emptyReason: 'usage-stats-disabled' })),
+  })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('T012 关闭态不渲染比例口径脚注', !text.includes('占比与命中率都是本机实测'), text.slice(0, 300))
+}
+{
+  const failing = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    return { ok: false, status: 500, json: async () => ({}) }
+  }
+  const bundle = await mountUsage({ fetchImpl: failing })
+  resetHooks()
+  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  ok('T012 错误态不渲染比例口径脚注', !text.includes('占比与命中率都是本机实测'), text.slice(0, 300))
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

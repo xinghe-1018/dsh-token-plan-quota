@@ -646,8 +646,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const clientUsageRegion = clientScreenStart > 0 ? clientSrc.slice(clientScreenStart) : ''
   ok('客户端用量屏被完整扫到（字符数 > 10000）', clientUsageRegion.length > 10000)
   const clientCode = stripComments(clientUsageRegion)
+  // 012 起屏上合法出现百分比（实测 token 的构成比与命中率），但那只能由白名单段的四个函数产出；
+  // 渲染处手拼一个 "%" 就说明纪律又被绕开了，所以这里仍钉住「用量屏代码 0 个百分比字面量」。
   const clientPercents = [...clientCode.matchAll(/.{0,24}%.{0,24}/g)].map(match => match[0].trim())
-  ok('客户端用量屏：不派生百分比（命中：' + (clientPercents.join(' | ') || '无') + '）', clientPercents.length === 0)
+  ok('客户端用量屏：不手拼百分比（百分比只由 012 白名单段函数产出；命中：'
+    + (clientPercents.join(' | ') || '无') + '）', clientPercents.length === 0)
   const clientCreditLines = clientCode.split(/\r?\n/).map(line => line.trim()).filter(line => /credit/i.test(line))
   ok('客户端用量屏：Credits 只出现在「不折算 Credits」白名单行（命中：'
     + (clientCreditLines.join(' | ') || '无') + '）',
@@ -1016,14 +1019,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     clientSrc011.includes('.tpq-usage-tip{position:fixed') && clientSrc011.includes('pointer-events:none')
       && clientSrc011.includes('z-index:9999'))
 
-  // 7) 零新 i18n 键：COPY 仍是 zh/en 各 134（011 明确不加键，复用既有文案）。
+  // 7) i18n 键数：011 本身不加键（134）；012 后来补了 4 个比例相关键（← 138），这里跟着契约走。
   const zhBlock011 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc011)
   const enBlock011 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc011)
   const keysOf011 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
-  ok('011 i18n：COPY 仍是 zh / en 各 134 键（浮层复用既有键，不新增文案）',
-    zhKeys011.length === 134 && enKeys011.length === 134)
+  ok('011 i18n：COPY 键数仍是 zh / en 各 138（011 不加键；012 的 4 键另计）',
+    zhKeys011.length === 138 && enKeys011.length === 138)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
@@ -1049,5 +1052,114 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     /## \[Unreleased\]/.test(changelog011) && changelog011.includes('悬停') && changelog011.includes('011'))
 }
 
+
+/* 012 分项中文化 / 占比 / 命中率 / 模型列表内滚动：把「唯一允许出现百分号的地方」
+ * 与「中文标签不许漏、英文标签不许漏」钉在源码形状上。
+ * 为什么值得进静态矩阵：功能测试断言的是此刻的 fixture 文本，而纪律问题是「换个地方又拼了个 %」——
+ * 那类回归不会让任何一条功能断言变红。这里以白名单段标记切片：百分比字面量只许出现在段内，
+ * 用量渲染代码（usageSplitCell 之后）剥掉注释后一个 % 都不许有。
+ * 顺带钉住滚动容器四件（属性 + CSS）与文档/截图清单，避免「代码改了、图还是旧的」。 */
+{
+  const clientSrc012 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const whitelistStart = clientSrc012.indexOf('/* 012 比例白名单段')
+  const whitelistEnd = clientSrc012.indexOf('/* 012 比例白名单段结束 */')
+  ok('012 比例白名单段在 lib/client.js 里存在且可定位',
+    whitelistStart > 0 && whitelistEnd > whitelistStart)
+  const whitelistRegion = whitelistStart > 0 && whitelistEnd > whitelistStart
+    ? clientSrc012.slice(whitelistStart, whitelistEnd) : ''
+  ok('012 比例白名单段被完整扫到（字符数 > 600）', whitelistRegion.length > 600)
+
+  const stripComments012 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/[^\n]*/gm, '')
+  // 用量渲染代码从 usageSplitCell 起（它之后的都是 JS，CSS 模板在这之前）；剥掉注释后不该再有 % 字符——
+  // 百分比只能由白名单段的四个函数产出，渲染处手拼一个 "%" 就说明纪律又被绕开了。
+  const renderStart012 = clientSrc012.indexOf('function usageSplitCell')
+  const renderRegion012 = renderStart012 > 0 ? stripComments012(clientSrc012.slice(renderStart012)) : ''
+  const renderPercents = [...renderRegion012.matchAll(/.{0,30}%.{0,30}/g)].map(match => match[0].trim())
+  ok('012 用量渲染代码里没有百分比字面量（命中：' + (renderPercents.join(' | ') || '无') + '）',
+    renderRegion012.length > 10000 && renderPercents.length === 0)
+  ok('012 白名单段是唯一定义百分比字面量的地方（段内含 "%" 返回）',
+    whitelistRegion.includes('"%"') && whitelistRegion.includes('"<0.1%"'))
+
+  // 1) 四个纯函数必须可由测试直接调，且只在白名单段里定义。
+  const internalsStart = clientSrc012.lastIndexOf('__internals = {')
+  const clientInternals012 = clientSrc012.slice(internalsStart,
+    clientSrc012.indexOf('exports.apply', internalsStart))
+  ok('012 比例函数从客户端 __internals 暴露（百分比/占比/后缀/命中率）',
+    ['usagePercentText', 'usageShareText', 'usagePercentSuffix', 'usageHitRateText']
+      .every(name => new RegExp('\\b' + name + '\\b').test(clientInternals012)))
+  ok('012 四个比例函数都定义在白名单段内（段外不再定义）',
+    ['function usagePercentText', 'function usageShareText', 'function usagePercentSuffix', 'function usageHitRateText']
+      .every(signature => whitelistRegion.includes(signature)))
+
+  // 2) 中文标签必须真中文化，且英文界面不许出现中文标签。
+  const zhBlock012 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc012)
+  const enBlock012 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc012)
+  const keysOf012 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
+  const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
+  ok('012 i18n：COPY 是 zh / en 各 138 键（012 新增 4 键：占比模板/命中率模板/命中率标签/公式脚注）',
+    zhKeys012.length === 138 && enKeys012.length === 138)
+  ok('012 i18n：四类分项键在 zh / en 都存在',
+    ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
+      .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
+  for (const [key, word] of [['usageSplitInput', '输入'], ['usageSplitOutput', '输出'],
+    ['usageSplitCacheRead', '缓存命中'], ['usageSplitCacheWrite', '缓存写入']]) {
+    const line = (zhBlock012?.[1] ?? '').split('\n').find(item => item.trim().startsWith(key + ':'))
+    ok('012 i18n：zh ' + key + ' 写作「' + word + '」', Boolean(line) && line.includes(word))
+  }
+  const enSplitLines012 = (enBlock012?.[1] ?? '').split('\n')
+    .filter(line => /usageSplit(Input|Output|CacheRead|CacheWrite):/.test(line)).join('\n')
+  ok('012 i18n：en 侧四类标签不含中文', enSplitLines012.length > 0 && !/[\u3400-\u9fff]/u.test(enSplitLines012))
+
+  // 3) 滚动容器：属性 + CSS 四件（内滚动、细条、可聚焦、thumb 用既有变量）。
+  for (const hook of ['"data-usage-models-scroll": "1"', '"aria-label": copy.usageModelsTitle',
+    'role: "group"']) {
+    ok('012 客户端：模型列表钩子 ' + hook + ' 存在', clientSrc012.includes(hook))
+  }
+  ok('012 CSS：模型列表内滚动四件（max-height + overflow-y + thin + thumb）',
+    clientSrc012.includes('max-height:252px') && clientSrc012.includes('overflow-y:auto')
+      && clientSrc012.includes('scrollbar-width:thin') && clientSrc012.includes('::-webkit-scrollbar-thumb'))
+  ok('012 CSS：滚动容器键盘可达（:focus-visible 描边）',
+    /\.tpq-usage-models:focus-visible\{[^}]*outline/.test(clientSrc012))
+  ok('012 CSS：占比子行不抢数值（tertiary + 等宽数字）',
+    /\.tpq-usage-split-share\{[^}]*label-tertiary/.test(clientSrc012)
+      && /\.tpq-usage-split-share\{[^}]*tabular-nums/.test(clientSrc012))
+
+  // 4) 公式脚注与口径收窄：屏幕里必须同时给出两条公式，并声明「不是配额比例」。
+  ok('012 客户端：公式脚注走 COPY.usageRatioNote（不硬编码长句）',
+    (clientSrc012.match(/usageRatioNote/g) || []).length >= 3)
+  ok('012 文案：中文脚注声明「不是配额比例」', (zhBlock012?.[1] ?? '').includes('不是配额比例'))
+  ok('012 文案：英文脚注声明 composition, not quota', /not quota/i.test(enBlock012?.[1] ?? ''))
+
+  // 5) 006 的口径收窄必须有书面依据，否则下一个人会把 012 的 % 当越界删掉。
+  const spec006 = readFileSync(join(ROOT, 'specs', '006-usage-stats', 'spec.md'), 'utf8')
+  ok('012 规格：006 spec 里留了「012 收窄」的指向',
+    spec006.includes('012 收窄') && spec006.includes('specs/012-usage-composition/spec.md'))
+  ok('012 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '012-usage-composition', name))))
+
+  // 6) 对外描述与截图清单：中文标签/公式/滚动条都写在介绍里，图没生成时 check-docs 会红。
+  const readme012 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn012 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('012 文档：中文 README 写了中文标签、命中率公式与构成比口径',
+    readme012.includes('缓存命中') && readme012.includes('缓存命中率') && readme012.includes('占比'))
+  ok('012 文档：英文 README 写了 cache hit rate 与 composition 口径',
+    /cache hit rate/i.test(readmeEn012) && /composition/i.test(readmeEn012))
+  const shotsManifest012 = readFileSync(join(ROOT, 'scripts', 'check-docs.mjs'), 'utf8')
+  ok('012 截图清单：中英构成图都在',
+    shotsManifest012.includes('docs/images/usage-composition-2d.png')
+      && shotsManifest012.includes('docs/images/en/usage-composition-2d.png'))
+  const changelog012 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('012 CHANGELOG：Unreleased 段记了分项中文与占比/命中率（含 012 编号）',
+    /## \[Unreleased\]/.test(changelog012) && changelog012.includes('012')
+      && changelog012.includes('缓存命中'))
+
+  // 7) 越界面：012 仍是纯客户端展示，配置键与出站主机都不许动。
+  ok('012 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('012 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8
+      && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+}
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

@@ -1031,9 +1031,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
   // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）；
   // 015 再补 4 个分项/按模型键（→ 151）；016 再补 2 个按类比值键（→ 153）；
-  // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 再加 4 个单模型容量键 → 159。
-  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 159；011 本身不加键）',
-    zhKeys011.length === 159 && enKeys011.length === 159)
+  // 017 把分项行换成卡片并加按日提示（2 个新键 + 改 1 个标题 → 155）；019 加 4 → 159；022 再加 2 个估算/占比键 → 161。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 161；011 本身不加键）',
+    zhKeys011.length === 161 && enKeys011.length === 161)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（现 26 个键，均属后续功能）', Object.keys(__internals.DEFAULTS).length === 26)
@@ -1105,9 +1105,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
   // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147；
-  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 再加 4 个单模型容量键 → 159。
-  ok('012 i18n：COPY 现在 zh / en 各 159 键（012/014/015/016/017/019 的新键都在里面）',
-    zhKeys012.length === 159 && enKeys012.length === 159)
+  // 015 再补 4 个分项/按模型键 → 151；016 → 153；017 → 155；019 → 159；022 → 161。
+  ok('012 i18n：COPY 现在 zh / en 各 161 键（012/014/015/016/017/019/022 的新键都在里面）',
+    zhKeys012.length === 161 && enKeys012.length === 161)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1516,7 +1516,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('015 宿主：classes 取官方 totals、models 取本机 models，并标 modelsBasis local',
     indexSrc015.includes('classes: dailySnapshot === null')
       && indexSrc015.includes('? creditsClassRatios(official.totals, cycle.used)')
-      && indexSrc015.includes('models: modelsWithCapacity(creditsModelRatios(localTotals?.models')
+      && /models: modelsWithPriceEstimate\(\s*modelsWithCapacity\(creditsModelRatios\(localTotals\?\.models/.test(indexSrc015)
       && indexSrc015.includes("modelsBasis: 'local'"))
   ok('015 宿主：官方明细没有模型维度时 modelsBasis 仍是 local（不伪装成官方拆分）',
     indexSrc015.includes('官方不按模型拆'))
@@ -1552,8 +1552,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf015 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys015 = keysOf015(zhBlock015?.[1] ?? '')
   const enKeys015 = keysOf015(enBlock015?.[1] ?? '')
-  ok('015 i18n：COPY 键数 zh / en 各 159（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4）',
-    zhKeys015.length === 159 && enKeys015.length === 159)
+  ok('015 i18n：COPY 键数 zh / en 各 161（147 + 4 + 016 的 2 + 017 的 2 + 019 的 4 + 022 的 2）',
+    zhKeys015.length === 161 && enKeys015.length === 161)
   const classKeys015 = ['usageCreditsClasses', 'usageCreditsClassUncached', 'usageCreditsModelsTitle',
     'usageCreditsModelsNote']
   ok('015 i18n：4 个新键中英都在', classKeys015.every(key => zhKeys015.includes(key) && enKeys015.includes(key)))
@@ -1676,8 +1676,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf016 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys016 = keysOf016(zhBlock016?.[1] ?? '')
   const enKeys016 = keysOf016(enBlock016?.[1] ?? '')
-  ok('016 i18n：COPY 现在 zh / en 各 159 键（015 的 151 + 2 + 017 的 2 + 019 的 4）',
-    zhKeys016.length === 159 && enKeys016.length === 159)
+  ok('016 i18n：COPY 现在 zh / en 各 161 键（015 的 151 + 2 + 017 的 2 + 019 的 4 + 022 的 2）',
+    zhKeys016.length === 161 && enKeys016.length === 161)
   const classKeys016 = ['usageCreditsModelClasses', 'usageCreditsModelClassWrite']
   ok('016 i18n：两个新键中英都在', classKeys016.every(key => zhKeys016.includes(key) && enKeys016.includes(key)))
   const zhLines016 = (zhBlock016?.[1] ?? '').split('\n')
@@ -1833,14 +1833,14 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ok('017 CSS：≤520px 折成两列（320/375 视口不横向溢出）',
       /\.tpq-usage-credits-classes-grid\{grid-template-columns:1fr 1fr\}/.test(clientSrc017))
 
-    // 8) i18n：017 时 155 键，019 再加 4 个单模型容量键 → 159；标题改成「1 Credit 折合」，新增单位与按日提示。
+    // 8) i18n：017 时 155 键，019 加 4 → 159，022 加 2 → 161；标题改成「1 Credit 折合」，新增单位与按日提示。
     const zhBlock017 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const enBlock017 = /\n      en: \{([\s\S]*?)\n      \},/.exec(clientSrc017)
     const keysOf017 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
     const zhKeys017 = keysOf017(zhBlock017?.[1] ?? '')
     const enKeys017 = keysOf017(enBlock017?.[1] ?? '')
-    ok('017 i18n：COPY 现在 zh / en 各 159 键（017 的 155 + 019 的 4）',
-      zhKeys017.length === 159 && enKeys017.length === 159)
+    ok('017 i18n：COPY 现在 zh / en 各 161 键（017 的 155 + 019 的 4 + 022 的 2）',
+      zhKeys017.length === 161 && enKeys017.length === 161)
     ok('017 i18n：标题/单位/按日提示三个键中英都在',
       ['usageCreditsClasses', 'usageCreditsClassesUnit', 'usageCreditsDaily']
         .every(key => zhKeys017.includes(key) && enKeys017.includes(key)))
@@ -1930,7 +1930,7 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
       && indexSrc19.includes('if (!usable) {')
       && indexSrc19.includes('out.push({ ...item })'))
   ok('019 宿主：compose 里模型行包上 modelsWithCapacity，分母仍用 cycle.total',
-    /models: modelsWithCapacity\(creditsModelRatios\(localTotals\?\.models, effectiveUsed\), cycle\.total\)/.test(indexSrc19))
+    /models: modelsWithPriceEstimate\(\s*modelsWithCapacity\(creditsModelRatios\(localTotals\?\.models, effectiveUsed\), cycle\.total\)/.test(indexSrc19))
   ok('019 宿主：__internals 暴露 modelsWithCapacity',
     /modelsWithCapacity,/.test(indexSrc19.slice(indexSrc19.indexOf('export const __internals'))))
 
@@ -1994,8 +1994,8 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf19 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys19 = keysOf19(zhBlock19?.[1] ?? '')
   const enKeys19 = keysOf19(enBlock19?.[1] ?? '')
-  ok('019 i18n：COPY 键数 zh / en 各 159（017 的 155 + 019 的 4）',
-    zhKeys19.length === 159 && enKeys19.length === 159)
+  ok('019 i18n：COPY 键数 zh / en 各 161（017 的 155 + 019 的 4 + 022 的 2）',
+    zhKeys19.length === 161 && enKeys19.length === 161)
   const pickKeys19 = ['usageCreditsModelPickTitle', 'usageCreditsModelPickHint',
     'usageCreditsModelPickCard', 'usageCreditsModelPickNote']
   ok('019 i18n：4 个新键中英都在',
@@ -2003,11 +2003,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const classKey19 = ['usageSplitInput', 'usageSplitCacheRead', 'usageSplitOutput', 'usageSplitCacheWrite']
   ok('019 i18n：分项标签复用既有四键，没有另起一套',
     classKey19.every(key => zhKeys19.includes(key)) && classKey19.every(key => enKeys19.includes(key)))
-  ok('019 i18n：提示里两个占位符都在，且用 usageCount 渲染总量',
-    zhBlock19?.[1]?.includes('把全部 {total} Credits 都花在它上面') === true
-      && zhBlock19?.[1]?.includes('按 {model} 本账期实测比值') === true
-      && enBlock19?.[1]?.includes('spending all {total} credits on it') === true
-      && src19.includes('.replace("{total}", usageCount(total))'))
+  ok('019 i18n：提示里两个占位符都在，且用 usageCount 渲染总量（022 改写文案后仍成立）',
+    zhBlock19?.[1]?.includes('把本账期全部 {total} Credits 都花在 {model} 上') === true
+      && enBlock19?.[1]?.includes('{total} credits would buy if this cycle spent all of them on {model}') === true
+      && src19.includes('.replace("{total}", usageCount(total))')
+      && src19.includes('.replace("{model}", selectedLabel)'))
 
   const readme19 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn19 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
@@ -2081,6 +2081,63 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('021 悬浮态 body 规则用有效属性选择器（带引号），悬浮态 height:100% 才生效',
     src21.includes('.tpq-panel[data-float="1"] .tpq-body{max-height:none;height:100%}')
       && !/^\.tpq-panel\[data-float=1\][ .{]/m.test(src21))
+}
+
+
+/* ── 第 22 节：按官方价目估算单模型容量（spec 022）──────────────────────────────
+ * 019 的 capacity 是「占比折算」：任何单模型都到不了表头的 51 亿总量；
+ * 022 另给「把本账期全部额度只花在该模型上」的 estimate（官方忙时价 + 本账号实测 ypc 校准），
+ * 两套口径并存：capacity 不删，estimate 只出现在有公开价目、且行有 tokens 的模型上。 */
+{
+  const src22 = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+  ok('022 价目表：三个有公开忙时单价的模型都在',
+    /'qwen3\.8-flash':\s*\{\s*input: 0\.8,\s*cacheRead: 0\.1,\s*output: 2\.7/.test(src22)
+      && /'deepseek-v4\.1-flash-1017':\s*\{\s*input: 2,\s*cacheRead: 0\.04,\s*output: 8/.test(src22)
+      && /'deepseek-v4\.1-flash':\s*\{\s*input: 2,\s*cacheRead: 0\.04,\s*output: 8/.test(src22))
+  ok('022 价目表带取价日（改价时响应里能看出来）',
+    src22.includes("MODEL_PRICE_VERIFIED_AT = '2026-11-15'"))
+  ok('022 三个纯函数都在，且被内部导出',
+    ['function modelPriceOf(', 'function splitEstimateClasses(', 'function modelsWithPriceEstimate(']
+      .every(name => src22.includes(name))
+      && /modelPriceOf,\s*modelsWithPriceEstimate,\s*splitEstimateClasses,/.test(src22))
+  ok('022 compose 接线：019 capacity 之后叠加 estimate（多层调用按行拆开）',
+    /models: modelsWithPriceEstimate\(\s*modelsWithCapacity\(creditsModelRatios\(localTotals\?\.models, effectiveUsed\), cycle\.total\),\s*effectiveUsed,\s*cycle\.total,?\s*\)/.test(src22)
+      && src22.indexOf('models: modelsWithPriceEstimate(') > src22.indexOf('modelsBasis: \'local\''))
+  ok('022 priceBasis：只在有估算时挂，标明 kind / 取价日 / 单位',
+    src22.includes('function withPriceBasis(ratio)')
+      && src22.includes("kind: 'list-price'")
+      && src22.includes('verifiedAt: MODEL_PRICE_VERIFIED_AT')
+      && src22.includes("unit: 'CNY per million tokens'"))
+
+  const src22c = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('022 客户端有 estimate 解析函数并在组件里接线',
+    src22c.includes('function usageModelEstimateOf(')
+      && src22c.includes('const estimate = usageModelEstimateOf(selected.item)')
+      && /usageModelCapacityOf, usageModelPickLabel, usageModelEstimateOf,/.test(src22c))
+  ok('022 客户端 share 小字行：类名、CSS、{tokens} 替换都在',
+    src22c.includes('tpq-usage-credits-modelpick-share')
+      && /\.tpq-usage-credits-modelpick-share\{[^}]*font-size:10\.5px/.test(src22c)
+      && src22c.includes('copy.usageCreditsModelPickShare.replace("{tokens}"'))
+  ok('022 客户端 estimate 标签键存在且中英都有',
+    src22c.includes('usageCreditsModelPickEstimate:') && src22c.includes('usageCreditsModelPickShare:'))
+  const zhBlock22 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src22c)
+  const enBlock22 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src22c)
+  const keysOf22 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  ok('022 i18n：COPY 键数 zh / en 各 161',
+    keysOf22(zhBlock22?.[1] ?? '').length === 161 && keysOf22(enBlock22?.[1] ?? '').length === 161)
+
+  const readme22 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn22 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('022 README：中英都写了按官方价目估算的口径',
+    readme22.includes('按官方价目估算') && readme22.includes('022')
+      && readmeEn22.includes('Estimated from list prices') && readmeEn22.includes('022'))
+  const changelog22 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('022 CHANGELOG：Unreleased 记了价目估算',
+    /## \[Unreleased\]/.test(changelog22) && changelog22.includes('022')
+      && changelog22.includes('价目'))
+  ok('022 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '022-price-estimate', name))))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

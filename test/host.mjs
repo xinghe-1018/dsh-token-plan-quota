@@ -4201,6 +4201,163 @@ function recursiveKeys(value, out = []) {
     ])
 }
 
+
+{
+  // 022：按官方价目估算单模型容量（公式与手算见 specs/022-price-estimate/plan.md）。
+  const NOW = new Date(2026, 10, 14, 12, 0, 0).getTime()
+  const USED = 1000
+  const TOTAL = 80000
+  const { modelPriceOf, modelsWithPriceEstimate, splitEstimateClasses } = __internals
+
+  ok('022 __internals：三个纯函数都在',
+    [modelPriceOf, modelsWithPriceEstimate, splitEstimateClasses].every(fn => typeof fn === 'function'))
+  check('022 价目表：qwen3.8-flash 忙时价', modelPriceOf('qwen3.8-flash'),
+    { input: 0.8, cacheRead: 0.1, output: 2.7 })
+  check('022 价目表：deepseek-v4.1-flash-1017 忙时价', modelPriceOf('deepseek-v4.1-flash-1017'),
+    { input: 2, cacheRead: 0.04, output: 8 })
+  check('022 未知模型 / 非字符串 / 空串 → null',
+    [modelPriceOf('qwen4-max-preview'), modelPriceOf(null), modelPriceOf(''), modelPriceOf('__proto__')],
+    [null, null, null, null])
+
+  /* 手算：cost = 200000×0.8 + 700000×0.1 + 100000×2.7 = 500000（价目×tokens/M），
+   * priceMix = 500000/1000000 = 0.5，ypc = 500000/1000 = 500；
+   * 单模型时价目在 estimate 里约掉：80000 × 500 / 0.5 = 80,000,000 tokens → 1600万 / 5600万 / 800万 / 0。 */
+  const qwenRow = {
+    id: 'qwen/qwen3.8-flash', provider: 'qwen', model: 'qwen3.8-flash',
+    classes: {
+      input: { tokens: 200000 }, cacheRead: { tokens: 700000 },
+      output: { tokens: 100000 }, cacheWrite: { tokens: 0 },
+    },
+  }
+  const dsRow = {
+    id: 'qwen/deepseek-v4.1-flash-1017', provider: 'qwen', model: 'deepseek-v4.1-flash-1017',
+    classes: {
+      input: { tokens: 100000 }, cacheRead: { tokens: 600000 },
+      output: { tokens: 50000 }, cacheWrite: { tokens: 0 },
+    },
+  }
+  const rowsBefore = JSON.stringify([qwenRow, dsRow])
+  const priced = modelsWithPriceEstimate([qwenRow], USED, TOTAL)
+  check('022 单行：estimate = total × ypc ÷ priceMix', priced[0].estimate.tokens, 80000000)
+  check('022 单行：四类分项与 tokens 占比一致', priced[0].estimate.classes,
+    { input: 16000000, cacheRead: 56000000, output: 8000000, cacheWrite: 0 })
+  ok('022 单行：分项和 === estimate.tokens',
+    priced[0].estimate.tokens === Object.values(priced[0].estimate.classes).reduce((sum, n) => sum + n, 0))
+  check('022 入参未被修改', JSON.stringify([qwenRow, dsRow]), rowsBefore)
+  ok('022 返回浅拷贝而不是原对象', priced[0] !== qwenRow)
+
+  /* ds 手算：cost = 100000×2 + 600000×0.04 + 50000×8 = 624000，tokens 750000，
+   * priceMix = 0.832；cost 合计 1124000，ypc = 1124；estimate = 80000×1124/0.832 = 108,076,923。 */
+  const two = modelsWithPriceEstimate([qwenRow, dsRow], USED, TOTAL)
+  /* 双行时 blended 成本含两行价目：qwen = 80000×1124000/(1000×0.5) = 179,840,000。 */
+  check('022 双行：各自按自己的价目算', two.map(item => item.estimate.tokens), [179840000, 108076923])
+  ok('022 双行：每行 classes 和 === tokens',
+    two.every(item => item.estimate.tokens === Object.values(item.estimate.classes).reduce((sum, n) => sum + n, 0)))
+  check('022 双行：分项顺序固定',
+    Object.keys(two[1].estimate.classes), ['input', 'cacheRead', 'output', 'cacheWrite'])
+
+  const unknownRow = {
+    id: 'qwen/qwen4-max-preview', provider: 'qwen', model: 'qwen4-max-preview',
+    classes: { input: { tokens: 1000 }, cacheRead: { tokens: 1000 }, output: { tokens: 1000 }, cacheWrite: { tokens: 0 } },
+  }
+  const withUnknown = modelsWithPriceEstimate([qwenRow, unknownRow], USED, TOTAL)
+  check('022 未知价目行：没有 estimate，别的行照算',
+    [Object.hasOwn(withUnknown[1], 'estimate'), withUnknown[0].estimate.tokens], [false, 80000000])
+
+  for (const usedValue of [0, -1, NaN, '1000', undefined]) {
+    const out = modelsWithPriceEstimate([qwenRow, dsRow], usedValue, TOTAL)
+    check('022 used=' + String(usedValue) + '：不出 estimate、长度与顺序不变',
+      [out.length, out.map(item => item.id), out.map(item => Object.hasOwn(item, 'estimate')), JSON.stringify(out)],
+      [2, ['qwen/qwen3.8-flash', 'qwen/deepseek-v4.1-flash-1017'], [false, false], rowsBefore])
+  }
+  for (const totalValue of [0, -1, NaN, Infinity, undefined, '80000']) {
+    const out = modelsWithPriceEstimate([qwenRow], USED, totalValue)
+    check('022 total=' + String(totalValue) + '：不出 estimate、入参不变',
+      [Object.hasOwn(out[0], 'estimate'), JSON.stringify(out)], [false, JSON.stringify([qwenRow])])
+  }
+  check('022 models 非数组 → []',
+    [modelsWithPriceEstimate(null, USED, TOTAL), modelsWithPriceEstimate(undefined, USED, TOTAL),
+      modelsWithPriceEstimate({}, USED, TOTAL), modelsWithPriceEstimate('x', USED, TOTAL)],
+    [[], [], [], []])
+
+  const zeroTokens = { id: 'zero', model: 'qwen3.8-flash', classes: { input: { tokens: 0 }, cacheRead: { tokens: 0 }, output: { tokens: 0 }, cacheWrite: { tokens: 0 } } }
+  const noClasses = { id: 'no-classes', model: 'qwen3.8-flash' }
+  const skip = modelsWithPriceEstimate([zeroTokens, noClasses, qwenRow], USED, TOTAL)
+  check('022 tokens=0 / classes 缺失的行跳过，其余照算',
+    [Object.hasOwn(skip[0], 'estimate'), Object.hasOwn(skip[1], 'estimate'), skip[2].estimate.tokens],
+    [false, false, 80000000])
+  const dirty = modelsWithPriceEstimate([null, 'str', 42, []], USED, TOTAL)
+  check('022 脏元素按空项浅拷贝、不抛错', [dirty.length, dirty], [4, [{}, {}, {}, {}]])
+
+  /* 分项拆分本身：和严格相等、各格偏差不超过 1（最大余数法）。 */
+  const split = splitEstimateClasses(101, { input: 1, cacheRead: 1, output: 1, cacheWrite: 0 })
+  ok('022 拆分：和严格等于 estimated',
+    Object.values(split).reduce((sum, n) => sum + n, 0) === 101, JSON.stringify(split))
+  ok('022 拆分：奇数余量只落在有 tokens 的格',
+    split.cacheWrite === 0 && Math.abs(split.input - 33.666) <= 1 && Math.abs(split.output - 33.666) <= 1,
+    JSON.stringify(split))
+  check('022 拆分：estimated<=0 或 tokens 全 0 → 全 0',
+    [splitEstimateClasses(0, { input: 1 }), splitEstimateClasses(100, {}), splitEstimateClasses(NaN, { input: 1 })],
+    [{ input: 0, cacheRead: 0, output: 0, cacheWrite: 0 }, { input: 0, cacheRead: 0, output: 0, cacheWrite: 0 },
+      { input: 0, cacheRead: 0, output: 0, cacheWrite: 0 }])
+
+  /* 接线：composeCreditsToken 的 ratio.models 带 estimate，并挂 priceBasis（取价日进响应）。 */
+  const CARD = {
+    id: 'token-plan-console', label: '千问控制台', unit: 'Credits',
+    total: TOTAL, used: 37196.8802, usedPercent: 46.4961,
+    meters: [{
+      key: 'monthly', label: '本月', labelEn: 'Monthly', unit: 'Credits',
+      total: TOTAL, used: 37196.8802, usedPercent: 46.4961,
+      resetAt: new Date(2026, 11, 1, 0, 0, 0).getTime(),
+    }],
+  }
+  const official = {
+    generatedAt: NOW,
+    range: { kind: 'custom', days: 14, from: '2026-11-01', to: '2026-11-14' },
+    granularity: 'day',
+    totals: { tokens: 2000000, input: 1500000, cacheRead: 1300000, output: 400000 },
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+  }
+  const localTotals = {
+    totals: { tokens: 1003000 },
+    models: [
+      {
+        id: 'qwen/qwen3.8-flash', provider: 'qwen', model: 'qwen3.8-flash',
+        totals: { input: 200000, cacheRead: 700000, output: 100000, cacheWrite: 0, tokens: 1000000, calls: 5 },
+      },
+      {
+        id: 'qwen/qwen4-max-preview', provider: 'qwen', model: 'qwen4-max-preview',
+        totals: { input: 1000, cacheRead: 1000, output: 1000, cacheWrite: 0, tokens: 3000, calls: 1 },
+      },
+    ],
+  }
+  const composed = composeCreditsToken({ card: CARD, official, localTotals, now: NOW })
+  const cycleUsed = creditsCycleOf(CARD, NOW).used
+  const directQwen = modelsWithPriceEstimate(
+    modelsWithCapacity(creditsModelRatios([localTotals.models[0]], cycleUsed), TOTAL), cycleUsed, TOTAL)[0]
+  check('022 compose：qwen 行 estimate 与直接调用一致',
+    composed.ratio.models[0].estimate.tokens, directQwen.estimate.tokens)
+  check('022 compose：qwen estimate 是「tokens/used×total」量级（价目在单行里约掉）',
+    directQwen.estimate.tokens, Math.round(TOTAL * 1000000 / cycleUsed))
+  ok('022 compose：未知价目行仍无 estimate',
+    Object.hasOwn(composed.ratio.models[1], 'estimate') === false)
+  check('022 compose：priceBasis 标明价目口径与取价日', composed.ratio.priceBasis,
+    { kind: 'list-price', verifiedAt: '2026-11-15', unit: 'CNY per million tokens' })
+  ok('022 compose：019 的 capacity 仍在（两套口径并存）',
+    typeof composed.ratio.models[0].capacity.tokens === 'number')
+
+  const noPriceLocal = {
+    totals: { tokens: 3000 },
+    models: [localTotals.models[1]],
+  }
+  const noPrice = composeCreditsToken({ card: CARD, official, localTotals: noPriceLocal, now: NOW })
+  check('022 compose：无任何可定价模型 → priceBasis 缺席',
+    [Object.hasOwn(noPrice.ratio, 'priceBasis'), Object.hasOwn(noPrice.ratio.models[0], 'estimate')],
+    [false, false])
+}
+
 // 收尾，不留垃圾；Windows 上账本落盘可能还在收尾，给它几次重试。
 setDshHome(ORIG_DSH_HOME)
 rmSync(TEST_HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })

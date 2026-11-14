@@ -1692,8 +1692,9 @@ function findChip(node) {
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
   // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
   // 015 增了 4 个分项/按模型键（Classes/ClassUncached/ModelsTitle/ModelsNote，Note 是改写），147 → 151。
-  // 019 增了 4 个容量测算键（ModelPickTitle/Hint/Card/Note），155 → 159。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [159, 159])
+  // 019 增了 4 个容量测算键（ModelPickTitle/Hint/Card/Note），155 → 159；
+  // 022 又增 2 个（ModelPickEstimate/Share），159 → 161。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [161, 161])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -5764,16 +5765,20 @@ function tokenTextNumber(text) {
     source.includes('"data-model": entry.id')
     && source.includes('"data-selected": isSelected ? "1" : "0"')
     && source.includes('"aria-pressed": isSelected ? "true" : "false"'))
-  ok('T019 COPY zh 四键逐字',
+  ok('T019/022 COPY zh 六键逐字',
     source.includes('usageCreditsModelPickTitle: "如果只用这一个模型"')
-    && source.includes('usageCreditsModelPickHint: "按 {model} 本账期实测比值，把全部 {total} Credits 都花在它上面（折算参考，非官方口径）"')
+    && source.includes('usageCreditsModelPickHint: "把本账期全部 {total} Credits 都花在 {model} 上能换多少 tokens（折算参考，非官方口径）"')
     && source.includes('usageCreditsModelPickCard: "折算可用 tokens"')
-    && source.includes('usageCreditsModelPickNote: "该模型的比值分子是本机用量、分母是账号级已用 Credits；四类分项各自取整后相加等于上方总量。"'))
-  ok('T019 COPY en 四键逐字',
+    && source.includes('usageCreditsModelPickEstimate: "按官方价目估算 tokens"')
+    && source.includes('usageCreditsModelPickShare: "按实测占比折算 {tokens} tokens（贡献份额，不可相加）"')
+    && source.includes('usageCreditsModelPickNote: "「按官方价目估算」用官方公开的忙时单价与本账号实测比值校准'))
+  ok('T019/022 COPY en 六键逐字',
     source.includes('usageCreditsModelPickTitle: "If you used only this model"')
-    && source.includes('usageCreditsModelPickHint: "Using the measured ratio of {model} for this cycle and spending all {total} credits on it (derived, not official)"')
+    && source.includes('usageCreditsModelPickHint: "How many tokens {total} credits would buy if this cycle spent all of them on {model} (derived, not official)"')
     && source.includes('usageCreditsModelPickCard: "Derived capacity"')
-    && source.includes('usageCreditsModelPickNote: "The ratio uses local tokens over the account-level used credits; the four class figures are rounded separately and add up to the total above."'))
+    && source.includes('usageCreditsModelPickEstimate: "Estimated from list prices"')
+    && source.includes('usageCreditsModelPickShare: "Share-derived {tokens} tokens (contribution only, not additive)"')
+    && source.includes('usageCreditsModelPickNote: "\\"Estimated from list prices\\" calibrates published standard'))
   const pickCssStart = source.indexOf('.tpq-usage-credits-modelpick{')
   const pickCssEnd = source.indexOf('.tpq-usage-credits-models{max-height', pickCssStart)
   const pickCss = pickCssStart >= 0 && pickCssEnd > pickCssStart ? source.slice(pickCssStart, pickCssEnd) : ''
@@ -5892,7 +5897,7 @@ function tokenTextNumber(text) {
   check('T019 块标题逐字', collectText(findNodes(pick, 'tpq-usage-credits-modelpick-title')[0]).join(''), '如果只用这一个模型')
   check('T019 提示行把 {model}/{total} 换成选中模型与总 Credits',
     collectText(findNodes(pick, 'tpq-usage-credits-modelpick-hint')[0]).join(''),
-    '按 qwen3-max 本账期实测比值，把全部 80000 Credits 都花在它上面（折算参考，非官方口径）')
+    '把本账期全部 80000 Credits 都花在 qwen3-max 上能换多少 tokens（折算参考，非官方口径）')
   const card = modelPickCardOf(pick)
   check('T019 卡片标题逐字', collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), '折算可用 tokens')
   check('T019 卡片总值 = capacity.tokens 的 formatTokens + 单位',
@@ -5903,8 +5908,8 @@ function tokenTextNumber(text) {
   check('T019 三格 label / value / unit 逐格逐字',
     modelPickCellsOf(card).map((cell) => collectText(cell)),
     [['输入', '2.2万', 'tokens'], ['缓存命中', '5.6万', 'tokens'], ['输出', '3,000', 'tokens']])
-  check('T019 块内脚注逐字', collectText(findNodes(pick, 'tpq-usage-credits-modelpick-note')[0]).join(''),
-    '该模型的比值分子是本机用量、分母是账号级已用 Credits；四类分项各自取整后相加等于上方总量。')
+  check('T019/022 块内脚注逐字', collectText(findNodes(pick, 'tpq-usage-credits-modelpick-note')[0]).join(''),
+    '「按官方价目估算」用官方公开的忙时单价与本账号实测比值校准，未计 22:00–08:00 夜间折扣与没有公开单价的模型；占比折算仍是本机该模型 tokens ÷ 账号级已用 Credits。四类分项各自取整后相加等于上方总量。')
   ok('T019 卡片子树不含 Credits / 百分比', !/Credits|%/.test(collectText(card).join('')), collectText(card).join('|'))
   check('T019 插入顺序：estimate → modelpick → models',
     (section.children ?? []).map((child) => String(child?.props?.className ?? ''))
@@ -5922,7 +5927,7 @@ function tokenTextNumber(text) {
     collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-total')[0]).join(''), '7.53亿tokens')
   check('T019 点 chip 后提示行的 {model} 跟着换',
     collectText(findNodes(nextPick, 'tpq-usage-credits-modelpick-hint')[0]).join(''),
-    '按 deepseek-v4.1 本账期实测比值，把全部 80000 Credits 都花在它上面（折算参考，非官方口径）')
+    '把本账期全部 80000 Credits 都花在 deepseek-v4.1 上能换多少 tokens（折算参考，非官方口径）')
   check('T019 cacheWrite 有值才追加第四格，四格顺序 input → cacheRead → output → cacheWrite',
     modelPickCellsOf(nextCard).map((cell) => cell.props['data-usage-credits-modelpick-class']),
     ['input', 'cacheRead', 'output', 'cacheWrite'])
@@ -5964,7 +5969,7 @@ function tokenTextNumber(text) {
       collectText(findNodes(modelPickCardOf(pick), 'tpq-usage-credits-modelpick-card-label')[0]).join(''),
       collectText(findNodes(pick, 'tpq-usage-credits-modelpick-hint')[0]).join('')],
     ['If you used only this model', 'Derived capacity',
-      'Using the measured ratio of qwen3-max for this cycle and spending all 80000 credits on it (derived, not official)'])
+      'How many tokens 80000 credits would buy if this cycle spent all of them on qwen3-max (derived, not official)'])
   check('T019 en 数字用 K/M 量纲', collectText(findNodes(modelPickCardOf(pick), 'tpq-usage-credits-modelpick-total')[0]).join(''), '81Ktokens')
   ok('T019 en 下无中文残留', !/[一-龥]/.test(collectText(pick).join('')), collectText(pick).join('|'))
 }
@@ -5984,6 +5989,129 @@ function tokenTextNumber(text) {
   check('T019 混合入参只保留可算的那一项（chip 数 = 1）', modelPickChips(mixedPick).length, 1)
   const noModels = await mountBreakdown(makeCreditsSnapshot())
   check('T019 旧快照没有 ratio.models → 整块消失', modelPickOf(creditsSectionOf(noModels.tree)), undefined)
+}
+
+
+/* ===== 022 按官方价目的单模型估算（INTERFACE §2 / §3.2）=====
+ * 宿主在 ratio.models[] 的 estimate 里给「全额度只花在该模型上」的价目估算；客户端用它当主数字，
+ * 019 的 capacity（占比折算）降为卡片底部一行小字。没有 estimate 的行逐字段保持 019。
+ * ========================================================================== */
+
+const EST_MODEL = {
+  id: 'qwen3.8-flash',
+  provider: 'qwen-token-plan-cn',
+  model: 'qwen3.8-flash',
+  tokens: 1000000,
+  calls: 10,
+  tokensPerCredit: 35305.2,
+  capacity: {
+    tokens: 500000,
+    classes: { input: 120000, cacheRead: 340000, output: 40000, cacheWrite: 0 },
+  },
+  estimate: {
+    tokens: 480000,
+    classes: { input: 96000, cacheRead: 336000, output: 48000, cacheWrite: 0 },
+  },
+}
+const NOEST_MODEL = {
+  id: 'qwen4-max-preview',
+  provider: 'qwen-token-plan-cn',
+  model: 'qwen4-max-preview',
+  tokens: 2000000,
+  calls: 20,
+  tokensPerCredit: 1000,
+  capacity: {
+    tokens: 753000000,
+    classes: { input: 100000000, cacheRead: 600000000, output: 53000000, cacheWrite: 0 },
+  },
+}
+
+/* ① 纯函数：estimateOf 的边界矩阵。 */
+{
+  const bundle = await mountUsage()
+  const internals = bundle.api.__internals
+  ok('T022 __internals 暴露 usageModelEstimateOf', typeof internals.usageModelEstimateOf === 'function')
+  const estimateOf = internals.usageModelEstimateOf
+  check('T022 正常解析 tokens 与四类', estimateOf(EST_MODEL), {
+    tokens: 480000,
+    classes: { input: 96000, cacheRead: 336000, output: 48000, cacheWrite: 0 },
+  })
+  check('T022 非对象 / 缺 estimate → null',
+    [estimateOf(null), estimateOf({}), estimateOf({ estimate: null }), estimateOf([EST_MODEL])], [null, null, null, null])
+  check('T022 estimate.tokens 非有限 → null',
+    [estimateOf({ estimate: { tokens: 'x' } }), estimateOf({ estimate: { tokens: Number.NaN } }), estimateOf({ estimate: {} })],
+    [null, null, null])
+  check('T022 classes 缺一类 → classes = null 但 tokens 仍在',
+    estimateOf({ estimate: { tokens: 100, classes: { input: 1, cacheRead: 2, output: 3 } } }),
+    { tokens: 100, classes: null })
+  check('T022 classes 的 {tokens} 对象形状也认',
+    estimateOf({ estimate: { tokens: 100, classes: { input: { tokens: 1 }, cacheRead: 2, output: 3, cacheWrite: 4 } } }),
+    { tokens: 100, classes: { input: 1, cacheRead: 2, output: 3, cacheWrite: 4 } })
+  check('T022 estimate 非普通对象 → null', estimateOf({ estimate: 'big' }), null)
+}
+
+/* ② 渲染（有 estimate）：主数字与分项走 estimate，底部多一行占比折算小字。 */
+{
+  const screen = await mountBreakdown(makeModelPickSnapshot([EST_MODEL, NOEST_MODEL]))
+  const { bundle, tree } = screen
+  const pick = modelPickOf(creditsSectionOf(tree))
+  const card = modelPickCardOf(pick)
+  check('T022 有 estimate 的行用价目标签',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''),
+    '按官方价目估算 tokens')
+  check('T022 主数字 = estimate.tokens（不是 capacity）',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '48.0万tokens')
+  check('T022 分项值来自 estimate.classes，cacheWrite 0 不占格',
+    modelPickCellsOf(card).map((cell) => collectText(cell)),
+    [['输入', '9.6万', 'tokens'], ['缓存命中', '33.6万', 'tokens'], ['输出', '4.8万', 'tokens']])
+  const share = findNodes(pick, 'tpq-usage-credits-modelpick-share')[0]
+  check('T022 底部 share 行写占比折算（含 capacity tokens）',
+    collectText(share).join(''), '按实测占比折算 50.0万 tokens（贡献份额，不可相加）')
+  ok('T022 share 在卡片之后、脚注之前',
+    (pick.children ?? []).map((child) => String(child?.props?.className ?? ''))
+      .filter((name) => name.startsWith('tpq-usage-credits-modelpick-') && !name.includes('cell'))
+      .join('|') === 'tpq-usage-credits-modelpick-title|tpq-usage-credits-modelpick-hint|tpq-usage-credits-modelpick-chips|tpq-usage-credits-modelpick-card|tpq-usage-credits-modelpick-share|tpq-usage-credits-modelpick-note',
+    (pick.children ?? []).map((child) => String(child?.props?.className ?? '')).join('|'))
+  ok('T022 卡片子树仍不含 Credits / 百分比', !/Credits|%/.test(collectText(card).join('')), collectText(card).join('|'))
+
+  /* ③ 切换 chip：第二项没有 estimate → 逐字段回落 019，share 行消失。 */
+  modelPickChips(pick)[1].props.onClick()
+  const nextPick = modelPickOf(creditsSectionOf(bundle.renderUsage()))
+  const nextCard = modelPickCardOf(nextPick)
+  check('T022 无 estimate 的行回落 019 标签',
+    collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), '折算可用 tokens')
+  check('T022 无 estimate 的行回落 capacity.tokens',
+    collectText(findNodes(nextCard, 'tpq-usage-credits-modelpick-total')[0]).join(''), '7.53亿tokens')
+  check('T022 无 estimate 时 share 行不出现', findNodes(nextPick, 'tpq-usage-credits-modelpick-share').length, 0)
+}
+
+/* ④ 英文界面：标签与 share 行都切到 en，数字用 K/M 量纲。 */
+{
+  const { tree } = await mountBreakdown(makeModelPickSnapshot([EST_MODEL]), { lang: 'en-US' })
+  const pick = modelPickOf(creditsSectionOf(tree))
+  const card = modelPickCardOf(pick)
+  check('T022 en 标签逐字',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), 'Estimated from list prices')
+  check('T022 en 主数字用 K 量纲',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '480Ktokens')
+  check('T022 en share 行逐字',
+    collectText(findNodes(pick, 'tpq-usage-credits-modelpick-share')[0]).join(''),
+    'Share-derived 500K tokens (contribution only, not additive)')
+  ok('T022 en 下无中文残留', !/[\u4e00-\u9fa5]/.test(collectText(pick).join('')), collectText(pick).join('|'))
+}
+
+/* ⑤ 宿主 estimate 缺 classes：主数字用 estimate，分项不出格（不混用两套口径）。 */
+{
+  const partial = {
+    ...EST_MODEL,
+    id: 'partial-est',
+    estimate: { tokens: 480000 },
+  }
+  const { tree } = await mountBreakdown(makeModelPickSnapshot([partial]))
+  const card = modelPickCardOf(modelPickOf(creditsSectionOf(tree)))
+  check('T022 estimate 无 classes 时主数字仍用 estimate',
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '48.0万tokens')
+  check('T022 estimate 无 classes 时不画分项格（不回落 capacity）', modelPickCellsOf(card).length, 0)
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

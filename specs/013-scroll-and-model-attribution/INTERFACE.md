@@ -169,17 +169,19 @@ node -e "const j=require(process.env.USERPROFILE+'/.dsh/token-plan-quota.usage-i
 
 - 旧文件按坏文件策略备份为 `token-plan-quota.usage-index.json.bad-1794650097526`（74,542 B，原样）。
 - 新索引 `version=2`、`sessions=221`、`stats={"unknownModel":0,"skippedOld":0}`；抽查条目带 `lastProvider/lastModel`（如 `qwen-token-plan-cn` / `qwen3.8-flash`）。
-- 与 v1 逐模型对比（同一 72 天窗口）：
+- 与 v1 逐模型对比（同一 72 天窗口；tokens = input + output，与屏上「tokens」口径一致）：
 
 | 模型 | v1 tokens | v2 tokens | 变化 |
 | --- | --- | --- | --- |
-| unknown/unknown | 291,524,117 | 0 | **−291.5 M（归零）** |
-| modlens-qwen-token-plan-cn/deepseek-v4.1-flash-1017 | 268,621,260 | 426,572,829 | +158.0 M |
-| qwen-token-plan-cn/deepseek-v4.1-flash-1017 | 901,553,131 | 1,032,696,947 | +131.1 M |
-| qwen-token-plan-cn/qwen3.8-flash | 4,033,969,324 | 4,052,336,490 | +18.4 M |
+| unknown/unknown | 8,831,253 | 0 | **−8.83 M（归零）** |
+| modlens-qwen-token-plan-cn/deepseek-v4.1-flash-1017 | 6,713,292 | 10,511,645 | +3.80 M |
+| qwen-token-plan-cn/deepseek-v4.1-flash-1017 | 27,761,643 | 32,132,467 | +4.37 M |
+| qwen-token-plan-cn/qwen3.8-flash | 167,081,388 | 168,239,466 | +1.16 M |
 | 其余 10 个模型 | — | 不变 | 0 |
 
-  291.5 M 的 unknown 被拆到 `modlens-qwen-token-plan-cn/deepseek-v4.1-flash-1017`（带视觉桥的那条）与 `qwen-token-plan-cn/deepseek-v4.1-flash-1017`；差额 15.9 M 来自这一轮新同步到的增量会话。
+  8.83 M 的 unknown 被拆到 `modlens-qwen-token-plan-cn/deepseek-v4.1-flash-1017`（带视觉桥的那条）、`qwen-token-plan-cn/deepseek-v4.1-flash-1017` 与 `qwen-token-plan-cn/qwen3.8-flash`；三列增量之和 9.33 M 比 unknown 多 0.5 M，来自这一轮新同步到的增量会话。
+
+  > **2026-11-14 口径更正**：本表初版把 tokens 记成 `input + output + cacheRead`，unknown 写成 291,524,117——那是同一批调用的**含缓存总量**，不是屏上 tokens。已按 `input + output` 重算上表；`cacheRead` 只是索引内部字段，不参与「tokens」口径（见 specs/006 FR-004 与 specs/012 §10）。
 - 运行态 `GET /token-plan-quota/usage?days=365`：`coverage.unknownModel=0`，`models` 13 条，最大 `qwen-token-plan-cn/qwen3.8-flash` 4.05 B tokens；无 `unknown` 条目、无 %、无 Credits。
 
 ### 6.4 偏差清单
@@ -199,4 +201,22 @@ node -e "const j=require(process.env.USERPROFILE+'/.dsh/token-plan-quota.usage-i
 
 - 截图未重拍：`make-shots` 启动参数带 `--hide-scrollbars`，页面滚动条不会出现在图里；013 的画面内容与 012 一致（只多了滚动条），已有 8 张图仍然准确。
 - 真实 GUI（非 headless）里的滚动条外观未截图核对，仅以计算样式与几何断言为准。
+
+### 6.7 2026-11-14 复核：真实实例 unknown/unknown 的归类
+
+宿主仍在跑 0.5.0（索引 `version=1`），所以真实索引里还留着 `unknown/unknown`。复核方法：用 `lib/usage-stats.js` 的 `fallbackLogsOf` + `decodeSessionLog` + `parseSessionEvents` + `fallbackCutOf` + `foldUsageEvents` 对 `~/.dsh/sessions`（220 份日志）做一次全量内存重建，再与真实索引按日、按模型比对。
+
+- 真实索引的 unknown 只出现在两天：2026-11-13（1,191 次）与 2026-11-14（1,635 次），合计 **10,239,412 tokens / 2,826 次**（input + output；含缓存 340,258,996；cacheWrite 0）。2026-10 及更早为 0。
+- 全量重建后 `unknownModel=0`；逐日逐模型差就是这笔 unknown 的归类：
+
+| 归属模型 | 2026-11-13 | 2026-11-14 | 合计 |
+| --- | --- | --- | --- |
+| qwen-token-plan-cn/deepseek-v4.1-flash-1017 | +2,229,408 / 540 次 | +2,643,326 / 718 次 | 4,872,734 / 1,258 |
+| modlens-qwen-token-plan-cn/deepseek-v4.1-flash-1017 | +1,738,298 / 522 次 | +2,520,061 / 920 次 | 4,258,359 / 1,442 |
+| qwen-token-plan-cn/qwen3.8-flash | +1,064,570 / 129 次 | +93,508 / 16 次 | 1,158,078 / 145 |
+
+  11-13 三列增量之和 5,032,276 / 1,191，与当天 unknown 完全相等（可核：重建没有引入新调用）；11-14 多 19 次，是仍在运行的会话在重建之后再折入的调用。
+- 成因：v1 的增量折叠跨片没有模型上下文继承，片起点落在两个 `request/header` 之间时被记成 unknown（§6.3 的 v2 修复用 `lastProvider/lastModel` + `inheritedModelDefaults` 播种，所以重建后归零）。宿主重启、索引 v1→v2 自动备份重建后，屏上不再出现 unknown 行。
+- 同一轮重建还补回 v1 索引漏折的旧会话：2026-09-06/07/08 的 qwen3.8-flash 1,879 次，另有 minimax M3 4 次、deepseek-v4-pro-0813 1 次、deepseek-modlens 1 次、qwen3.8-max 10 次；全量增量 +13,516,646 tokens / +1,914 次。
+- 复现脚本（一次性，未入库）：`C:/Users/OMEN/.dsh/tmp/rebuild-forensics.mjs`、`session-attr.mjs`；`lib/usage-stats.js` 必须用 `pathToFileURL` 载入（Windows 绝对路径直接 import 会报 ERR_UNSUPPORTED_ESM_URL_SCHEME）。
 

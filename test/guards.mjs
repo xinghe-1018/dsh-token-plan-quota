@@ -1239,6 +1239,11 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('013 内联位移用两份 getBoundingClientRect 相减（SVG 根元素没有 offsetLeft）',
     inlineFn.includes('getBoundingClientRect') && !inlineFn.includes('offsetLeft'))
   const anchorFn = src.slice(src.indexOf('function usageTipAnchorOf'), src.indexOf('function usageTipInlineOffsetX'))
+  ok('013 内联位移对「矩形对象缺失」也回 0（getBoundingClientRect 返回 null 时不能读 .left）',
+    inlineFn.includes('const svgRect = svgElement.getBoundingClientRect()')
+      && inlineFn.includes('const scrollRect = scrollElement.getBoundingClientRect()')
+      && inlineFn.includes('typeof svgRect !== "object"')
+      && inlineFn.includes('typeof scrollRect !== "object"'))
   ok('013 usageTipAnchorOf 只认 typeof number（Number(null)/Number("") 会被当成 0）',
     anchorFn.includes('typeof value !== "number"') && !anchorFn.includes('Number(value)'))
   ok('013 柱子子树的 memo 依赖里不含 tipIndex（浮层不进无障碍树，指针移动不重画柱子）',

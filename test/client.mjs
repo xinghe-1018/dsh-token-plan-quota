@@ -4518,6 +4518,12 @@ function hoverPointer(bundle, tree, index, clientX = 40, clientY = 60) {
     [internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: () => ({}) }, getBoundingClientRect: rect(0) }),
       internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: rect(NaN) }, getBoundingClientRect: rect(0) })],
     [0, 0])
+  check('T013 usageTipInlineOffsetX 遇到「有函数但矩形是 null/undefined/非对象」也按 0（不能抛 TypeError）',
+    [internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: () => null }, getBoundingClientRect: rect(0) }),
+      internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: () => undefined }, getBoundingClientRect: rect(0) }),
+      internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: rect(240) }, getBoundingClientRect: () => null }),
+      internals.usageTipInlineOffsetX({ firstElementChild: { getBoundingClientRect: () => 240 }, getBoundingClientRect: rect(0) })],
+    [0, 0, 0, 0])
   check('T013 usageFiniteToken 是唯一的归一化入口',
     [internals.usageFiniteToken(42), internals.usageFiniteToken(NaN), internals.usageFiniteToken('42'),
       internals.usageFiniteToken(null), internals.usageFiniteToken(Infinity)],

@@ -2,7 +2,7 @@
  * README 截图物料生成器。
  *
  *   node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 [--lang zh|en] [--out docs/images]
- *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15] [--edge <path>] [--ffmpeg <path>] [--allow-live]
+ *                                     [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,16] [--edge <path>] [--ffmpeg <path>] [--allow-live]
  *                                     [--width <px>] [--height <px>] [--allow-docs]
  *
  * 两件事决定了这个脚本的形状：
@@ -23,12 +23,12 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { launchEdge, Cdp } from './cdp.mjs'
-import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE } from './fixture.mjs'
+import { makeSnapshot, assertFixture, makeUsageSnapshot, assertUsageFixture, makeUsageOfficialSnapshot, assertUsageOfficialFixture, usageTooltipBar, USAGE_TOOLTIP_BAR_MONTH, USAGE_TOOLTIP_BAR_DATE, usageModelSharePercent, usageCacheHitRatePercent, USAGE_COMPOSITION_MODEL_COUNT, USAGE_COMPOSITION_FIRST_MODEL_ID, USAGE_COMPOSITION_FIRST_MODEL_SHARES, USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE, builtCredits, assertUsageCreditsFixture } from './fixture.mjs'
 
 /* ------------------------------------------------------------------ 参数 */
 
 function parseArgs(argv) {
-  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15], allowLive: false, width: 1280, height: 860 }
+  const out = { lang: 'zh', out: 'docs/images', shots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16], allowLive: false, width: 1280, height: 860 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => argv[++i]
@@ -189,7 +189,7 @@ function compactTokens(value, langKey) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14] [--width 375] [--height 768] [--allow-docs]')
+    console.log('用法：node scripts/shots/make-shots.mjs --url http://127.0.0.1:<port> [--lang zh|en] [--out docs/images] [--shots 2,3,4,5,6,7,8,9,10,11,13,14,15,16] [--width 375] [--height 768] [--allow-docs]')
     return
   }
   if (args.url === undefined) throw new Error('必须给 --url（指向一个装好本插件的 dsh web 实例）')
@@ -302,10 +302,22 @@ async function main() {
     }
     return officialCache.get(key)
   }
+  /**
+   * 014：Credits ↔ tokens 换算块是**第三个**接口（`/token-plan-quota/usage-credits`）。
+   * 它没有查询参数（永远回本账期），只造一次；落盘单独一份 JSON，避免与 usage / usage-official
+   * 混看时误以为"比值是从本机实测推的"——这块的分母是官方 Credits 计量。
+   */
+  const creditsFixture = (() => {
+    const credits = builtCredits({ now: usageNow })
+    assertUsageCreditsFixture(credits, { now: usageNow })
+    writeFileSync(join(workDir, 'usage-credits.json'), JSON.stringify(credits, null, 1))
+    return { json: JSON.stringify(credits), credits }
+  })()
   const hits = page.intercept({
     patterns: [
       { urlPattern: '*token-plan-quota/summary*' },
       { urlPattern: '*token-plan-quota/refresh*' },
+      { urlPattern: '*token-plan-quota/usage-credits*' },
       { urlPattern: '*token-plan-quota/usage*' },
       { urlPattern: '*token-plan-quota/usage-official*' },
       { urlPattern: `*${CONNECTION_BUNDLE}*` },
@@ -315,6 +327,10 @@ async function main() {
        * 先判官方路由：`/token-plan-quota/usage-official` 也含 '/token-plan-quota/usage' 这个子串，
        * 顺序反了就会拿本机快照去回答官方请求（对照条上的三格会变成「官方 = 本机」）。
        */
+      // 014：`/usage-credits` 同样含 '/token-plan-quota/usage' 子串，必须在泛化的 usage 分支之前判掉。
+      if (request.url.includes('/token-plan-quota/usage-credits')) {
+        return { body: creditsFixture.json, via: 'fixture-credits' }
+      }
       if (request.url.includes('/token-plan-quota/usage-official')) {
         // ⑫ QA 专用：200 + {error,code,hint} 是宿主/客户端约定的失败体，客户端据此只坏这一块。
         if (live.officialError === true) {
@@ -743,9 +759,9 @@ async function main() {
     await page.evaluate(`(() => { localStorage.removeItem('dsh-token-plan-quota.panel') })()`)
   }
 
-  /* ---------------------------- ⑧⑨⑩⑪⑫⑬ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月） */
-  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15].includes(n))) {
-    console.log('⑧⑨⑩⑪⑫⑬⑭⑮ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成）')
+  /* ---------------------------- ⑧⑨⑩⑪⑫⑬⑭⑮⑯ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 悬停 / 构成 / Credits 换算） */
+  if (args.shots.some(n => [8, 9, 10, 11, 12, 13, 14, 15, 16].includes(n))) {
+    console.log('⑧⑨⑩⑪⑫⑬⑭⑮⑯ 用量统计整页座位（2D / 3D / 自定义区间 / 官方对照 / 按月 / 柱子悬停 / 用量构成 / Credits 换算）')
     live.variant = 'panel'
     // ⑤⑥⑦ 把视口改成了 1150×820；这两张是 README 里"整页座位"的证据，固定按默认取景拍。
     // DPR 调回 1：整页图在 dsf=2 下是 2560×1720，README 用不到那个分辨率，只是白胖一倍体积。
@@ -1376,6 +1392,78 @@ async function main() {
 
       console.log('  ⑮ 7 天：' + modelProbe.count + ' 条模型；首条 ' + firstRow.id + ' 占比 ' + JSON.stringify(USAGE_COMPOSITION_FIRST_MODEL_SHARES) + ' / 命中率 ' + USAGE_COMPOSITION_FIRST_MODEL_HIT_RATE + '%；总量卡命中率 ' + wantHit15 + '；列表 ' + modelProbe.scrollHeight + '/' + modelProbe.clientHeight + 'px（' + modelProbe.overflowY + '）；取景 ' + JSON.stringify(frameState15))
       save('usage-composition-2d.png', await page.shot({}))
+    }
+
+    if (args.shots.includes(16)) {
+      /*
+       * ⑯ Credits ↔ tokens 换算块（014）：唯一一个**本账期混合口径**的块 ——
+       * 分母是官方 Credits 计量、分子是官方账号 tokens，所以它既不是本机实测也不是区间快照。
+       * 断言分三层：① 四个文本钩子都在且非空；② 展示串逐项等于 fixture 现值（比值 / 官方 tokens /
+       * 已用 ÷ 总额 / 折算容量），这样客户端换量纲或换公式会在这里红，而不是拍出一张自相矛盾的图；
+       * ③ 口径护栏：无货币符号、无「Credits 剩余」、无 NaN/undefined，英文套不混中文。
+       */
+      const credits = creditsFixture.credits
+      await switchMode('2D', '.tpq-usage rect.tpq-usage-rect')
+      const wait16 = '(() => { const s = document.querySelector("[data-usage-credits]"); if (s === null) return false; const r = s.querySelector("[data-usage-credits-ratio]"); return s.getAttribute("data-stale") === "0" && r !== null && (r.textContent || "").trim() !== "" })()'
+      await page.waitFor(wait16, { timeoutMs: 25_000, label: '⑯ Credits 换算块' })
+      await sleep(400)
+      const probe16 = await page.evaluate("(() => { const all = document.querySelectorAll('[data-usage-credits]'); const s = all.length > 0 ? all[0] : null; if (s === null) return { ok: false }; const pick = sel => { const n = s.querySelector(sel); return n === null ? null : (n.innerText || n.textContent || '').trim() }; const official = document.querySelector('[data-usage-official]'); const r = s.getBoundingClientRect(); return { ok: true, count: all.length, stale: s.getAttribute('data-stale'), ratio: pick('[data-usage-credits-ratio]'), window: pick('[data-usage-credits-window]'), detail: pick('[data-usage-credits-detail]'), estimate: pick('[data-usage-credits-estimate]'), note: pick('.tpq-usage-credits-note'), loading: s.querySelector('.tpq-usage-credits-loading') !== null, unavailable: s.querySelector('[data-usage-credits-unavailable]') !== null, retry: s.querySelector('[data-usage-credits-retry]') !== null, afterOfficial: official === null ? null : (official.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, rect: { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }, vh: innerHeight, text: (s.innerText || '') } })()")
+      if (probe16 === null || probe16.ok !== true) throw new Error('⑯ 找不到 Credits 换算块（[data-usage-credits] 缺失）：014 客户端未落盘或请求没发，不拍')
+      if (probe16.count !== 1) throw new Error('⑯ 屏上有 ' + probe16.count + ' 个 [data-usage-credits]，同一时刻应只有一个，不拍')
+      if (probe16.stale !== '0') throw new Error('⑯ Credits 换算块 data-stale=' + probe16.stale + '（还是旧账期数据），不拍')
+      if (probe16.loading === true) throw new Error('⑯ Credits 换算块还在 loading，不拍')
+      if (probe16.unavailable === true) throw new Error('⑯ Credits 换算块是「暂不可用」态（fixture 给的是可用态），不拍')
+      if (probe16.retry === true) throw new Error('⑯ 可用态不该出现重试按钮（[data-usage-credits-retry]），不拍')
+      for (const key of ['ratio', 'window', 'detail', 'estimate', 'note']) {
+        if (probe16[key] === null || probe16[key] === '') throw new Error('⑯ Credits 换算块的 ' + key + ' 是空的，不拍')
+      }
+      if (probe16.afterOfficial !== true) throw new Error('⑯ Credits 换算块不在官方对照块之后（INTERFACE §3.2 插入位置），不拍')
+
+      // ① 比值：唯一允许写「1 Credit ≈ … tokens」的地方，数值按 fixture 现值 + 客户端量纲。
+      const ratioNeedle = compactTokens(credits.ratio.tokensPerCredit, langKey)
+      if (!/credit/i.test(probe16.ratio)) throw new Error('⑯ 比值行没有 Credit 字样（' + probe16.ratio + '），不拍')
+      if (probe16.ratio.indexOf(ratioNeedle) < 0) throw new Error('⑯ 比值行是「' + probe16.ratio + '」，期望含 ' + ratioNeedle + '，不拍')
+
+      // ② 明细：官方 tokens 与 已用/总额（Credits 用 usageCount：纯整数无千分位），百分比按 4 位取整。
+      const officialNeedle = compactTokens(credits.tokens.official, langKey)
+      const usedNeedle = String(Math.round(credits.credits.used))
+      const totalNeedle = String(credits.credits.total)
+      const percent16 = Math.round((credits.credits.used / credits.credits.total) * 1000) / 10
+      const percentNeedle = (Number.isInteger(percent16) ? String(percent16) : percent16.toFixed(1)) + '%'
+      for (const needle of [officialNeedle, usedNeedle, totalNeedle, percentNeedle]) {
+        if (probe16.detail.indexOf(needle) < 0) throw new Error('⑯ 明细行缺「' + needle + '」（实际：' + probe16.detail + '），不拍')
+      }
+      // ③ 账期：起点与重置日都要出现（日期来自 fixture 的 window，不跟今天的实际日期走）。
+      for (const needle of [credits.window.from, credits.window.resetDay]) {
+        if (probe16.window.indexOf(needle) < 0) throw new Error('⑯ 账期行缺日期「' + needle + '」（实际：' + probe16.window + '），不拍')
+      }
+      // ④ 折算参考：容量 tokens + 总额 Credits，并明确标注「折算参考 / derived」。
+      const capacityNeedle = compactTokens(credits.ratio.capacityTokens, langKey)
+      const estimateNeedle = langKey === 'zh' ? '折算参考' : 'derived'
+      for (const needle of [capacityNeedle, totalNeedle, estimateNeedle]) {
+        if (probe16.estimate.indexOf(needle) < 0) throw new Error('⑯ 折算行缺「' + needle + '」（实际：' + probe16.estimate + '），不拍')
+      }
+
+      // ⑤ 口径护栏：这块是整个用量屏唯一合法出现 Credits 的地方，仍不许出现货币符号与「剩余」话术。
+      if (/[¥$€£]|元/.test(probe16.text)) throw new Error('⑯ 换算块出现货币符号（' + probe16.text + '），不拍')
+      if (/Credits\s*剩余/i.test(probe16.text)) throw new Error('⑯ 换算块出现「Credits 剩余」话术（Credits 只有已用口径），不拍')
+      if (/NaN|undefined/.test(probe16.text)) throw new Error('⑯ 换算块出现 NaN/undefined（' + probe16.text + '），不拍')
+      const noteNeedle = langKey === 'zh' ? '不是固定兑换率' : 'not a fixed exchange rate'
+      if (probe16.note.indexOf(noteNeedle) < 0) throw new Error('⑯ 脚注缺「' + noteNeedle + '」（实际：' + probe16.note + '），不拍')
+      if (langKey === 'en' && /\p{Script=Han}/u.test(probe16.text)) throw new Error('⑯ 英文界面换算块混了中文（' + probe16.text + '），不拍')
+      if (langKey === 'zh' && /\b(credits used|allowance resets|Official tokens)\b/.test(probe16.text)) throw new Error('⑯ 中文界面换算块混了英文句式（' + probe16.text + '），不拍')
+
+      // 取景：换算块滚到可视区上半部；块必须完整落在视口内（裁一半的图不能进 docs/）。
+      const framed16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; s.scrollIntoView({ block: 'center' }); let sc = s.parentElement; while (sc !== null && sc !== document.scrollingElement && !(sc.scrollHeight > sc.clientHeight + 2)) sc = sc.parentElement; const box = sc === null ? document.scrollingElement : sc; const before = s.getBoundingClientRect(); box.scrollTop = Math.max(0, box.scrollTop + Math.round(before.top - 120)); return { top: Math.round(s.getBoundingClientRect().top), scrollTop: Math.round(box.scrollTop) } })()")
+      if (framed16 === null) throw new Error('⑯ 量不到 Credits 换算块的位置，不拍')
+      await sleep(350)
+      const frameState16 = await page.evaluate("(() => { const s = document.querySelector('[data-usage-credits]'); if (s === null) return null; const r = s.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: innerHeight } })()")
+      if (frameState16 === null) throw new Error('⑯ 取景后找不到 Credits 换算块，不拍')
+      if (frameState16.top < 8 || frameState16.bottom > frameState16.vh - 8) throw new Error('⑯ 换算块没有完整落在视口内（' + JSON.stringify(frameState16) + '），不拍')
+      if (frameState16.h < 120) throw new Error('⑯ 换算块在取景里只有 ' + frameState16.h + 'px 高，内容不像渲染完整，不拍')
+
+      console.log('  ⑯ 换算块：比值「' + probe16.ratio + '」；明细「' + probe16.detail + '」；账期「' + probe16.window + '」；折算「' + probe16.estimate + '」；取景 ' + JSON.stringify(frameState16))
+      save('usage-credits-2d.png', await page.shot({}))
     }
 
     // 收尾：点屏头关闭回到会话。留着整页座位，后面任何步骤都会拍到统计屏。

@@ -70,6 +70,10 @@ export async function launchEdge(options = {}) {
   const userDataDir = join(base, 'profile')
   const args = [
     '--headless=new',
+    // 本机 Edge（157+）在 ~/.dsh 下带会话沙箱 ACL 的路径渲染时会卡死：Page.enable / Runtime.* 一律超时，
+    // 只有浏览器级命令（Target.* / Page.navigate）能回。--no-sandbox 是官方截图流水线（003 起）的既定做法。
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
     '--remote-debugging-port=0',
     `--user-data-dir=${userDataDir}`,
     '--no-first-run',

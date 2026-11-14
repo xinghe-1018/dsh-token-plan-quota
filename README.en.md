@@ -243,6 +243,8 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
 
 ![Official account-side comparison: official tokens, this instance, and the difference for the same range (the difference can be negative; when it cannot be fetched it shows a message, never a bar of zero)](docs/images/en/usage-official-2d.png)
 
+![Credits-to-tokens conversion: this cycle's measured ratio, official tokens, credits used and a derived reference](docs/images/en/usage-credits-2d.png)
+
 - **Absolute tokens only**: the range total, the four buckets (input / output / cache hit / cache write), the
   call count and a per-model ranking. This screen answers "how much have I used lately", not "how much is left" -
   so there is no quota percentage and no Credits.
@@ -283,6 +285,18 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   limit). When it cannot be
   fetched (no cookie / expired session / upstream failure) the cell shows **only an actionable message and no
   numbers at all** - "unavailable" is never drawn as 0.
+- **Credits ↔ tokens conversion** (needs the console source to be readable): the console exposes Credits only as
+  "allowance × used share", so this block divides it by the **official account-level tokens** of the same cycle and
+  shows the measured ratio `1 credit ≈ N tokens`, with the official tokens, credits used / allowance and the official
+  used share side by side so the ratio can be checked. Credits used = official allowance × official used share, and the
+  numerator is always the official account-level number (it includes other devices) - **never this instance's tokens**,
+  because mixing the two calibers understates the ratio. The cycle is the current monthly meter (falling back to the
+  7-day window) and is **independent of the range selector above**: Credits only have one reading per cycle, and
+  splitting them across a range would be an estimate. It is a **blended average for this cycle** - model mix and cache
+  hit rate change it - so the footnote says outright that it is **not a fixed exchange rate**, and the "allowance in
+  tokens" line is marked as derived, not official. When the official detail is clamped to a later start, or the
+  allowance, reset time or a monthly/weekly meter is missing, the block shows **no ratio** and says why; it never
+  borrows a partial range or this instance's numbers.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -592,9 +606,9 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 
 ```bash
 npm run check                       # all seven steps below
-node test/host.mjs                  # 887 assertions, offline
-node test/client.mjs                # 918 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 413 assertions: behaviour matrices of the gates themselves
+node test/host.mjs                  # 928 assertions, offline
+node test/client.mjs                # 1012 assertions, fake React/DOM/fetch
+node test/guards.mjs                # 459 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -602,7 +616,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "25 DEFAULTS keys, a 26-row
-config table, 8 sources, 8 declared outbound hosts, 887/918 tests plus 413 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 928/1012 tests plus 459 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

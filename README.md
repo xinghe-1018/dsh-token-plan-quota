@@ -207,6 +207,8 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
 
 ![官方账号侧对照：同一段时间的官方 tokens、本机实测与差额（差额可为负，取不到时只显示提示、不画 0）](docs/images/usage-official-2d.png)
 
+![Credits 与 tokens 换算：本账期实测比值、官方 tokens、已用 Credits 与折算参考](docs/images/usage-credits-2d.png)
+
 - **只报绝对 token**：区间总量、四类拆分（输入 / 输出 / 缓存命中 / 缓存写入）、调用次数、按模型排行。
   这一屏回答「最近用了多少」，不回答「还剩多少」——所以没有配额百分比，也没有 Credits。
 - **看得懂构成**：总量卡除四个绝对值外，还给出每一项**占区间总量的比例**，以及
@@ -234,6 +236,13 @@ dsh plugin --profile web add ./dsh-token-plan-quota        # 本地目录
   更早的查询会被夹到那个起点并在屏上写明**被夹掉的原起点**；长区间按 30 天自动分片再拼（网关实测上限就是 30 天）。
   取不到时（没配 Cookie / 会话过期 / 上游失败）这一格**只显示一句可操作的提示，不渲染任何数字**——
   绝不把「取不到」画成 0。
+- **Credits 与 tokens 的换算**（需控制台源可读）：官方只给「额度 × 已用比例」的 Credits，这一块把它和**同一账期的官方账号级 tokens**
+  相除，给出本账期实测比值 `1 Credit ≈ N tokens`，并并排列出官方 tokens、已用 Credits / 额度与官方已用比例，比值可以自己复核。
+  已用 Credits = 官方额度 × 官方已用比例；分子一律用官方账号级 tokens（含其他设备），**不用本机 tokens**——两者口径不同，
+  混用会让比值偏小。账期取当前月度计量（没有月度就退到 7 天窗口），**与上方查询区间无关**：Credits 只有当前账期一个读数，
+  按区间等比例拆就是估算，所以不拆。它是**本账期的混合均值**：换模型、换缓存命中率都会变，脚注因此明写「不是固定兑换率」；
+  「额度折合多少 tokens」那一行只是折算参考、非官方口径。官方明细被夹到更晚的起点、缺额度、缺重置时间、只有 5 小时计量时
+  **不给比值**，只说明原因——不拿部分区间凑数，也不用本机数字顶替。
 - 2D / 3D 共用**同一个线性比例函数**：3D 只是把同一根柱子画成 SVG 等轴投影的三面（顶 / 正 / 侧），
   固定角度、无透视、无近大远小，柱高与数值严格线性——换画法不会让柱子看起来比数据高。
 - **把鼠标放到任意一根柱上**就能看到该柱的明细：日期（周桶写作 `起 – 止`）与该桶 tokens 总量，
@@ -504,16 +513,16 @@ Key 引用名可在 `sources` 条目里用 `bearerRef` / `cookieRef` 覆盖。
 
 ```bash
 npm run check                      # 下面七步一次跑完
-node test/host.mjs                 # 887 项，离线
-node test/client.mjs               # 918 项，假 React/DOM/fetch
-node test/guards.mjs               # 413 项，门禁自身的行为矩阵（应报 / 应放行）
+node test/host.mjs                 # 928 项，离线
+node test/client.mjs               # 1012 项，假 React/DOM/fetch
+node test/guards.mjs               # 459 项，门禁自身的行为矩阵（应报 / 应放行）
 node scripts/check-manifest.mjs    # 清单自检（安装性、出站主机、许可证、零依赖）
 node scripts/check-docs.mjs        # README 的可核实声明必须与代码一致
 node scripts/check-refs.mjs        # 活文档里不得出现「文件:行号」引用
 node scripts/check-submission.mjs  # 插件目录站投稿条目的自检
 ```
 
-`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 887/918 项 + guards 413 项」这些写在 README
+`check-docs` 不是装饰：它把「DEFAULTS 25 个键、配置表 26 行、8 个数据源、声明 8 个出站主机、测试 928/1012 项 + guards 459 项」这些写在 README
 里的数字拿去和代码与实跑结果对，**数字漂了就 CI 红**（已用反向用例验证它真的会失败）。
 
 测试跨平台（临时目录取 `os.tmpdir()`，不依赖真实 `~/.dsh`），CI 跑 node 20/22 × ubuntu/windows/macos，

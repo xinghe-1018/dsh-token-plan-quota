@@ -10,6 +10,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Credits 与 tokens 的换算（014）**：用量统计屏在官方对照条下面新增一块「Credits ↔ tokens 换算」。
+  官方控制台只给「额度 × 已用比例」的 Credits，这一块把它和**同一账期的官方账号级 tokens**（`/usage-official`）
+  相除，给出本账期实测比值（屏上写 `1 Credit ≈ N tokens`，同时并排列出官方 tokens、已用 Credits / 额度、
+  官方已用比例，比例可自行复核）。口径三条：账期取控制台当前的月度计量（没有月度退到 7 天窗口）且**与上方查询区间无关**
+  （Credits 每账期只有一个读数，按区间拆就是估算）；分子**只**用官方账号级 tokens（含其他设备），不用本机 tokens
+  （分子分母不同口径会把比值算小）；比值是**本账期混合均值**，随模型与缓存命中率变化，脚注明写「不是固定兑换率」，
+  「额度折合多少 tokens」一行标明是折算参考、非官方口径。不可用一律显式说原因（`console-unavailable` /
+  `no-console-card` / `no-credits-reading` / `no-credits-total` / `no-reset-time` / `five-hour-only` /
+  `official-unavailable` / `official-clamped` / `no-token-data`），**不拿部分区间凑比值、不用本机数字顶替、不画 0**。
+  宿主新增只读路由 `GET /token-plan-quota/usage-credits`（`fresh=1` 回源）与四个纯函数
+  （`creditsCycleOf` / `creditsTokenRatioOf` / `composeCreditsToken` / `buildCreditsTokenSnapshot`，都进 `__internals`）；
+  客户端新增 `USAGE_CREDITS` 取数（独立状态槽、序号 + Abort + 15s 超时、**只在挂载时取一次**、重试才带 `fresh=1`）、
+  `usageCreditsSection` 与 9 个双语键，百分比仍只由 `usagePercentText` 产出。零新配置键、零新出站主机、零第三方依赖。
+  测试：宿主 887→928、客户端 918→1012、guards 413→459（第 14 节静态矩阵 46 条）。截图落 `docs/images/usage-credits-2d.png`
+  与 `docs/images/en/usage-credits-2d.png`（场景 ⑯，本账期 80000 Credits / 已用 37196.8802 / 官方 tokens 2,122,918,870，
+  比值 5.7万 ≈ 57K tokens/Credit）。方案见 `specs/014-credits-token-ratio/`，接口契约见该目录 `INTERFACE.md`。
+
 - **用量构成：分项中文标签、占比与缓存命中率，模型列表卡内滚动（012）**：统计屏的总量卡不再只报四个绝对值——
   标签改成中文「输入 / 输出 / 缓存命中 / 缓存写入」（英文 input / output / cache hit / cache write），
   每一格多一行**占区间总量的比例**（分母是该区间的 `totals.tokens`），并新增**缓存命中率**格

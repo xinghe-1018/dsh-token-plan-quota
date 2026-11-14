@@ -1,6 +1,6 @@
 # README 截图是怎么来的
 
-`docs/images` 里的中英两套截图（中文 14 张、英文 13 张：编号 7 只有中文，编号 12 是只落 `.shots-work/` 的 QA 错误态）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
+`docs/images` 里的中英两套截图（中文 15 张、英文 14 张：编号 7 只有中文，编号 12 是只落 `.shots-work/` 的 QA 错误态）里的余额、token 数、日期**全是合成数据**。这个目录就是那台"造图机"。
 
 ## 为什么不是随手截一张
 
@@ -24,6 +24,9 @@ Protocol 的 `Fetch` 域，把这个响应（外加面板"更新于"按钮 POST 
 第四个接口是 008 的官方账号侧对照：`usage-official?…`（与本次查询同一份 query，三个入口都适用）。
 官方对照的 fixture 与缓存键**独立于本机快照**（`o<days>` / `oc<from>_<to>` / `om<month>`），
 并用 `assertUsageOfficialFixture()` 校验；两边数字不同源，拍出来就会出现"官方格等于本机格"或差额算反的假图。
+第五个接口是 014 的 Credits ↔ tokens 换算块：`usage-credits`（无查询参数，恒回本账期）。
+它既不是本机实测、也不是区间快照，而是「官方 Credits 计量 × 官方账号 tokens」的**本账期混合口径**，
+所以 fixture 单独一份（`usage-credits.json`）、数值走 `builtCredits()` 并用 `assertUsageCreditsFixture()` 校验。
 
 好处：不必模拟任何供应商的上游契约（尤其是千问控制台网关那套 Cookie/secToken 语义——最容易写错，
 而且一旦写进文档就会和真实上游长期不一致），并且真实数字**根本进不到浏览器**，跑图用的实例不需要任何凭据。
@@ -78,7 +81,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 `--lang` 决定浏览器语言，而插件界面文案跟着 `document.documentElement.lang` 走，所以中英各跑一次就是两套图。
 新版 `dsh web` 启动时会打印一条带 `?token=…` 的地址（首次访问 303 换 cookie）；**把整条地址原样传给 `--url`**
 即可，脚本会自己接 `fixture` 参数（直接传裸端口会被 401 挡在门外）。
-`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11,13,14,15`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
+`--shots` 可以只跑其中几张（默认 `2,3,4,5,6,7,8,9,10,11,13,14,15,16`，`1` 是要 ffmpeg 的 GIF；`12` 只出 QA 错误态、
 不进 `docs/`，所以不在默认集合里）。产物：
 
 | # | 文件 | 证明什么 |
@@ -97,6 +100,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 | 13 | `usage-month-2d.png` | 按月份查询：月份行可见、chip 停在「月份」、桶恰好是整月（如 31 天 31 根柱）、标题回显该月 |
 | 14 | `usage-tooltip-2d.png` | 柱子悬停：浮层报出该桶日期与 tokens 明细，位置夹在视口内 |
 | 15 | `usage-composition-2d.png` | 用量构成（012）：中文分项标签、四类占比、缓存命中率、模型列表内滚动 |
+| 16 | `usage-credits-2d.png` | Credits ↔ tokens 换算（014）：本账期比值、官方 tokens、已用 Credits、折算参考 |
 
 5/6/7 是同一取景（面板浮在聊天区左上角 + 底部徽标行进同一个裁切框），只差当前模型 ——
 读者要看的正是"换模型时这张卡怎么变"。所以 `panelScope` 设成 `current`（面板只列当前那一家）。
@@ -110,7 +114,8 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --lang en --out do
 
 中间产物落在仓库根的 `.shots-work/<lang>/<variant>.json`（当次用的合成 payload；用量统计是
 `.shots-work/<lang>/usage-<days>d.json` / `usage-custom-<from>_<to>.json` / `usage-month-<YYYY-MM>.json`，官方对照是
-`usage-official-<days>d.json` / `usage-official-custom-<from>_<to>.json` / `usage-official-month-<YYYY-MM>.json`；QA 错误态是
+`usage-official-<days>d.json` / `usage-official-custom-<from>_<to>.json` / `usage-official-month-<YYYY-MM>.json`，把那个接口单独一份；
+014 的换算块是单份 `usage-credits.json`；QA 错误态是
 `.shots-work/<lang>/qa/usage-official-error.png`）与 `.shots-work/<lang>/frames/`（GIF 帧），已 gitignore。**别把它们放到 `docs/` 下面**：
 `package.json` 的 `files` 显式列了 `docs`，而 allowlist 会压过 `.gitignore`，帧文件会直接被打进 npm 包。
 
@@ -154,7 +159,7 @@ node scripts/shots/make-shots.mjs --url http://127.0.0.1:3099 --width 768 --out 
 012 起 `%` 不再一刀切禁止：只允许构成比与命中率走客户端的白名单段（总量卡「占 57%」、模型行「(61.5%)」、
 命中率「27.6%」），值由 ⑮ 逐格复算；⑧⑨⑩⑬⑭ 的旧断言已从「整屏无 %」改为「只查 Credits」。
 
-⑧⑨⑩⑬⑭⑮ 拍之前都先过一道**官方对照就绪断言**：`[data-usage-official]` 存在、`data-stale="0"`、三格
+⑧⑨⑩⑬⑭⑮⑯ 拍之前都先过一道**官方对照就绪断言**：`[data-usage-official]` 存在、`data-stale="0"`、三格
 （官方 / 本机 / 差额）都是非空整数、细分行与说明段非空、块内无 `%` / `Credits`。008 起本机快照成功就会再请求
 一次 `usage-official`，少了这道断言，图里要么缺一块、要么是「官方取不到」的错误态，而截图本身看不出来。
 
@@ -197,10 +202,23 @@ chip 必须停在「月份」，脚注以外无 `Credits`（012 起 `%` 只来�
 首条模型 = `USAGE_COMPOSITION_FIRST_MODEL_ID`，分项行必须同时含四个中文标签、61.5% / 30.8% / 7.7% 三个后缀
 与「命中率 11.1%」，缓存写入为 0 时不许印 `(0%)`。脚注断言含「不是配额比例」与命中率公式；
 `Credits` 按脚注剔除后再查（006 的来源脚注原文就写着「不折算 Credits」）。
-取景与 ⑧⑨⑩⑬⑭ **不同**：这一屏的证据在模型卡上（卡头 + 四行可见行 + 第 5 行被裁切），
+取景与 ⑧⑨⑩⑬⑭⑯ **不同**：这一屏的证据在模型卡上（卡头 + 四行可见行 + 第 5 行被裁切），
 所以脚本把「按模型用量」卡滚到视口上部，断言整卡完整落在视口内、列表高度 ≥100px 才拍；
 官方对照与脚注仍在折叠线下，由就绪断言与脚注断言兜底。真值常量（8 条、首条 id、三项占比、命中率 11.1%）
 放在 `fixture.mjs` 并导出，`assertUsageFixture` 与截图脚本共用同一份，重拍才是字节可复现的。
+
+⑯ 是 014 的 Credits ↔ tokens 换算块，固定拍 **2026-11-01 起的本账期**（fixture 常量
+`USAGE_CREDITS_WINDOW` / `USAGE_CREDITS_TOTAL` / `USAGE_CREDITS_USED` / `USAGE_CREDITS_OFFICIAL_TOKENS`）：
+这一块展示的是「1 Credit ≈ 5.7万 tokens」（原始比值 57072.5，按官方 tokens ÷ 已用 Credits 现算）这类混合口径均值，不是固定兑换率，也不是区间快照。
+断言四层：① `[data-usage-credits]` 恰 1 个、`data-stale="0"`、非 loading / 非不可用 / 无重试按钮，
+且 `[data-usage-credits-ratio]` / `-window` / `-detail` / `-estimate` 与 `.tpq-usage-credits-note` 全部非空；
+② 比值行含 `Credit` 与 fixture 量纲串（zh「5.7万」/ en「57K」），明细含官方 tokens（zh「21.23亿」/ en「2.12B」）、
+已用 Credits `37197` / 总额 `80000` 与百分比 `46.5%`，账期行含 `2026-11-01` 与 `2026-11-30`，
+折算行含容量 tokens（zh「45.66亿」/ en「4.57B」）与「折算参考 / derived」；
+③ 口径护栏：无货币符号（¥ $ € £ / 元）、无「Credits 剩余」话术、无 `NaN`/`undefined`，
+英文套不混中文、中文套不混 `credits used` 这类英文句式；④ 换算块必须排在官方对照块之后。
+取景把这一块滚到视口上部并断言整块完整可见（≥120px）——
+它的证据是那四行文本，不是柱图，所以不像 ⑧⑨ 那样从页顶拍。
 
 ⑪ 是 008 的官方账号侧对照条，比 ⑩ 多一层"两个来源不许混"：三格（官方 / 本机 / 差额）必须与**各自的 fixture**
 逐个相等——官方取 `makeUsageOfficialSnapshot` 的 `totals.tokens`，本机取 `makeUsageSnapshot` 的
@@ -210,7 +228,7 @@ input / cacheRead / output，三个数字必须在一行里对得上（顺序不
 脚注以外不许出现 "Credits"（那句脚注原文就写着不折算 Credits）；012 起 `%` 只允许来自构成比与命中率（白名单段）。
 
 取景：1280×860 装不下「页头 + 总卡 + 柱图 + 模型榜 + 官方块」（到官方块底边约 940–1020px），所以分两种口径——
-⑧⑨⑩⑬⑭ 保持从页顶拍（标题、区间、日期行 / 月份行是它们的证据），官方块只露到三格数字；⑮ 滚到「按模型用量」卡（见上）；⑪ 单独滚到
+⑧⑨⑩⑬⑭ 保持从页顶拍（标题、区间、日期行 / 月份行是它们的证据），官方块只露到三格数字；⑮ 滚到「按模型用量」卡、⑯ 滚到「Credits 换算块」（见上）；⑪ 单独滚到
 「柱图卡顶 → 官方块 + 说明段 + 脚注」的取景，整块完整进图，且顶边吸到 `.tpq-usage` 子块边界，
 不把一行字切一半（`frameUsage()`：块底贴视口底 16px，再往上找最近的子块边界）。
 

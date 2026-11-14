@@ -17,7 +17,7 @@
  *   7. CHANGELOG 引用的 tag 必须存在（浅克隆/装出来的包看不见 tag 时**出声跳过**，不假红）；
  *   8. 两张键表逐行对得上代码（配置表 = DEFAULTS，条目键表 = 代码真读的 `source.*`）；
  *   9. 文本没有被错误码页读写过（BOM / U+FFFD / GBK 私用区残骸）；
- *  10. 二十七张截图（中文 14 张 / 英文 13 张）+ 一张结构图真实存在且 README 已引用，合成数据仍符合产品口径。
+ *  10. 二十九张截图（中文 15 张 / 英文 14 张）+ 一张结构图真实存在且 README 已引用，合成数据仍符合产品口径。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -395,6 +395,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/usage-tooltip-2d.png',
   'docs/images/usage-official-2d.png',
     'docs/images/usage-composition-2d.png',
+    'docs/images/usage-credits-2d.png',
     'docs/images/usage-3d.png',
     'docs/images/en/badge-follows-model.gif',
     'docs/images/en/panel-official-plus-meters.png',
@@ -408,6 +409,7 @@ const DIAGRAM = 'docs/images/architecture.png'   // 全仓库唯一的结构图�
     'docs/images/en/usage-tooltip-2d.png',
   'docs/images/en/usage-official-2d.png',
     'docs/images/en/usage-composition-2d.png',
+    'docs/images/en/usage-credits-2d.png',
     'docs/images/en/usage-3d.png',
   ]
   // 结构图与截图套不同源（由 diagrams/ 的规格产出、中英共用一张），所以它只进**存在性**清单，

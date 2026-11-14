@@ -652,9 +652,13 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('客户端用量屏：不手拼百分比（百分比只由 012 白名单段函数产出；命中：'
     + (clientPercents.join(' | ') || '无') + '）', clientPercents.length === 0)
   const clientCreditLines = clientCode.split(/\r?\n/).map(line => line.trim()).filter(line => /credit/i.test(line))
-  ok('客户端用量屏：Credits 只出现在「不折算 Credits」白名单行（命中：'
-    + (clientCreditLines.join(' | ') || '无') + '）',
-    clientCreditLines.length > 0 && clientCreditLines.every(line => line.includes('usageNoteNoCredits')))
+  // 014 起屏上会合法出现 Credits（换算块拿 Credits 做分子分母），但**文案仍必须走 COPY**：
+  // 所以这里改成「用量屏代码里不许有硬编码的 Credits 字符串字面量」，注释已由 stripComments 去掉。
+  const clientCreditLiterals = clientCode.split(/\r?\n/).map(line => line.trim())
+    // 只认首字母大写的 "Credits"（展示文案）；小写 credits-* 是错误码，不是屏幕文字。
+    .filter(line => /["'`][^"'`]*Credits[^"'`]*["'`]/.test(line))
+  ok('客户端用量屏：没有硬编码 Credits 文案（文案一律走 COPY；命中：'
+    + (clientCreditLiterals.join(' | ') || '无') + '）', clientCreditLiterals.length === 0)
   // 座位注册与关闭形状。selectPanel(null) 位于 UsageScreen 之前的关闭入口里，所以另切
   // openUsagePanel → usagePanelActive 一段（把两者都算进「客户端用量面」）。
   ok('客户端用量屏：main 座位按 key 注册到 PANEL_ID',
@@ -1025,8 +1029,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf011 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys011 = keysOf011(zhBlock011?.[1] ?? '')
   const enKeys011 = keysOf011(enBlock011?.[1] ?? '')
-  ok('011 i18n：COPY 键数仍是 zh / en 各 138（011 不加键；012 的 4 键另计）',
-    zhKeys011.length === 138 && enKeys011.length === 138)
+  // 011 本身不加键（134）；012 补 4 个比例键（→ 138）；014 再补 9 个换算键（→ 147）。
+  ok('011 i18n：COPY 键数跟着契约走（现 zh / en 各 147；011 本身不加键）',
+    zhKeys011.length === 147 && enKeys011.length === 147)
 
   // 8) 越界面：011 是纯客户端展示，宿主配置与出站主机都不许动。
   ok('011 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
@@ -1097,8 +1102,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   const keysOf012 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
   const zhKeys012 = keysOf012(zhBlock012?.[1] ?? '')
   const enKeys012 = keysOf012(enBlock012?.[1] ?? '')
-  ok('012 i18n：COPY 是 zh / en 各 138 键（012 新增 4 键：占比模板/命中率模板/命中率标签/公式脚注）',
-    zhKeys012.length === 138 && enKeys012.length === 138)
+  // 012 新增 4 键（占比模板/命中率模板/命中率标签/公式脚注）→ 138；014 再补 9 个换算键 → 147。
+  ok('012 i18n：COPY 现在 zh / en 各 147 键（012 的 4 键 + 014 的 9 键都在里面）',
+    zhKeys012.length === 147 && enKeys012.length === 147)
   ok('012 i18n：四类分项键在 zh / en 都存在',
     ['usageSplitInput', 'usageSplitOutput', 'usageSplitCacheRead', 'usageSplitCacheWrite']
       .every(key => zhKeys012.includes(key) && enKeys012.includes(key)))
@@ -1346,6 +1352,121 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
   ok('013 规格目录存在（spec/plan/tasks/INTERFACE）',
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '013-scroll-and-model-attribution', name))))
+}
+/* Credits ↔ tokens 换算（specs/014）：这条路最容易「看起来对」的三处——
+ * 拿本机 tokens 当分子（分子分母不同口径，比值偏小却照样出数）、
+ * Credits 只有当前账期一个读数却按查询区间等比例拆（估算冒充实测）、
+ * 官方明细被夹紧时仍拿部分区间相除（比值偏大且无提示）。这里把口径与结构一起钉住。 */
+{
+  const src = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const indexSrc014 = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+
+  // 1) 宿主纯函数：三个都必须可直接调（不然只能起真实控制台会话才测得到）。
+  for (const name of ['creditsCycleOf', 'creditsTokenRatioOf', 'composeCreditsToken', 'buildCreditsTokenSnapshot']) {
+    ok('014 宿主：__internals 暴露 ' + name, typeof __internals[name] === 'function')
+  }
+
+  // 2) 账期推导只算日期、不取整：取整发生在展示层，宿主提前 round 会让「额度 × 比例」对不上账。
+  const cycleStart = indexSrc014.indexOf('function creditsCycleOf')
+  const cycleEnd = indexSrc014.indexOf('function creditsTokenRatioOf')
+  ok('014 宿主：creditsCycleOf 可定位', cycleStart > 0 && cycleEnd > cycleStart)
+  const cycleRegion = cycleStart > 0 && cycleEnd > cycleStart ? indexSrc014.slice(cycleStart, cycleEnd) : ''
+  ok('014 宿主：creditsCycleOf 不做任何取整（round / floor / ceil / toFixed 都不许出现）',
+    cycleRegion !== '' && !/Math\.round|Math\.floor|Math\.ceil|toFixed\(/.test(cycleRegion))
+  ok('014 宿主：账期只认 monthly 优先、weekly 次之、fiveHour 单独成原因',
+    cycleRegion.includes("'monthly'") && cycleRegion.includes("'weekly'") && cycleRegion.includes("'fiveHour'")
+      && cycleRegion.includes('five-hour-only'))
+
+  // 3) 九个不可用原因必须全部写出来（少一个就有一种情况静默变成「暂无数据」）。
+  for (const reason of ['console-unavailable', 'no-console-card', 'no-credits-reading', 'no-credits-total',
+    'no-reset-time', 'five-hour-only', 'official-unavailable', 'official-clamped', 'no-token-data']) {
+    ok('014 宿主：原因码 ' + reason + ' 存在', indexSrc014.includes("'" + reason + "'") || indexSrc014.includes('"' + reason + '"'))
+  }
+
+  // 4) 路由：只读、fresh 透传、登记进 404 路由表。
+  ok('014 路由：/usage-credits 只读路由与 fresh=1 都在',
+    indexSrc014.includes("'usage-credits'") && indexSrc014.includes("searchParams.get('fresh')") === true)
+  ok('014 路由：usage-credits 出现在 404 路由表里（不列就查不到）',
+    /\[\s*'summary'[^\]]*'usage-credits'/.test(indexSrc014) || /'usage-official'\s*,\s*'usage-credits'/.test(indexSrc014))
+
+  // 5) 客户端结构：常量、取数、区块渲染三件齐全。
+  ok('014 客户端：USAGE_CREDITS 常量指向 /token-plan-quota/usage-credits',
+    src.includes('const USAGE_CREDITS = "/token-plan-quota/usage-credits"'))
+  ok('014 客户端：fetchCredits 与 usageCreditsSection 都存在',
+    src.includes('function fetchCredits(') && src.includes('function usageCreditsSection('))
+  for (const hook of ['"data-usage-credits": "1"', '"data-usage-credits-ratio"', '"data-usage-credits-window"',
+    '"data-usage-credits-detail"', '"data-usage-credits-estimate"', '"data-usage-credits-unavailable"',
+    '"data-usage-credits-retry"', 'className: "tpq-usage-credits"']) {
+    ok('014 客户端：钩子 ' + hook + ' 存在', src.includes(hook))
+  }
+
+  // 6) 展示口径：百分比只能由 usagePercentText 产出（012 白名单段是唯一出口）。
+  const creditsStart = src.indexOf('function usageCreditsSection')
+  const creditsEnd = src.indexOf('function usageViewport')
+  ok('014 客户端：换算块渲染段可定位', creditsStart > 0 && creditsEnd > creditsStart)
+  const creditsRegion = creditsStart > 0 && creditsEnd > creditsStart ? src.slice(creditsStart, creditsEnd) : ''
+  ok('014 客户端：百分比走 usagePercentText（不手拼）',
+    creditsRegion.includes('usagePercentText(') && !creditsRegion.includes('toFixed('))
+  const stripComments014 = source => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  const creditsCode = stripComments014(creditsRegion)
+  ok('014 客户端：换算块里没有 % 字面量（只有 usagePercentText 能产出百分比）',
+    creditsCode !== '' && !creditsCode.includes('"%"') && !creditsCode.includes("'%'"))
+  ok('014 客户端：换算块不出现货币符号（Credits 不折货币）',
+    creditsCode !== '' && !/[\u00a5$\u20ac]|\u5143/.test(creditsCode))
+
+  // 7) i18n：9 个新键、双份、中文键真有中文、英文键无 CJK。
+  const zhBlock014 = /const COPY = \{\n      zh: \{([\s\S]*?)\n      \},/.exec(src)
+  const enBlock014 = /\n      en: \{([\s\S]*?)\n      \},/.exec(src)
+  const keysOf014 = text => [...text.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map(match => match[1])
+  const zhKeys014 = keysOf014(zhBlock014?.[1] ?? '')
+  const enKeys014 = keysOf014(enBlock014?.[1] ?? '')
+  ok('014 i18n：COPY 键数升到 zh / en 各 147（138 + 9）',
+    zhKeys014.length === 147 && enKeys014.length === 147)
+  const creditsKeys = ['usageCreditsTitle', 'usageCreditsRatio', 'usageCreditsWindow', 'usageCreditsDetail',
+    'usageCreditsEstimate', 'usageCreditsNote', 'usageCreditsLoading', 'usageCreditsUnavailable', 'usageCreditsRetry']
+  ok('014 i18n：9 个换算键中英都在', creditsKeys.every(key => zhKeys014.includes(key) && enKeys014.includes(key)))
+  const zhLines014 = (zhBlock014?.[1] ?? '').split('\n').filter(line => /^ {8}usageCredits/.test(line))
+  const enLines014 = (enBlock014?.[1] ?? '').split('\n').filter(line => /^ {8}usageCredits/.test(line))
+  // 比值那行的中文字面量按契约就是 "1 Credit ≈ {tokens} tokens"（量纲只写英文），其余 8 行必须有汉字。
+  const zhRatioLine014 = zhLines014.filter(line => /^ {8}usageCreditsRatio:/.test(line))
+  const zhOtherLines014 = zhLines014.filter(line => !/^ {8}usageCreditsRatio:/.test(line))
+  ok('014 i18n：中文 9 行里 8 行有汉字，比值行保留 Credit/tokens 量纲（含 ≈）',
+    zhLines014.length === 9 && zhOtherLines014.length === 8
+      && zhOtherLines014.every(line => /[\u3400-\u9fff]/u.test(line))
+      && zhRatioLine014.length === 1 && zhRatioLine014[0].includes('\u2248'))
+  ok('014 i18n：英文 9 行都没有汉字', enLines014.length === 9 && enLines014.every(line => !/[\u3400-\u9fff]/u.test(line)))
+  ok('014 i18n：比值模板带 {tokens}，明细模板带 {percent}',
+    src.includes('1 Credit \u2248 {tokens} tokens') && src.includes('{used} / {total}\uff08{percent}\uff09'))
+  ok('014 i18n：脚注写明不是固定兑换率（中英各一处）',
+    src.includes('\u4e0d\u662f\u56fa\u5b9a\u5151\u6362\u7387') && /not a fixed exchange rate/i.test(src))
+
+  // 8) CSS：与官方块同一套卡片视觉（否则会看起来像临时贴上去的一块）。
+  ok('014 CSS：.tpq-usage-credits 卡片与比值行样式都在',
+    /.tpq-usage-credits\{[^}]*border/.test(src) && /\.tpq-usage-credits-ratio\{[^}]*tabular-nums/.test(src))
+
+  // 9) 越界面：014 不加配置键、不加出站主机、不引第三方依赖。
+  ok('014 配置键没有扩表（DEFAULTS 仍 25 个键）', Object.keys(__internals.DEFAULTS).length === 25)
+  ok('014 出站主机没有被这份功能扩表（仍 8 条 https）',
+    __internals.DECLARED_HOSTS.length === 8
+      && __internals.DECLARED_HOSTS.every(host => host.startsWith('https://')))
+
+  // 10) 文档与规格：口径必须写进对外描述（下一个人不会自己去读代码才发现「不是固定汇率」）。
+  const readme014 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn014 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  ok('014 文档：中文 README 写了换算口径与「不是固定兑换率」',
+    readme014.includes('Credits') && readme014.includes('不是固定兑换率') && readme014.includes('usage-credits'))
+  ok('014 文档：英文 README 写了换算块与固定汇率否认',
+    /credits/i.test(readmeEn014) && /not a fixed exchange rate/i.test(readmeEn014) && readmeEn014.includes('usage-credits'))
+  const changelog014 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('014 CHANGELOG：Unreleased 段记了 014 与 Credits 换算',
+    /## \[Unreleased\]/.test(changelog014) && changelog014.includes('014') && changelog014.includes('Credits'))
+  ok('014 规格目录存在（spec/plan/tasks/INTERFACE）',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '014-credits-token-ratio', name))))
+  const shotsManifest014 = readFileSync(join(ROOT, 'scripts', 'check-docs.mjs'), 'utf8')
+  ok('014 截图清单：中英换算图都在',
+    shotsManifest014.includes('docs/images/usage-credits-2d.png')
+      && shotsManifest014.includes('docs/images/en/usage-credits-2d.png'))
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

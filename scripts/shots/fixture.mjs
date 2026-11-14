@@ -1334,3 +1334,170 @@ export function assertFixture(snapshot, options = {}) {
   need('面板至少两张官方卡', snapshot.cards.filter(card => card.veracity === 'verified').length >= 2)
   return checks
 }
+
+/* ---------------------------------------------- 014 Credits ↔ tokens 换算块 */
+
+/**
+ * 014：`/token-plan-quota/usage-credits` 的**可用态** fixture（INTERFACE §1.1）。
+ *
+ * 为什么单独一份而不是复用 summary：这条路是本账期的混合口径——官方 Credits 计量 × 官方账号 tokens，
+ * 形状（window/credits/tokens/ratio/scope/source）和 summary、usage、usage-official 三者都不同，
+ * 混用一份 JSON 会让截图里「比值」和「明细」对不上，而图本身看不出来。
+ *
+ * 数值取 reviewer 实测的一组（80000 Credits / 已用 37196.8802 / 官方 2,122,918,870 tokens），
+ * 但 **tokensPerCredit 与 capacityTokens 按 INTERFACE §2.2/§2.3 的公式现算**，不抄示例里的近似值：
+ * 官方 57072.3 / 4565784000 是示例的手工截断，宿主真发的是 57072.49797793526 / 4565799838；
+ * 截图断言只比对展示串（5.7万 / 57K、45.66亿 / 4.57B），两者一致。
+ *
+ * window 写死 2026-11-01 ~ 2026-11-14（reviewer 取数日）：这一块展示的是"本账期"，跟着 Date.now()
+ * 走到下个月会让常量、断言、README 三处漂移；⑭ 的月份也是同样写死的理由。
+ */
+export const USAGE_CREDITS_TOTAL = 80_000
+export const USAGE_CREDITS_USED = 37_196.8802
+export const USAGE_CREDITS_USED_PERCENT = 46.4961
+export const USAGE_CREDITS_OFFICIAL_TOKENS = 2_122_918_870
+export const USAGE_CREDITS_LOCAL_TOKENS = 2_080_883_520
+export const USAGE_CREDITS_WINDOW = Object.freeze({
+  key: 'monthly',
+  label: '本月账期',
+  labelEn: 'Monthly cycle',
+  from: '2026-11-01',
+  to: '2026-11-14',
+  resetAt: 1_796_054_400_000,
+  resetDay: '2026-11-30',
+  cycleDays: 30,
+  elapsedDays: 14,
+})
+/** = 官方 tokens ÷ 已用 Credits（原始浮点，客户端负责取整展示）。 */
+export const USAGE_CREDITS_TOKENS_PER_CREDIT = USAGE_CREDITS_OFFICIAL_TOKENS / USAGE_CREDITS_USED
+/** = round(tokensPerCredit × total)：折算参考，非官方口径。 */
+export const USAGE_CREDITS_CAPACITY_TOKENS = Math.round(USAGE_CREDITS_TOKENS_PER_CREDIT * USAGE_CREDITS_TOTAL)
+export const USAGE_CREDITS_SOURCE_LABEL = '官方 Credits × 官方 tokens（本账期实测）'
+export const USAGE_CREDITS_SOURCE_LABEL_EN = 'Official credits × official tokens (measured this cycle)'
+
+const USAGE_CREDITS_TOP_KEYS = ['generatedAt', 'available', 'window', 'credits', 'tokens', 'ratio', 'scope', 'source']
+const USAGE_CREDITS_WINDOW_KEYS = ['key', 'label', 'labelEn', 'from', 'to', 'resetAt', 'resetDay', 'cycleDays', 'elapsedDays']
+const USAGE_CREDITS_CREDITS_KEYS = ['unit', 'total', 'used', 'usedPercent']
+const USAGE_CREDITS_TOKENS_KEYS = ['official', 'local']
+const USAGE_CREDITS_RATIO_KEYS = ['tokensPerCredit', 'capacityTokens']
+const USAGE_CREDITS_SCOPE_KEYS = ['officialFrom', 'officialTo', 'officialDays', 'cached', 'clampedFrom']
+const USAGE_CREDITS_SOURCE_KEYS = ['kind', 'veracity', 'label', 'labelEn']
+
+/**
+ * 造一份 `/token-plan-quota/usage-credits` 可用态响应。
+ * @param {{now?: number}} [options]
+ * @returns {object} 与 INTERFACE §1.1 同形的 payload。
+ */
+export function builtCredits(options = {}) {
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+  return {
+    generatedAt: now,
+    available: true,
+    window: { ...USAGE_CREDITS_WINDOW },
+    credits: {
+      unit: 'Credits',
+      total: USAGE_CREDITS_TOTAL,
+      used: USAGE_CREDITS_USED,
+      usedPercent: USAGE_CREDITS_USED_PERCENT,
+    },
+    tokens: { official: USAGE_CREDITS_OFFICIAL_TOKENS, local: USAGE_CREDITS_LOCAL_TOKENS },
+    ratio: {
+      tokensPerCredit: USAGE_CREDITS_TOKENS_PER_CREDIT,
+      capacityTokens: USAGE_CREDITS_CAPACITY_TOKENS,
+    },
+    scope: {
+      officialFrom: USAGE_CREDITS_WINDOW.from,
+      officialTo: USAGE_CREDITS_WINDOW.to,
+      officialDays: USAGE_CREDITS_WINDOW.elapsedDays,
+      cached: false,
+      clampedFrom: null,
+    },
+    source: {
+      kind: 'credits-token',
+      veracity: 'measured',
+      label: USAGE_CREDITS_SOURCE_LABEL,
+      labelEn: USAGE_CREDITS_SOURCE_LABEL_EN,
+    },
+  }
+}
+
+/**
+ * `/usage-credits` fixture 的自检（014）：字段集严格等于 INTERFACE §1.1、窗口日期自洽、
+ * 比值/容量按 §2.2/§2.3 公式现算、无货币符号 / 无「Credits 剩余」/ 无真实痕迹。
+ * @param {object} credits builtCredits 的产物
+ * @param {{now?: number}} [options]
+ * @returns {string[]} 通过的断言说明（抛错表示不通过）
+ */
+export function assertUsageCreditsFixture(credits, options = {}) {
+  const checks = []
+  const need = (label, cond) => {
+    if (!cond) throw new Error('credits usage fixture 自检失败：' + label)
+    checks.push(label)
+  }
+  const sameKeys = (value, keys) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  const now = Number.isFinite(options.now) ? options.now : Date.now()
+
+  need('顶层键集 = INTERFACE §1.1 的 8 个键', sameKeys(credits, USAGE_CREDITS_TOP_KEYS))
+  need('generatedAt 是毫秒时间戳', isClockMillis(credits.generatedAt))
+  need('available 为 true（否则拍的是不可用态）', credits.available === true)
+  need('不带不可用态的 reason/code/hint', credits.reason === undefined && credits.code === undefined && credits.hint === undefined)
+
+  const win = credits.window
+  need('window 键集 = 9 个', sameKeys(win, USAGE_CREDITS_WINDOW_KEYS))
+  need('window.key = monthly', win.key === 'monthly')
+  need('window.from 是日期', usageIsDayKey(win.from))
+  need('window.to 是日期', usageIsDayKey(win.to))
+  need('window.resetDay 是日期', usageIsDayKey(win.resetDay))
+  need('window.from < window.to', win.from < win.to)
+  need('window.to ≤ resetDay', win.to <= win.resetDay)
+  need('window.resetAt 是毫秒时间戳', isClockMillis(win.resetAt))
+  need('resetDay = resetAt 前一天的 dayKey', usageAddDays(usageDayKey(new Date(win.resetAt)), -1) === win.resetDay)
+  need('cycleDays = from..resetDay 天数', win.cycleDays === usageCountDays(win.from, win.resetDay))
+  need('elapsedDays = from..to 天数', win.elapsedDays === usageCountDays(win.from, win.to))
+  need('window.label / labelEn 非空', typeof win.label === 'string' && win.label.trim() !== '' && typeof win.labelEn === 'string' && win.labelEn.trim() !== '')
+
+  const cr = credits.credits
+  need('credits 键集 = unit/total/used/usedPercent', sameKeys(cr, USAGE_CREDITS_CREDITS_KEYS))
+  need('credits.unit = Credits', cr.unit === 'Credits')
+  need('credits.total 是正有限数', Number.isFinite(cr.total) && cr.total > 0)
+  need('credits.used 是非负有限数且小于 total', Number.isFinite(cr.used) && cr.used >= 0 && cr.used < cr.total)
+  need('credits.usedPercent = used/total×100（4 位取整）', cr.usedPercent === round((cr.used / cr.total) * 100))
+
+  const tk = credits.tokens
+  need('tokens 键集 = official/local', sameKeys(tk, USAGE_CREDITS_TOKENS_KEYS))
+  need('tokens.official 是正有限数', Number.isFinite(tk.official) && tk.official > 0)
+  need('tokens.local 是真值或 null（不参与比值）', tk.local === null || (Number.isFinite(tk.local) && tk.local >= 0))
+
+  const ratio = credits.ratio
+  need('ratio 键集 = tokensPerCredit/capacityTokens', sameKeys(ratio, USAGE_CREDITS_RATIO_KEYS))
+  need('tokensPerCredit = official ÷ used（原始浮点）', ratio.tokensPerCredit === USAGE_CREDITS_TOKENS_PER_CREDIT)
+  need('tokensPerCredit 是正有限数', Number.isFinite(ratio.tokensPerCredit) && ratio.tokensPerCredit > 0)
+  need('capacityTokens = round(tokensPerCredit × total)', ratio.capacityTokens === Math.round(ratio.tokensPerCredit * cr.total))
+  need('capacityTokens 是正有限整数', Number.isInteger(ratio.capacityTokens) && ratio.capacityTokens > 0)
+
+  const scope = credits.scope
+  need('scope 键集 = 5 个', sameKeys(scope, USAGE_CREDITS_SCOPE_KEYS))
+  need('scope.officialFrom/To = window 区间', scope.officialFrom === win.from && scope.officialTo === win.to)
+  need('scope.officialDays = window.elapsedDays', scope.officialDays === win.elapsedDays)
+  need('scope.cached 为 false', scope.cached === false)
+  need('scope.clampedFrom 为 null（未夹紧）', scope.clampedFrom === null)
+
+  const source = credits.source
+  need('source 键集 = 4 个', sameKeys(source, USAGE_CREDITS_SOURCE_KEYS))
+  need('source.kind = credits-token', source.kind === 'credits-token')
+  need('source.veracity = measured', source.veracity === 'measured')
+  need('source.label / labelEn 非空', typeof source.label === 'string' && source.label.trim() !== ''
+    && typeof source.labelEn === 'string' && source.labelEn.trim() !== '')
+
+  // 所有数值必须有限；JSON 里不许出现 NaN / undefined / 货币符号 / 路径 / 凭据形态。
+  const leaves = collectLeaves(credits)
+  const flat = leaves.map(value => (typeof value === 'string' ? value : String(value))).join('\n')
+  need('没有非有限数字', !leaves.some(value => typeof value === 'number' && !Number.isFinite(value)))
+  need('没有 NaN/undefined 字样', flat.indexOf('NaN') < 0 && flat.indexOf('undefined') < 0)
+  need('没有货币符号（¥ $ € £ / 元）', !/[¥$€£]|元/.test(flat))
+  need('没有「Credits 剩余」', !/Credits\s*剩余/i.test(flat))
+  need('没有本机盘符/绝对路径', !/[A-Za-z]:[\\/]/.test(flat))
+  need('没有凭据形态', !/eyJ[A-Za-z0-9_-]{10,}|BEGIN [A-Z ]+PRIVATE KEY|Bearer\s+[A-Za-z0-9._-]{8,}/.test(flat))
+  need('英文 label 里没有中文', !/\p{Script=Han}/u.test(source.labelEn))
+  return checks
+}

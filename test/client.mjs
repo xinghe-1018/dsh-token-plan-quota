@@ -1690,7 +1690,8 @@ function findChip(node) {
   // + 「官方」格标签 + clampedFrom 说明），118 → 128；009 增 usageScanRescued（008 的 128 → 129）。
   // 010 增了 5 个月份键（Preset/Label/Apply/Bad/MonthTitle），129 → 134。
   // 012 增了 4 个比例键（ShareOf/HitRateLabel/HitRate/RatioNote），134 → 138。
-  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [138, 138])
+  // 014 增了 9 个 Credits 换算键（Title/Ratio/Window/Detail/Estimate/Note/Loading/Unavailable/Retry），138 → 147。
+  check('zh / en 键数一致（新增文案必须两边都写）', [zh.length, en.length], [147, 147])
   ok('只有 zh 有的键：无', zh.filter(key => !en.includes(key)).length === 0, zh.filter(key => !en.includes(key)))
   ok('只有 en 有的键：无', en.filter(key => !zh.includes(key)).length === 0, en.filter(key => !zh.includes(key)))
 
@@ -2262,7 +2263,8 @@ async function mountUsage(options = {}) {
 {
   const bundle = await mountUsage()
   resetHooks()
-  const text = collectText(await settle(bundle.renderUsage, 5)).join(' ')
+  const tree = await settle(bundle.renderUsage, 5)
+  const text = collectText(tree).join(' ')
   const fragments = text.match(/\d+(?:\.\d+)?%|<0\.1%/g) ?? []
   // 7 天 fixture：总量 3 个占比 + 1 个命中率；两个模型各 3 个占比 + 1 个命中率（缓存写入 0 不出占比）。
   check('画面的百分比只有实测比值这一种来源（3+1 + 3+1 + 3+1 = 12 处）', fragments.length, 12)
@@ -2271,8 +2273,14 @@ async function mountUsage(options = {}) {
       .includes(fragment)), fragments.join(','))
   ok('百分比片段都长成「x%」或「(x%)」，不拼进句子',
     strayPercentFragments(text).length === 0, strayPercentFragments(text).join(' | '))
-  const withoutWhitelist = text.split('不折算 Credits，也不估算余量。').join('')
-  ok('除那一条脚注白名单外不出现 Credits', !withoutWhitelist.includes('Credits'))
+  // 014：Credits 换算块合法地出现「Credits」——换算块的文案由 usageCredits* 九个键决定，
+  // 这里把换算块整段的文本先剔掉，剩下的画面除了那一条脚注白名单外仍不许出现 Credits。
+  let withoutCreditsBlock = text.split('不折算 Credits，也不估算余量。').join('')
+  for (const chunk of collectText(findNodes(tree, 'tpq-usage-credits')[0] ?? [])) {
+    withoutCreditsBlock = withoutCreditsBlock.split(chunk).join('')
+  }
+  ok('除换算块与那一条脚注白名单外不出现 Credits', !withoutCreditsBlock.includes('Credits'),
+    withoutCreditsBlock.slice(0, 400))
   ok('白名单脚注本身确实渲染出来了', text.includes('不折算 Credits，也不估算余量。'))
   ok('比例口径脚注跟着数据一起渲染（公式写在屏上）',
     text.includes('占比与命中率都是本机实测 tokens 的比值')
@@ -2789,9 +2797,13 @@ function openCustom(bundle) {
   const regionCode = region.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
   ok('T004 客户端用量面不出现百分比字面量（比例只在白名单段拼）', regionCode.includes('%') === false,
     (regionCode.match(/.{0,20}%.{0,20}/g) ?? []).join(' | '))
-  const creditLines = region.split('\n').filter((line) => /credit/i.test(line))
-  ok('T004 Credits 只出现在白名单脚注行（脚注只说「不折算 Credits」）',
-    creditLines.every((line) => line.includes('usageNoteNoCredits')), creditLines.join(' | '))
+  // 014：Credits 换算块合法引入 credits* 标识符、USAGE_CREDITS 常量与 credits-* 错误码；
+  // 画面文案仍只许来自 COPY —— 所以这里改成只在「字符串字面量」层面判（比逐行判更准）。
+  const creditLiterals = regionCode.match(/"[^"\n]*"|'[^'\n]*'|`[^`\n]*`/g) ?? []
+  const creditLiteralOffenders = creditLiterals.filter((literal) => /credit/i.test(literal)
+    && !/^["'`]credits-[a-z-]+["'`]$/.test(literal))
+  ok('T004 代码里没有直接写死的 Credits 画面文案（文案一律走 COPY）',
+    creditLiteralOffenders.length === 0, creditLiteralOffenders.join(' | '))
 }
 
 /* T005 ①：chip → 日期行展开、预填当前快照区间、按 from/to 请求（不带 days）。 */
@@ -4683,6 +4695,376 @@ function viewportOf(tree) {
   const label = viewportOf(tree)?.props?.['aria-label']
   ok('T103 en 界面 aria-label 跟随英文标题且不含中文',
     typeof label === 'string' && label.length > 0 && !/[\u4e00-\u9fff]/.test(label), String(label))
+}
+
+
+/* ==========================================================================
+ * 014：Credits ↔ tokens 换算块（specs/014-credits-token-ratio/INTERFACE.md §3 / §4）
+ * 路由 GET /token-plan-quota/usage-credits：成功恒 200，可用性由 available 区分；
+ * 宿主侧路由由 host-core 并行实现，这里只按契约形状造假快照，不联网。
+ * ========================================================================== */
+
+/** 契约 §1.1 的可用态快照（数值取示例那一组，逐字断言的期望值据此算）。 */
+function makeCreditsSnapshot(overrides = {}) {
+  const base = {
+    generatedAt: Date.now(),
+    available: true,
+    window: {
+      key: 'monthly',
+      label: '本月窗口',
+      labelEn: 'Monthly window',
+      from: '2026-11-01',
+      to: '2026-11-14',
+      resetAt: '2026-11-30T00:00:00.000Z',
+      resetDay: '2026-11-30',
+      cycleDays: 30,
+      elapsedDays: 14,
+    },
+    credits: { unit: 'Credits', total: 80000, used: 37196.8802, usedPercent: 46.4961 },
+    tokens: { official: 2122918870, local: 2080883520 },
+    ratio: { tokensPerCredit: 57072.3, capacityTokens: 4565784000 },
+    scope: { officialFrom: '2026-10-16', officialTo: '2026-11-14', officialDays: 30, cached: false, clampedFrom: null },
+    source: { kind: 'credits-token', veracity: 'measured', label: '本账期实测', labelEn: 'measured this cycle' },
+  }
+  const merged = { ...base, ...overrides }
+  for (const key of ['window', 'credits', 'tokens', 'ratio', 'scope', 'source']) {
+    if (overrides[key] !== undefined) merged[key] = { ...base[key], ...overrides[key] }
+  }
+  return merged
+}
+
+/**
+ * 专用 fetch：credits 走契约形状，本机 / 官方仍回既有假快照（否则官方块会红）。
+ * options.pending / networkError / httpError / body(index, url) 用来造五种状态。
+ */
+function usageCreditsFetch(options = {}, mutateUsage = (snap) => snap) {
+  let creditsIndex = 0
+  return async (url, init) => {
+    const target = String(url)
+    fetchCalls.push({ url: target, method: init?.method ?? 'GET' })
+    if (target.startsWith('/token-plan-quota/usage-credits')) {
+      creditsIndex += 1
+      if (options.pending === true) return new Promise(() => {})
+      if (options.networkError === true) throw new TypeError('network down')
+      if (options.httpError === true) {
+        return { ok: false, status: 500, json: async () => ({ error: 'credits-unavailable' }) }
+      }
+      const body = typeof options.body === 'function'
+        ? options.body(creditsIndex, target)
+        : (options.body !== undefined ? options.body : makeCreditsSnapshot())
+      return { ok: true, status: 200, json: async () => body }
+    }
+    const days = Number(new URL(target, 'http://localhost').searchParams.get('days')) || 7
+    if (target.startsWith('/token-plan-quota/usage-official')) {
+      return { ok: true, status: 200, json: async () => makeOfficialSnapshot(days) }
+    }
+    return { ok: true, status: 200, json: async () => mutateUsage(makeUsageSnapshot(days)) }
+  }
+}
+
+function creditsRequests() {
+  return fetchCalls.filter((entry) => String(entry.url).startsWith('/token-plan-quota/usage-credits'))
+}
+
+function creditsSectionOf(tree) {
+  return findNodes(tree, 'tpq-usage-credits')[0]
+}
+
+function creditsTextOf(tree) {
+  const section = creditsSectionOf(tree)
+  return section === undefined ? '' : collectText(section).join(' ')
+}
+
+function creditsAttrNode(tree, attr) {
+  const section = creditsSectionOf(tree)
+  return section === undefined ? undefined : nodesWithProp(section, attr)[0]
+}
+
+async function mountCreditsScreen(options = {}) {
+  const bundle = await mountUsage({
+    lang: options.lang ?? 'zh-CN',
+    fetchImpl: options.fetchImpl ?? usageCreditsFetch(options.credits ?? {}),
+    timeoutMs: options.timeoutMs,
+  })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, options.rounds ?? 4)
+  return { bundle, tree }
+}
+
+/* ① §3.1 / §3.4 静态契约：路由常量、一次性取数的闸门、CSS 与 __internals。 */
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('T014 路由常量紧跟 USAGE_OFFICIAL（同一个常量区）',
+    /const USAGE_OFFICIAL = "[^"]+";[\s\S]{0,400}const USAGE_CREDITS = "\/token-plan-quota\/usage-credits";/.test(source))
+  ok('T014 fresh 只在重试时拼 ?fresh=1（唯一构造路径）',
+    /USAGE_CREDITS \+ \(fresh === true \? "\?fresh=1" : ""\)/.test(source))
+  ok('T014 挂载只取一次用 ref 闸门（不靠依赖数组，假 React 每帧都跑 effect）',
+    /if \(creditsBootRef\.current === true\) return undefined;/.test(source))
+  const creditsCallSites = [...source.matchAll(/(?<!function )fetchCredits\(/g)].map((match) => match.index)
+  check('T014 fetchCredits 只有「挂载」与「重试」两个调用点（不随区间重取）', creditsCallSites.length, 2)
+  ok('T014 换算块按「官方对照之后、整页脚注之前」插入',
+    /blocks\.push\(usageOfficialSection\([\s\S]{0,700}blocks\.push\(usageCreditsSection\(/.test(source))
+  const cssRegion = source.slice(source.indexOf('.tpq-usage-credits{'), source.indexOf('@media (max-width:520px)', source.indexOf('.tpq-usage-credits{')))
+  ok('T014 卡片视觉与官方条同档（边框/12px 圆角/14px 16px 内边距/12px 上间距）',
+    cssRegion.includes('border:1px solid') && cssRegion.includes('border-radius:12px')
+      && cssRegion.includes('padding:14px 16px') && cssRegion.includes('margin-top:12px'), cssRegion.slice(0, 260))
+  ok('T014 比值 18px/600 且数字等宽（tabular-nums）',
+    /\.tpq-usage-credits-ratio\{[^}]*font-size:18px;font-weight:600;[\s\S]{0,140}tabular-nums/.test(cssRegion))
+  ok('T014 长文案允许任意位置折行（375px 不横向溢出）',
+    (cssRegion.match(/overflow-wrap:anywhere/g) ?? []).length >= 5 && cssRegion.includes('min-width:0'),
+    String((cssRegion.match(/overflow-wrap:anywhere/g) ?? []).length))
+  ok('T014 换算块不写死像素宽（只随容器走）', /width:\s*\d{3,}px/.test(cssRegion) === false)
+  const sectionRegion = source.slice(source.indexOf('function usageCreditsSection'), source.indexOf('function usageViewport'))
+  const sectionCode = sectionRegion.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  ok('T014 渲染函数自身不写百分比字面量（比例只走 usagePercentText）',
+    sectionCode.includes('%') === false && /usagePercentText\(used, total\)/.test(sectionCode),
+    (sectionCode.match(/.{0,20}%.{0,20}/g) ?? []).join(' | '))
+  const internals = (await mountUsage()).api.__internals
+  ok('T014 __internals 暴露 creditsPayloadState / usageCreditsSection',
+    typeof internals.creditsPayloadState === 'function' && typeof internals.usageCreditsSection === 'function')
+}
+
+/* ② 契约 §1 的 200 响应分类矩阵（纯函数；别把半截数字当成功）。 */
+{
+  const internals = (await mountUsage()).api.__internals
+  const state = internals.creditsPayloadState
+  check('T014 可用态判 ready', state(makeCreditsSnapshot()).kind, 'ready')
+  ok('T014 tokens.local 可为 null（不参与比值）', state(makeCreditsSnapshot({ tokens: { local: null } })).kind === 'ready')
+  const unavailable = state({ available: false, reason: 'no-console-card', hint: '去控制台复制额度' })
+  check('T014 available:false 判 unavailable 并保留 reason 当 code', [unavailable.kind, unavailable.code, unavailable.hint],
+    ['unavailable', 'no-console-card', '去控制台复制额度'])
+  const unavailableWithCode = state({ available: false, reason: 'no-console-card', code: 'credits-no-console-card' })
+  check('T014 unavailable 有 code 时优先 code', unavailableWithCode.code, 'credits-no-console-card')
+  const failedBody = state({ error: 'credits-unavailable', code: 'credits-console-missing', hint: 'h' })
+  check('T014 200 + error 体判 error（绝不当成功数据）', [failedBody.kind, failedBody.code, failedBody.hint],
+    ['error', 'credits-console-missing', 'h'])
+  check('T014 null / 非对象都判 error（不炸）', [state(null).kind, state('nope').kind], ['error', 'error'])
+  check('T014 缺 available 判 error', state({ generatedAt: 1 }).kind, 'error')
+  check('T014 缺 window/tokens/ratio 判 error',
+    ['window', 'tokens', 'ratio'].map((key) => state({ ...makeCreditsSnapshot(), [key]: null }).kind), ['error', 'error', 'error'])
+  check('T014 total 为 0 / 负数 / 非有限判 error',
+    [state(makeCreditsSnapshot({ credits: { total: 0 } })).kind,
+      state(makeCreditsSnapshot({ credits: { total: -1 } })).kind,
+      state(makeCreditsSnapshot({ credits: { total: 'x' } })).kind,
+      state(makeCreditsSnapshot({ credits: { used: -1 } })).kind,
+      state(makeCreditsSnapshot({ ratio: { tokensPerCredit: 0 } })).kind,
+      state(makeCreditsSnapshot({ tokens: { official: -5 } })).kind], ['error', 'error', 'error', 'error', 'error', 'error'])
+}
+
+/* ③ §4：就绪态中文逐字（数值格式按 formatTokens / usageCount / usagePercentText 的真实口径）。 */
+{
+  const { tree } = await mountCreditsScreen()
+  const section = creditsSectionOf(tree)
+  ok('T014 有快照时渲染换算块', section !== undefined)
+  check('T014 section 钩子 data-usage-credits', section?.props?.['data-usage-credits'], '1')
+  check('T014 尚未切区间，data-stale=0', section?.props?.['data-stale'], '0')
+  check('T014 标题逐字（zh）', collectText(findNodes(section, 'tpq-usage-credits-title')[0]).join(''),
+    'Credits 与 tokens 换算')
+  check('T014 整屏只有一块换算（标题只出现一次）', findNodes(tree, 'tpq-usage-credits-title').length, 1)
+  check('T014 比值行逐字（57072.3 → 5.7万）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+  check('T014 账期行逐字',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-window')).join(''),
+    '本账期 2026-11-01 起至今 · 官方额度 2026-11-30 重置')
+  check('T014 明细行逐字（官方 tokens / 已用 Credits / 官方已用比例）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-detail')).join(''),
+    '官方账号 tokens 21.23亿 · 已用 Credits 37197 / 80000（46.5%）')
+  check('T014 折算行逐字（明写非官方口径）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-estimate')).join(''),
+    '按本账期实测比值，80000 Credits 约合 45.66亿 tokens（折算参考，非官方口径）')
+  check('T014 口径脚注逐字（比值定义 + 混合口径均值）',
+    collectText(findNodes(section, 'tpq-usage-credits-note')[0]).join(''),
+    '比值 = 官方账号 tokens ÷ 已用 Credits；已用 Credits = 官方额度 × 官方已用比例。它是本账期的混合口径均值，随模型与缓存命中率变化，不是固定兑换率。')
+  check('T014 就绪态不给重试按钮', nodesWithProp(section, 'data-usage-credits-retry').length, 0)
+  ok('T014 就绪态不带 unavailable / error 钩子',
+    nodesWithProp(section, 'data-usage-credits-unavailable').length === 0
+      && nodesWithProp(section, 'data-usage-credits-error').length === 0)
+  const creditsText = creditsTextOf(tree)
+  ok('T014 就绪态没有占位符残留（{tokens}/{percent}…）', !/\{[a-zA-Z]+\}/.test(creditsText), creditsText)
+  ok('T014 就绪态不含未取整的长小数（37196.8802 不上屏）', !creditsText.includes('37196.88'), creditsText)
+  ok('T014 明细的百分比 = usagePercentText(used, total) 的同一口径',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-detail')).join('').includes('（46.5%）'))
+}
+
+/* ④ §4：就绪态英文逐字，且英文界面不混中文。 */
+{
+  const { tree } = await mountCreditsScreen({ lang: 'en-US' })
+  check('T014 en 标题', collectText(findNodes(tree, 'tpq-usage-credits-title')[0]).join(''), 'Credits ↔ tokens')
+  check('T014 en 比值行（57072.3 → 57K）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 credit ≈ 57K tokens')
+  check('T014 en 账期行',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-window')).join(''),
+    'Cycle from 2026-11-01 · allowance resets 2026-11-30')
+  check('T014 en 明细行',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-detail')).join(''),
+    'Official tokens 2.12B · credits used 37197 / 80000 (46.5%)')
+  check('T014 en 折算行',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-estimate')).join(''),
+    "At this cycle's measured ratio, 80000 credits ≈ 4.57B tokens (derived, not official)")
+  ok('T014 en 换算块整段无中文', !/[\u3400-\u9fff]/u.test(creditsTextOf(tree)), creditsTextOf(tree))
+  ok('T014 en 脚注是英文',
+    /blended average/.test(collectText(findNodes(tree, 'tpq-usage-credits-note')[0]).join('')))
+}
+
+/* ⑤ §4：数字格式（万/亿、千分位、百分比；四舍五入口径与相邻卡片同源）。 */
+{
+  const { tree } = await mountCreditsScreen({
+    credits: {
+      body: makeCreditsSnapshot({
+        credits: { total: 8000, used: 4000 },
+        tokens: { official: 8000, local: null },
+        ratio: { tokensPerCredit: 8000, capacityTokens: 45600 },
+      }),
+    },
+  })
+  check('T014 千分位：8000 → 8,000',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 8,000 tokens')
+  check('T014 明细同时用千分位与已用百分比',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-detail')).join(''),
+    '官方账号 tokens 8,000 · 已用 Credits 4000 / 8000（50%）')
+  check('T014 折算行按 formatTokens 输出（45600 → 4.6万）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-estimate')).join(''),
+    '按本账期实测比值，8000 Credits 约合 4.6万 tokens（折算参考，非官方口径）')
+}
+{
+  const { tree } = await mountCreditsScreen({
+    credits: { body: makeCreditsSnapshot({ credits: { total: 80000, used: 0 } }) },
+  })
+  const zeroDetail = collectText(creditsAttrNode(tree, 'data-usage-credits-detail')).join('')
+  ok('T014 used=0 时明细显示 0%', zeroDetail.includes('（0%）'), zeroDetail)
+  check('T014 used=0 仍显示比值',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+}
+
+/* ⑥ §4：加载态（挂载即 loading，只发一条请求；多帧 render 不重复取数）。 */
+{
+  const { tree } = await mountCreditsScreen({ credits: { pending: true }, timeoutMs: 50, rounds: 1 })
+  const section = creditsSectionOf(tree)
+  check('T014 loading 态文本', collectText(findNodes(section, 'tpq-usage-credits-loading')[0]).join(''),
+    '正在读取 Credits 换算…')
+  check('T014 loading 态不显示数字行', nodesWithProp(section, 'data-usage-credits-ratio').length, 0)
+  check('T014 loading 态不给重试按钮', nodesWithProp(section, 'data-usage-credits-retry').length, 0)
+  check('T014 挂载只发一条 Credits 请求', creditsRequests().length, 1)
+  check('T014 首取不带 ?fresh=1', creditsRequests()[0]?.url, '/token-plan-quota/usage-credits')
+}
+
+/* ⑦ §4：不可用态 —— 中文附宿主 hint，英文不透传中文 hint；两态都可重试。 */
+{
+  const body = { available: false, reason: 'no-console-card', code: 'credits-no-console-card', hint: '打开 Token Plan 控制台复制额度' }
+  const { tree } = await mountCreditsScreen({ credits: { body } })
+  const section = creditsSectionOf(tree)
+  check('T014 unavailable 文本 = 主文案 + · + hint（zh）',
+    collectText(nodesWithProp(section, 'data-usage-credits-unavailable')[0]).join(''),
+    '本账期换算暂不可用 · 打开 Token Plan 控制台复制额度')
+  check('T014 unavailable 有重试按钮', nodesWithProp(section, 'data-usage-credits-retry').length, 1)
+  check('T014 unavailable 不给 error 钩子', nodesWithProp(section, 'data-usage-credits-error').length, 0)
+  check('T014 unavailable 不渲染数字行', nodesWithProp(section, 'data-usage-credits-detail').length, 0)
+  ok('T014 unavailable 回包 code 原文不上屏', !creditsTextOf(tree).includes('credits-no-console-card'), creditsTextOf(tree))
+}
+{
+  const body = { available: false, reason: 'no-console-card', hint: '打开 Token Plan 控制台复制额度' }
+  const { tree } = await mountCreditsScreen({ lang: 'en-US', credits: { body } })
+  const section = creditsSectionOf(tree)
+  check('T014 en unavailable 文本（中文 hint 不透传）',
+    collectText(nodesWithProp(section, 'data-usage-credits-unavailable')[0]).join(''), 'Conversion unavailable this cycle')
+  ok('T014 en unavailable 整段无中文', !/[\u3400-\u9fff]/u.test(creditsTextOf(tree)), creditsTextOf(tree))
+}
+
+/* ⑧ §4：错误态（HTTP 失败 / 坏形状）与重试 —— 重试带 ?fresh=1。 */
+{
+  const { tree } = await mountCreditsScreen({ credits: { httpError: true } })
+  const section = creditsSectionOf(tree)
+  const errorNode = nodesWithProp(section, 'data-usage-credits-error')[0]
+  ok('T014 HTTP 失败进 error 态（主文案 + 重试）', errorNode !== undefined
+    && collectText(errorNode).join('') === '本账期换算暂不可用'
+    && nodesWithProp(section, 'data-usage-credits-retry').length === 1, creditsTextOf(tree))
+  ok('T014 error 态不回显宿主 code / HTTP 状态码',
+    !/credits-unavailable|500|http/i.test(creditsTextOf(tree)), creditsTextOf(tree))
+  ok('T014 error 态没有传输层文案混进屏里', !creditsTextOf(tree).includes('network down'), creditsTextOf(tree))
+}
+{
+  const { tree } = await mountCreditsScreen({ credits: { body: { available: true } } })
+  const section = creditsSectionOf(tree)
+  ok('T014 坏形状（available:true 但缺数字）退 error，不渲染半截数字',
+    nodesWithProp(section, 'data-usage-credits-error')[0] !== undefined
+      && nodesWithProp(section, 'data-usage-credits-ratio').length === 0, creditsTextOf(tree))
+}
+{
+  /* 重试：第一回不可用，第二回可用 —— 按钮真的重新取数、带 fresh=1、数字落地。 */
+  const { bundle, tree: firstTree } = await mountCreditsScreen({
+    credits: {
+      body: (index) => (index === 1
+        ? { available: false, reason: 'no-console-card', code: 'credits-no-console-card', hint: '' }
+        : makeCreditsSnapshot()),
+    },
+  })
+  ok('T014 重试前是不可用态', creditsTextOf(firstTree).includes('本账期换算暂不可用'))
+  const before = creditsRequests().length
+  nodesWithProp(creditsSectionOf(firstTree), 'data-usage-credits-retry')[0].props.onClick()
+  const tree = await settle(bundle.renderUsage, 4)
+  check('T014 点重试只多发一条 Credits 请求', creditsRequests().length, before + 1)
+  ok('T014 重试请求带 ?fresh=1', String(creditsRequests()[before]?.url).endsWith('/usage-credits?fresh=1'),
+    String(creditsRequests()[before]?.url))
+  check('T014 重试成功后比值落地',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+  ok('T014 重试成功后不再显示不可用态', !creditsTextOf(tree).includes('本账期换算暂不可用'), creditsTextOf(tree))
+}
+
+/* ⑨ §4：切 30 天 / 换区间不重取 Credits（账期口径与本屏查询区间解耦），data-stale 跟随本屏数据。 */
+{
+  const { bundle, tree: firstTree } = await mountCreditsScreen({ rounds: 4 })
+  const dayPresets = findNodes(firstTree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)
+  ok('T014 找到天数预设按钮（1/7/30/90）', dayPresets.length >= 3, String(dayPresets.length))
+  const creditsBefore = creditsRequests().length
+  const usageBefore = usageRequests().length
+  dayPresets[2].props.onClick()
+  const tree = await settle(bundle.renderUsage, 4)
+  check('T014 切 30 天不重取 Credits', creditsRequests().length, creditsBefore)
+  ok('T014 切 30 天照旧重取本机用量（别的块没被连累）', usageRequests().length > usageBefore,
+    usageRequests().length + ' vs ' + usageBefore)
+  check('T014 切天后换算块数字不变（本账期口径）',
+    collectText(creditsAttrNode(tree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+}
+{
+  /* data-stale：宿主回的仍是 7 天快照而屏上问的是 30 天 → 本屏数据在换 → 换算块置灰；
+     回到 7 天重新对齐后恢复。 */
+  const { bundle, tree: firstTree } = await mountCreditsScreen({
+    fetchImpl: usageCreditsFetch({}, () => makeUsageSnapshot(7)),
+  })
+  check('T014 数据对齐时 data-stale=0', creditsSectionOf(firstTree)?.props?.['data-stale'], '0')
+  findNodes(firstTree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)[2].props.onClick()
+  const staleTree = await settle(bundle.renderUsage, 4)
+  check('T014 本屏数据未对齐时换算块 data-stale=1', creditsSectionOf(staleTree)?.props?.['data-stale'], '1')
+  check('T014 stale 只置灰、不丢数字（比值仍可读）',
+    collectText(creditsAttrNode(staleTree, 'data-usage-credits-ratio')).join(''), '1 Credit ≈ 5.7万 tokens')
+  const presetsBack = findNodes(staleTree, 'tpq-usage-day').filter((node) => node.props?.['data-usage-preset'] === undefined)
+  presetsBack[1].props.onClick()
+  const backTree = await settle(bundle.renderUsage, 4)
+  const backSection = creditsSectionOf(backTree)
+  check('T014 回到 7 天、快照对齐后 data-stale 回 0',
+    backSection === undefined ? 'missing' : backSection.props?.['data-stale'], '0')
+}
+
+/* ⑩ 位置与状态隔离：换算块在官方对照之后、脚注之前；本机错误态不渲染它。 */
+{
+  const { tree } = await mountCreditsScreen()
+  const usageRoot = findNodes(tree, 'tpq-usage')[0]
+  const classes = (usageRoot?.children ?? []).map((child) => String(child?.props?.className ?? ''))
+  const officialIndex = classes.findIndex((value) => value.includes('tpq-usage-official'))
+  const creditsIndex = classes.findIndex((value) => value.includes('tpq-usage-credits'))
+  const notesIndex = classes.findIndex((value) => value.includes('tpq-usage-notes'))
+  ok('T014 位置：官方对照 → Credits 换算 → 整页脚注',
+    officialIndex >= 0 && creditsIndex > officialIndex && notesIndex > creditsIndex, JSON.stringify(classes))
+}
+{
+  const failing = async (url, init) => {
+    fetchCalls.push({ url, method: init?.method ?? 'GET' })
+    return { ok: false, status: 500, json: async () => ({}) }
+  }
+  const bundle = await mountUsage({ fetchImpl: failing })
+  resetHooks()
+  const tree = await settle(bundle.renderUsage, 5)
+  check('T014 本机数据错误态不渲染换算块（错误态独占整屏）', creditsSectionOf(tree), undefined)
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed')

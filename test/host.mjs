@@ -42,7 +42,8 @@ const {
   decodeSessionLog, parseSessionEvents, fallbackCutOf, fallbackLogsOf, fallbackSignature,
   ensureUsageIndexLoaded, FALLBACK_SCAN_BUDGET,
   buildUsageSnapshot, runUsageSync,
-  buildOfficialUsageSnapshot, resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
+  buildOfficialUsageSnapshot, buildCreditsTokenSnapshot, creditsCycleOf, creditsTokenRatioOf, composeCreditsToken,
+  resolveOfficialRange, officialFailureOf, officialCache, summarizeOfficialText,
   sliceOfficialRange, parseOfficialEnvelope, foldOfficialSeries, buildOfficialUsage, mergeOfficialDays,
   officialChunkRequest, officialEarliestDayKey, officialErrorHint, DECLARED_HOSTS,
 } = __internals
@@ -3299,6 +3300,232 @@ function recursiveKeys(value, out = []) {
     check('013 T205：片内合法 header 覆盖默认值',
       [override.provider, override.model, Object.keys(overrideIndex.days[USAGE_DAY].models)],
       ['deepseek', 'deepseek-v4.1-flash-1017', ['deepseek/deepseek-v4.1-flash-1017']])
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// 014：Credits ↔ tokens 换算。纯函数断言 + 只读路由；不联网、不读真实 ~/.dsh。
+// ---------------------------------------------------------------------------
+{
+  const CREDITS_NOW = new Date(2026, 10, 14, 12, 0, 0).getTime()
+  const MONTH_RESET = new Date(2026, 11, 1, 0, 0, 0).getTime()
+  const WEEK_RESET = new Date(2026, 10, 17, 0, 0, 0).getTime()
+  const makeCard = (meters) => ({
+    id: 'token-plan-console',
+    label: '千问控制台',
+    unit: 'Credits',
+    total: 80000,
+    used: 37196.8802,
+    usedPercent: 46.4961,
+    meters,
+  })
+  const monthlyMeter = {
+    key: 'monthly', label: '本月', labelEn: 'Monthly', unit: 'Credits',
+    total: 80000, used: 37196.8802, usedPercent: 46.4961, resetAt: MONTH_RESET,
+  }
+
+  const monthly = creditsCycleOf(makeCard([monthlyMeter, {
+    key: 'weekly', total: 999, used: 1, usedPercent: 0.1, resetAt: WEEK_RESET,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：monthly 优先且返回完整窗口',
+    [monthly.ok, monthly.key, monthly.label, monthly.labelEn, monthly.from, monthly.to, monthly.resetAt,
+      monthly.resetDay, monthly.cycleDays, monthly.elapsedDays, monthly.total, monthly.used, monthly.usedPercent],
+    [true, 'monthly', '本月账期', 'Monthly cycle', '2026-11-01', '2026-11-14', MONTH_RESET,
+      '2026-11-30', 30, 14, 80000, 37196.8802, 46.4961])
+
+  const weekly = creditsCycleOf(makeCard([{
+    key: 'weekly', total: 1000, used: 250, usedPercent: 25, resetAt: WEEK_RESET,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：weekly 回退 7 天',
+    [weekly.ok, weekly.key, weekly.label, weekly.labelEn, weekly.from, weekly.to,
+      weekly.resetDay, weekly.cycleDays, weekly.elapsedDays, weekly.total, weekly.used],
+    [true, 'weekly', '7 天账期', '7-day cycle', '2026-11-10', '2026-11-14',
+      '2026-11-16', 7, 5, 1000, 250])
+
+  const fiveOnly = creditsCycleOf(makeCard([{
+    key: 'fiveHour', total: 100, used: 10, usedPercent: 10, resetAt: CREDITS_NOW + 3600_000,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：只有 fiveHour → five-hour-only',
+    [fiveOnly.ok, fiveOnly.reason], [false, 'five-hour-only'])
+
+  const noTotal = creditsCycleOf(makeCard([{
+    key: 'monthly', used: 100, usedPercent: 10, resetAt: MONTH_RESET,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：缺 total → no-credits-total',
+    [noTotal.ok, noTotal.reason], [false, 'no-credits-total'])
+
+  const noReset = creditsCycleOf(makeCard([{
+    key: 'monthly', total: 1000, used: 100, usedPercent: 10,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：缺 resetAt → no-reset-time',
+    [noReset.ok, noReset.reason], [false, 'no-reset-time'])
+
+  const byPercent = creditsCycleOf(makeCard([{
+    key: 'monthly', total: 1000, used: null, usedPercent: 40, resetAt: MONTH_RESET,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：used 由 percent 兜底',
+    [byPercent.ok, byPercent.used, byPercent.usedPercent], [true, 400, 40])
+
+  const derivedPercent = creditsCycleOf(makeCard([{
+    key: 'monthly', total: 1000, used: 250, resetAt: MONTH_RESET,
+  }]), CREDITS_NOW)
+  check('014 creditsCycleOf：usedPercent 由 used/total 兜底',
+    [derivedPercent.ok, derivedPercent.usedPercent], [true, 25])
+
+  const badCard = creditsCycleOf(undefined, CREDITS_NOW)
+  const emptyCard = creditsCycleOf({}, CREDITS_NOW)
+  check('014 creditsCycleOf：非法卡 → no-credits-reading',
+    [badCard.ok, badCard.reason, emptyCard.ok, emptyCard.reason],
+    [false, 'no-credits-reading', false, 'no-credits-reading'])
+
+  const futureReset = new Date(2026, 11, 1, 0, 0, 0).getTime()
+  const invertedNow = new Date(2026, 9, 15, 12, 0, 0).getTime()
+  const inverted = creditsCycleOf(makeCard([{
+    key: 'monthly', total: 1000, used: 10, usedPercent: 1, resetAt: futureReset,
+  }]), invertedNow)
+  check('014 creditsCycleOf：from > to → no-credits-reading', [inverted.ok, inverted.reason],
+    [false, 'no-credits-reading'])
+
+  const monthEnd = creditsCycleOf(makeCard([{
+    key: 'monthly', total: 1000, used: 10, usedPercent: 1,
+    resetAt: new Date(2026, 2, 31, 0, 0, 0).getTime(),
+  }]), new Date(2026, 2, 15, 12, 0, 0).getTime())
+  check('014 creditsCycleOf：月末回退自然月并夹到 2/28', [monthEnd.ok, monthEnd.from], [true, '2026-02-28'])
+
+  const ratio = creditsTokenRatioOf(2122918870, 37196.8802)
+  ok('014 creditsTokenRatioOf：官方示例 ≈ 57072', ratio !== null && Math.abs(ratio - 57072) < 1)
+  check('014 creditsTokenRatioOf：tokens=0 → null', creditsTokenRatioOf(0, 100), null)
+  check('014 creditsTokenRatioOf：used=0 → null', creditsTokenRatioOf(100, 0), null)
+  check('014 creditsTokenRatioOf：负数/NaN/缺失 → null',
+    [creditsTokenRatioOf(-1, 10), creditsTokenRatioOf(10, -1), creditsTokenRatioOf(NaN, 10), creditsTokenRatioOf(undefined, 10)],
+    [null, null, null, null])
+
+  const officialOk = (overrides = {}) => ({
+    generatedAt: CREDITS_NOW,
+    range: { kind: 'custom', days: 14, from: '2026-11-01', to: '2026-11-14' },
+    granularity: 'day',
+    totals: { tokens: 2122918870 },
+    buckets: [],
+    source: { kind: 'official-account', veracity: 'official' },
+    coverage: { cached: false },
+    ...overrides,
+  })
+
+  const available = composeCreditsToken({
+    card: makeCard([monthlyMeter]),
+    official: officialOk(),
+    localTotals: { totals: { tokens: 2080883520 } },
+    now: CREDITS_NOW,
+  })
+  check('014 compose：available 与 generatedAt', [available.available, available.generatedAt], [true, CREDITS_NOW])
+  check('014 compose：window 全字段', available.window, {
+    key: 'monthly', label: '本月账期', labelEn: 'Monthly cycle', from: '2026-11-01', to: '2026-11-14',
+    resetAt: MONTH_RESET, resetDay: '2026-11-30', cycleDays: 30, elapsedDays: 14,
+  })
+  check('014 compose：credits 全字段', available.credits,
+    { unit: 'Credits', total: 80000, used: 37196.8802, usedPercent: 46.4961 })
+  check('014 compose：tokens 官方/本机', available.tokens,
+    { official: 2122918870, local: 2080883520 })
+  ok('014 compose：ratio.tokensPerCredit 为原始浮点', Math.abs(available.ratio.tokensPerCredit - 57072) < 1)
+  check('014 compose：capacityTokens 取整且等于 ratio×total',
+    [Number.isInteger(available.ratio.capacityTokens), available.ratio.capacityTokens === Math.round(available.ratio.tokensPerCredit * 80000)],
+    [true, true])
+  check('014 compose：scope 全字段', available.scope, {
+    officialFrom: '2026-11-01', officialTo: '2026-11-14', officialDays: 14, cached: false, clampedFrom: null,
+  })
+  check('014 compose：source 四字段', available.source, {
+    kind: 'credits-token', veracity: 'measured',
+    label: '官方 Credits × 官方 tokens（本账期实测）',
+    labelEn: 'Official credits × official tokens (measured this cycle)',
+  })
+
+  const localMissing = composeCreditsToken({
+    card: makeCard([monthlyMeter]), official: officialOk(), localTotals: null, now: CREDITS_NOW,
+  })
+  check('014 compose：本机 null 时 local=null', localMissing.tokens.local, null)
+
+  const weeklyCompose = composeCreditsToken({
+    card: makeCard([{ key: 'weekly', total: 1000, used: 250, usedPercent: 25, resetAt: WEEK_RESET }]),
+    official: officialOk({ range: { days: 5, from: '2026-11-10', to: '2026-11-14' } }),
+    localTotals: null,
+    now: CREDITS_NOW,
+  })
+  check('014 compose：weekly 标签', [weeklyCompose.available, weeklyCompose.window.label, weeklyCompose.window.labelEn],
+    [true, '7 天账期', '7-day cycle'])
+
+  const clamped = composeCreditsToken({
+    card: makeCard([monthlyMeter]),
+    official: officialOk({ coverage: { cached: true, clampedFrom: '2026-11-03' } }),
+    localTotals: null,
+    now: CREDITS_NOW,
+  })
+  check('014 compose：官方明细被夹紧 → official-clamped',
+    [clamped.available, clamped.reason, clamped.code, clamped.hint.includes('2026-11-03')],
+    [false, 'official-clamped', 'official-clamped', true])
+
+  const officialFailed = composeCreditsToken({
+    card: makeCard([monthlyMeter]),
+    official: { error: 'official-unavailable', code: 'official-disabled', hint: '官方明细已关闭' },
+    localTotals: null,
+    now: CREDITS_NOW,
+  })
+  check('014 compose：官方失败体透传 code/hint',
+    [officialFailed.available, officialFailed.reason, officialFailed.code, officialFailed.hint],
+    [false, 'official-unavailable', 'official-disabled', '官方明细已关闭'])
+
+  const zeroTokens = composeCreditsToken({
+    card: makeCard([monthlyMeter]), official: officialOk({ totals: { tokens: 0 } }), localTotals: null, now: CREDITS_NOW,
+  })
+  check('014 compose：官方 tokens=0 → no-token-data',
+    [zeroTokens.available, zeroTokens.reason], [false, 'no-token-data'])
+
+  const consoleFailed = composeCreditsToken({
+    card: { id: 'token-plan-console', error: 'Cookie expired', errorCode: 'NoCredentials', hint: '重新登录控制台' },
+    official: null, localTotals: null, now: CREDITS_NOW,
+  })
+  check('014 compose：控制台卡报错 → console-unavailable 并透传 code/hint',
+    [consoleFailed.available, consoleFailed.reason, consoleFailed.code, consoleFailed.hint],
+    [false, 'console-unavailable', 'NoCredentials', '重新登录控制台'])
+
+  const noConsole = composeCreditsToken({ card: undefined, official: null, localTotals: null, now: CREDITS_NOW })
+  check('014 compose：无控制台卡 → no-console-card', [noConsole.available, noConsole.reason], [false, 'no-console-card'])
+
+  const cycleReasons = [
+    composeCreditsToken({ card: makeCard([{ key: 'fiveHour', total: 1, used: 1, usedPercent: 100, resetAt: CREDITS_NOW }]), official: null, localTotals: null, now: CREDITS_NOW }),
+    composeCreditsToken({ card: makeCard([{ key: 'monthly', used: 1, usedPercent: 10, resetAt: MONTH_RESET }]), official: null, localTotals: null, now: CREDITS_NOW }),
+    composeCreditsToken({ card: makeCard([{ key: 'monthly', total: 100, used: 1, usedPercent: 1 }]), official: null, localTotals: null, now: CREDITS_NOW }),
+    composeCreditsToken({ card: makeCard([]), official: null, localTotals: null, now: CREDITS_NOW }),
+  ]
+  check('014 compose：账期五种失败原因全覆盖',
+    cycleReasons.map(item => item.reason),
+    ['five-hour-only', 'no-credits-total', 'no-reset-time', 'no-credits-reading'])
+  check('014 compose：可用态不含 code/hint 占位', ['code' in available, 'hint' in available], [false, false])
+
+  // 路由：无控制台源 → 200 + available:false（不是 500），POST → 405，404 清单含新路由。
+  {
+    const persistence = makeFakePersistence({})
+    const row = { sources: [], officialUsage: false, usageIndexPath: join(TEST_HOME, 'usage-index-credits-route.json') }
+    const { ctx, registered } = makeRouteCtx(persistence)
+    resetInstanceState()
+    apply(ctx, row)
+    const route = registered.find(item => item.path === '/token-plan-quota')
+    ok('014 路由：usage-credits 随 prefix 注册', route !== undefined)
+    const got = await callUsageRoute(route, '/token-plan-quota/usage-credits')
+    check('014 路由：无卡 → 200', got.status, 200)
+    check('014 路由：无卡 → available:false / no-console-card',
+      [got.json.available, got.json.reason, got.json.code], [false, 'no-console-card', 'no-console-card'])
+    ok('014 路由：响应无百分号', !got.raw.includes('%'))
+    ok('014 路由：响应无消息文本 / 表头字段', !recursiveKeys(got.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
+    ok('014 路由：响应无落盘路径', !got.raw.includes('usage-index-credits-route'))
+    const fresh = await callUsageRoute(route, '/token-plan-quota/usage-credits?fresh=1')
+    check('014 路由：fresh=1 仍 200', [fresh.status, fresh.json.available], [200, false])
+    const post = await callUsageRoute(route, '/token-plan-quota/usage-credits', 'POST')
+    check('014 路由：POST → 405', post.status, 405)
+    const notFound = await callUsageRoute(route, '/token-plan-quota/nope')
+    check('014 路由：404 清单含 usage-credits',
+      notFound.status === 404 && notFound.json.routes.includes('usage-credits'), true)
+    ok('014 __internals：buildCreditsTokenSnapshot 可调', typeof buildCreditsTokenSnapshot === 'function')
   }
 }
 

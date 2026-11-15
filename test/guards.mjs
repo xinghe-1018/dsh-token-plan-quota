@@ -2214,14 +2214,13 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
 }
 
 /* ── 第 25 节：单模型估算的夜间折扣说明（spec 025）────────────────────────────
- * 022 的估算按官方忙时价目算，夜间 22:00-08:00 官方打折，所以卡片数字是下界。
  * 用户 m01841 点名要这一句；它是 024「屏上不留说明」的单句例外，且只在 estimate
- * 口径渲染——回落到 019 capacity 时不该出现。 */
+ * 口径渲染——回落到 019 capacity 时不该出现。文案在 027 与卡片标签同口径（见第 27 节）。 */
 {
   const src25 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
   ok('025 i18n：夜间折扣说明键中英都在且逐字',
-    src25.includes('usageSingleModelNightNote: "按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。"')
-      && src25.includes('usageSingleModelNightNote: "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."'))
+    src25.includes('usageSingleModelNightNote: "按本账期实测用量折算；22:00–08:00 夜间折扣已体现在官方已用 Credits 中，不重复计入。"')
+      && src25.includes('usageSingleModelNightNote: "Derived from this cycle\'s measured usage; the 22:00-08:00 discount is already reflected in the used credits and is not added again."'))
   ok('025 客户端：说明只在 estimate 口径渲染（条件节点，位于结果卡之后）',
     /estimate !== null \? React\.createElement\("p", \{\s*key: "night",\s*className: "tpq-usage-single-model-note",\s*\}, copy\.usageSingleModelNightNote\)/.test(src25))
   ok('025 CSS：夜间折扣说明一行弱化色、11px、可断行',
@@ -2272,5 +2271,37 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
       .every(name => existsSync(join(ROOT, 'specs', '026-card-label', name))))
 }
+/* ── 第 27 节：夜间说明与卡片标签同口径（spec 027）────────────────────────────
+ * 026 把标签改成「按实测用量折算」后，025 的「按官方忙时价目估算，未计夜间折扣」两种口径打架；
+ * 且夜间折扣其实已在官方已用 Credits 里扣过（used 更小 ⇒ 估算更大），原句方向是反的。
+ * 用户 m02116 要求「都改成一致的说法」。 */
+{
+  const src27 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('027 i18n：夜间说明改成实测用量口径（中英逐字）',
+    src27.includes('usageSingleModelNightNote: "按本账期实测用量折算；22:00–08:00 夜间折扣已体现在官方已用 Credits 中，不重复计入。"')
+      && src27.includes('usageSingleModelNightNote: "Derived from this cycle\'s measured usage; the 22:00-08:00 discount is already reflected in the used credits and is not added again."'))
+  ok('027 旧说法零残留（未计夜间折扣 / peak-hour list prices）',
+    !src27.includes('未计 22:00–08:00 夜间折扣') && !src27.includes('Estimated from peak-hour list prices'))
+  ok('027 说明与标签同口径：都讲实测用量',
+    src27.includes('usageSingleModelNightNote: "按本账期实测用量折算') && src27.includes('usageCreditsModelPickEstimate: "按实测用量折算 tokens"')
+      && src27.includes("usageSingleModelNightNote: \"Derived from this cycle's measured usage") && src27.includes('usageCreditsModelPickEstimate: "Derived from measured usage"'))
+  ok('027 渲染条件与位置原样（仍只在 estimate 口径）',
+    /estimate !== null \? React\.createElement\("p", \{\s*key: "night",\s*className: "tpq-usage-single-model-note",\s*\}, copy\.usageSingleModelNightNote\)/.test(src27))
+  ok('027 没有新增配置键 / 出站主机 / 依赖',
+    Object.keys(__internals.DEFAULTS).length === 26
+      && __internals.DECLARED_HOSTS.length === 8
+      && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
+  const readme27 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn27 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  const changelog27 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('027 README / CHANGELOG 记了新说法',
+    readme27.includes('027') && readme27.includes('夜间折扣已体现在官方已用 Credits 中')
+      && readmeEn27.includes('027') && readmeEn27.includes('already reflected in the used credits')
+      && /## \[Unreleased\]/.test(changelog27) && changelog27.includes('027'))
+  ok('027 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '027-night-note-wording', name))))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

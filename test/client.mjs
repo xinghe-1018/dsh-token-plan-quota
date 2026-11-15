@@ -5762,8 +5762,8 @@ function tokenTextNumber(text) {
     && source.includes('usageCreditsModelPickTitle: "If you used a single model"')
     && source.includes('usageCreditsModelPickCard: "Derived capacity"')
     && source.includes('usageCreditsModelPickEstimate: "Derived from measured usage"')
-    && source.includes('usageSingleModelNightNote: "按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。"')
-    && source.includes('usageSingleModelNightNote: "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."'))
+    && source.includes('usageSingleModelNightNote: "按本账期实测用量折算；22:00–08:00 夜间折扣已体现在官方已用 Credits 中，不重复计入。"')
+    && source.includes('usageSingleModelNightNote: "Derived from this cycle\'s measured usage; the 22:00-08:00 discount is already reflected in the used credits and is not added again."'))
   ok('T023 COPY 旧的小字三键已删（hint / share / note）',
     source.includes('usageCreditsModelPickHint') === false
     && source.includes('usageCreditsModelPickShare') === false
@@ -6093,7 +6093,7 @@ const NOEST_MODEL = {
     'If you used a single model')
   check('T025 en 夜间折扣说明逐字',
     collectText(findNodes(pick, 'tpq-usage-single-model-note')[0]).join(''),
-    'Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher.')
+    'Derived from this cycle\'s measured usage; the 22:00-08:00 discount is already reflected in the used credits and is not added again.')
   ok('T022 en 下无中文残留', !/[\u4e00-\u9fa5]/.test(collectText(pick).join('')), collectText(pick).join('|'))
 }
 
@@ -6134,7 +6134,7 @@ const NOEST_MODEL = {
       .every((name) => findNodes(section, name).length === 0))
   check('T025 渲染：有价目模型带一行夜间折扣说明',
     collectText(findNodes(section, 'tpq-usage-single-model-note')[0]).join(''),
-    '按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。')
+    '按本账期实测用量折算；22:00–08:00 夜间折扣已体现在官方已用 Credits 中，不重复计入。')
   check('T023 渲染：有价目模型的主数字仍是 estimate',
     collectText(findNodes(modelPickCardOf(section), 'tpq-usage-credits-modelpick-total')[0]).join(''), '48.0万tokens')
   modelPickChips(section)[1].props.onClick()

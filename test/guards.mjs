@@ -2125,9 +2125,9 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
 
   const readme22 = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const readmeEn22 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
-  ok('022 README：中英都写了按官方价目估算的口径',
-    readme22.includes('按官方价目估算') && readme22.includes('022')
-      && readmeEn22.includes('Estimated from list prices') && readmeEn22.includes('022'))
+  ok('022 README：中英都写了估算口径（026 起标签写作「按实测用量折算」）',
+    readme22.includes('按官方价目估算') && readme22.includes('022') && readme22.includes('按实测用量折算')
+      && readmeEn22.includes('Derived from measured usage') && readmeEn22.includes('022'))
   const changelog22 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
   ok('022 CHANGELOG：Unreleased 记了价目估算',
     /## \[Unreleased\]/.test(changelog22) && changelog22.includes('022')
@@ -2240,6 +2240,37 @@ for (const [label, unit] of [['点号串', 'a.'], ['连续 ![', '!['], ['连续 
     readme25.includes('025') && readme25.includes('tpq-usage-single-model-note')
       && readmeEn25.includes('025') && readmeEn25.includes('tpq-usage-single-model-note')
       && /## \[Unreleased\]/.test(changelog25) && changelog25.includes('025'))
+}
+/* ── 第 26 节：单模型卡片标签改口径说法（spec 026）────────────────────────────
+ * 022 的标签写「按官方价目估算」，容易被读成纯价目换算；数字其实是「本机实测 tokens ÷
+ * 官方已用 Credits」的规模，价目只提供跨模型换乘倍率。用户 m02330 要求改标签。 */
+{
+  const src26 = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  ok('026 卡片标签中英逐字（按实测用量折算 / Derived from measured usage）',
+    src26.includes('usageCreditsModelPickEstimate: "按实测用量折算 tokens"')
+      && src26.includes('usageCreditsModelPickEstimate: "Derived from measured usage"'))
+  ok('026 旧标签字面量不再出现（避免两套说法并存）',
+    !src26.includes('按官方价目估算 tokens') && !src26.includes('Estimated from list prices'))
+  ok('026 只改文案：结果卡标签节点与类名原样',
+    src26.includes('className: "tpq-usage-credits-modelpick-card-label"')
+      && src26.includes('copy.usageCreditsModelPickEstimate'))
+  ok('026 数据口径不变：estimate 接线与 classes 来源原样',
+    src26.includes('const estimate = usageModelEstimateOf(selected.item)')
+      && src26.includes('estimate !== null ? estimate.classes : selected.capacity.classes'))
+  ok('026 没有新增配置键 / 出站主机 / 依赖',
+    Object.keys(__internals.DEFAULTS).length === 26
+      && __internals.DECLARED_HOSTS.length === 8
+      && !JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).dependencies)
+  const readme26 = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const readmeEn26 = readFileSync(join(ROOT, 'README.en.md'), 'utf8')
+  const changelog26 = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  ok('026 README / CHANGELOG 记了标签改名',
+    readme26.includes('按实测用量折算') && readme26.includes('026')
+      && readmeEn26.includes('Derived from measured usage') && readmeEn26.includes('026')
+      && /## \[Unreleased\]/.test(changelog26) && changelog26.includes('026'))
+  ok('026 规格目录四件齐全',
+    ['spec.md', 'plan.md', 'tasks.md', 'INTERFACE.md']
+      .every(name => existsSync(join(ROOT, 'specs', '026-card-label', name))))
 }
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

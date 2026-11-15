@@ -5755,13 +5755,13 @@ function tokenTextNumber(text) {
     source.includes('"data-model": entry.id')
     && source.includes('"data-selected": isSelected ? "1" : "0"')
     && source.includes('"aria-pressed": isSelected ? "true" : "false"'))
-  ok('T023 / T025 COPY 四键逐字（标题 / 卡片 / 价目标签 / 夜间折扣说明）',
+  ok('T023 / T025 / T026 COPY 四键逐字（标题 / 卡片 / 卡片标签 / 夜间折扣说明）',
     source.includes('usageCreditsModelPickTitle: "如果只用单个模型"')
     && source.includes('usageCreditsModelPickCard: "折算可用 tokens"')
-    && source.includes('usageCreditsModelPickEstimate: "按官方价目估算 tokens"')
+    && source.includes('usageCreditsModelPickEstimate: "按实测用量折算 tokens"')
     && source.includes('usageCreditsModelPickTitle: "If you used a single model"')
     && source.includes('usageCreditsModelPickCard: "Derived capacity"')
-    && source.includes('usageCreditsModelPickEstimate: "Estimated from list prices"')
+    && source.includes('usageCreditsModelPickEstimate: "Derived from measured usage"')
     && source.includes('usageSingleModelNightNote: "按官方忙时价目估算，未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。"')
     && source.includes('usageSingleModelNightNote: "Estimated from peak-hour list prices; the 22:00-08:00 discount is not included, so the real capacity would be higher."'))
   ok('T023 COPY 旧的小字三键已删（hint / share / note）',
@@ -6051,7 +6051,7 @@ const NOEST_MODEL = {
   const card = modelPickCardOf(pick)
   check('T022 有 estimate 的行用价目标签',
     collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''),
-    '按官方价目估算 tokens')
+    '按实测用量折算 tokens')
   check('T022 主数字 = estimate.tokens（不是 capacity）',
     collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '48.0万tokens')
   check('T022 分项值来自 estimate.classes，cacheWrite 0 不占格',
@@ -6085,7 +6085,7 @@ const NOEST_MODEL = {
   const pick = modelPickOf(tree)
   const card = modelPickCardOf(pick)
   check('T022 en 标签逐字',
-    collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), 'Estimated from list prices')
+    collectText(findNodes(card, 'tpq-usage-credits-modelpick-card-label')[0]).join(''), 'Derived from measured usage')
   check('T022 en 主数字用 K 量纲',
     collectText(findNodes(card, 'tpq-usage-credits-modelpick-total')[0]).join(''), '480Ktokens')
   check('T023 en 模块标题逐字',

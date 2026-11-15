@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **单模型卡片标签改为按实测用量折算（026）**：「如果只用单个模型」结果卡的标签由「按官方价目估算 tokens」/
+  "Estimated from list prices" 改为「按实测用量折算 tokens」/ "Derived from measured usage"（i18n 键
+  `usageCreditsModelPickEstimate` 不变，COPY 仍 153）。数字口径不变：主数字仍是 022 `estimate`，
+  规模来自本机实测 tokens 与官方已用 Credits，官方价目只提供跨模型换乘倍率；无价目回落 019 `capacity`。
+  零新路由、零新配置键、零新出站主机、零第三方依赖。测试：宿主 1073 不变、客户端 1393 不变、guards 637 → 644（新增第 26 节静态矩阵）。
+   方案见 `specs/026-card-label/`。
+
 ## [0.6.0] - 2026-11-14
 
 ### Added

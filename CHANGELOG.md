@@ -10,6 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **夜间折扣说明与卡片标签同口径（027）**：「如果只用单个模型」模块里 025 那行说明由「按官方忙时价目估算，
+  未计 22:00–08:00 夜间折扣；实际可用 tokens 会更多。」改为「按本账期实测用量折算；22:00–08:00 夜间折扣
+  已体现在官方已用 Credits 中，不重复计入。」（en "Derived from this cycle's measured usage; the 22:00-08:00
+  discount is already reflected in the used credits and is not added again."）。原句方向是反的：夜间折扣在计费时
+  已扣减，`used` 更小 ⇒ 估算更大，「未计折扣」不成立；真正没建模的只有「全部挪到夜间用」这一反事实。
+  渲染条件（仅 022 `estimate` 口径）、类名 `tpq-usage-single-model-note`、CSS 均未改；COPY 仍 153/153。
+  零新路由、零新配置键、零新出站主机、零第三方依赖。测试：宿主 1073 不变、客户端 1393 不变、guards 644 → 651
+  （新增第 27 节静态矩阵）。方案见 `specs/027-night-note-wording/`。
+
 - **单模型卡片标签改为按实测用量折算（026）**：「如果只用单个模型」结果卡的标签由「按官方价目估算 tokens」/
   "Estimated from list prices" 改为「按实测用量折算 tokens」/ "Derived from measured usage"（i18n 键
   `usageCreditsModelPickEstimate` 不变，COPY 仍 153）。数字口径不变：主数字仍是 022 `estimate`，

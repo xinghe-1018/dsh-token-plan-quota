@@ -331,12 +331,12 @@ conversation main area and keeps the sidebar; `Esc` or the `✕` in the title ro
   022 "estimated from list prices" number and, since 026, the card label reads "Derived from measured usage"
   (`ratio.priceBasis` records the basis, its verification date and the unit); without a price the card falls back to
   the 019 share-derived `capacity`, and the two calibers never mix within one figure. Below the card there is no stack of caliber notes:
-  under 025 one line is kept on purpose - `p.tpq-usage-single-model-note`: "Estimated from peak-hour list prices; the
-   22:00-08:00 discount is not included, so the real capacity would be higher." - and it appears only with the 022
+  under 025 one line is kept on purpose - `p.tpq-usage-single-model-note`: "Derived from this cycle's measured usage; the
+   22:00-08:00 discount is already reflected in the used credits and is not added again." (027 wording) - and it appears only with the 022
    estimate caliber, not with the 019 `capacity` fallback.
   With an older host, when no model yields a figure, or while credits are not ready, the whole block is not
   rendered; a 0 is never substituted.
-- **Estimated from list prices (022)**: for models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) the picker leads with the tokens the whole cycle's credits would buy at that model alone: the row's list-price cost divided by this account's measured list-price cost per credit (`ratio.priceBasis` records the basis, its verification date and the unit). The 22:00-08:00 discount and models without a published price are not modelled; without an estimate every field falls back to 019, `capacity` stays, and both calibers coexist - the estimate is a reference, not an official reading. Since 026 the card label reads "Derived from measured usage"; the figure itself is unchanged.
+- **Estimated from list prices (022)**: for models with a published peak-hour price (qwen3.8-flash, deepseek-v4.1-flash-1017, deepseek-v4.1-flash) the picker leads with the tokens the whole cycle's credits would buy at that model alone: the row's list-price cost divided by this account's measured list-price cost per credit (`ratio.priceBasis` records the basis, its verification date and the unit). The 22:00-08:00 discount is already reflected in the used credits and is not applied again (027 wording), while models without a published price are not modelled; without an estimate every field falls back to 019, `capacity` stays, and both calibers coexist - the estimate is a reference, not an official reading. Since 026 the card label reads "Derived from measured usage"; the figure itself is unchanged.
 - 2D and 3D share **one linear scale function**: 3D only draws the same bar as an isometric SVG with three faces
   (top / front / side), fixed angle, no perspective and no foreshortening, so switching the view cannot make a bar
   look taller than its number.
@@ -649,7 +649,7 @@ see [`SECURITY.md`](https://github.com/xinghe-1018/dsh-token-plan-quota/blob/mai
 npm run check                       # all seven steps below
 node test/host.mjs                  # 1073 assertions, offline
 node test/client.mjs                # 1393 assertions, fake React/DOM/fetch
-node test/guards.mjs                # 644 assertions: behaviour matrices of the gates themselves
+node test/guards.mjs                # 651 assertions: behaviour matrices of the gates themselves
 node scripts/check-manifest.mjs     # manifest self-check (installability, outbound hosts, license, zero deps)
 node scripts/check-docs.mjs         # every verifiable claim in the READMEs must match the code
 node scripts/check-refs.mjs         # living docs must not cite "file:line" locations
@@ -657,7 +657,7 @@ node scripts/check-submission.mjs   # directory-submission entry self-check
 ```
 
 `check-docs` is not decoration: it takes the numbers written in these READMEs - "26 DEFAULTS keys, a 27-row
-config table, 8 sources, 8 declared outbound hosts, 1073/1393 tests plus 644 guards assertions" - and checks them against
+config table, 8 sources, 8 declared outbound hosts, 1073/1393 tests plus 651 guards assertions" - and checks them against
 the code and a real test run, so a drifting number turns CI red (verified with a deliberately broken copy that it does
 fail).
 

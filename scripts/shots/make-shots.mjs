@@ -723,7 +723,12 @@ async function main() {
     await freshPage()
     const chip0 = await page.rectOf('.tpq-chip')
     if (chip0 === null) throw new Error('量不到徽标位置，无法定位悬浮面板')
-    await setFloatBox({ x: Math.round(chip0.x) - 10, y: 18, w: 520, h: 332 })
+    // 面板左缘对齐徽标，让「模型 → 卡 → 徽标」竖着读成一条链。但徽标在输入行里右对齐，
+    // 模型显示名一长（或中文权限标签把整组往右推），chip0.x 就会大到让 520 宽的面板冲出
+    // 1150 视口右缘、被 framedClip 裁掉重置日期那半行。所以夹一道上限：保证面板右缘留在
+    // 视口内并带 ~90px 右留白（与参考图取景一致）。徽标本来就靠左时此夹取不生效，旧取景不变。
+    const floatX = Math.min(Math.round(chip0.x) - 10, 1150 - 520 - 90)
+    await setFloatBox({ x: floatX, y: 18, w: 520, h: 332 })
     await freshPage()
 
     const shootFramed = async file => {

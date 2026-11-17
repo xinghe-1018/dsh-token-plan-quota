@@ -119,7 +119,10 @@ function deepseekMoneyCard(lang, now) {
     sourceNote: lang === 'en'
       ? 'DeepSeek official API (Bearer Key) · /user/balance'
       : 'DeepSeek 官方 API（Bearer Key）· /user/balance',
-    bindProviders: ['deepseek-official'],
+    // 宿主 deepseek-balance 源绑两条路由 id（lib/index.js:1336 providers:['deepseek','deepseek-official']，
+    // 经 :3772 直传 bindProviders）。只写 deepseek-official 会让默认路由 deepseek 的模型匹配不到钱卡，
+    // 三连图⑤收敛为空→退回全量，拍出一张「所有卡都在」的假图。
+    bindProviders: ['deepseek', 'deepseek-official'],
     updatedAt: now - 12_000,
   }, true)
 }
@@ -137,7 +140,7 @@ function consoleCard(lang, now) {
   // 顶层 = 主计量 = 先 weekly 后 meters[0]（源码 :1660 的排序契约）。
   return finalizeCard({
     id: 'token-plan-console',
-    label: lang === 'en' ? 'Qwen Token Plan' : '千问 Token Plan',
+    label: lang === 'en' ? 'Token Plan quota' : 'Token Plan 余量',
     metric: 'credits',
     unit: 'Credits',
     total: weekly.total,
@@ -189,33 +192,6 @@ function measuredCard(lang, now, provider, calls, tokens) {
       ? 'Local ledger: this DSH instance only, no official denominator'
       : '本实例实测账目：只覆盖经过本实例的调用，没有官方分母',
   }, false)
-}
-
-/**
- * 官方 Credits 额度卡（单窗口、无 meters）：Token Plan 那种「剩余 X / Y · 已用 Z% · 周期重置」。
- * 与 consoleCard 的区别是这里只有一个总窗口，所以面板里不会出现计量条列表。
- * 数字与真实账号无关：4,480 / 6,000 是随手取的合成值 —— 但**余量必须 ≥70%**：
- * 渐变条的配色是 `client.js:218-222` 写死的档位（≥70 绿 / 40–70 蓝 / <40 橙红），
- * 取 69% 会拍出一条蓝条子，看着就像插件坏了。
- */
-function creditsPlanCard(lang, now) {
-  return finalizeCard({
-    id: 'token-plan-credits',
-    label: lang === 'en' ? 'Token Plan' : 'Token Plan 余量',
-    metric: 'credits',
-    unit: 'Credits',
-    total: 6000,
-    remaining: 4480,
-    expiresAt: now + 7 * DAY + 2 * HOUR,
-    resetAt: now + 7 * DAY + 2 * HOUR,
-    items: [],
-    veracity: 'verified',
-    sourceNote: lang === 'en'
-      ? 'Qwen console data gateway (Cookie session, sec_token auto-fetched) · tokenplan/personal/api/v2'
-      : '千问AI平台控制台数据网关（Cookie 会话，sec_token 自动获取）· tokenplan/personal/api/v2',
-    bindProviders: ['qwen-token-plan-cn'],
-    updatedAt: now - 20_000,
-  }, true)
 }
 
 /**
@@ -284,7 +260,7 @@ export function makeSnapshot(options = {}) {
 
   /**
    * 「三种状态」三连图：面板只留当前供应商那一张卡（`panelScope:'current'`，
-   * 判定在 `client.js:979`），所以这里整体换掉卡集 —— 官方钱卡 / 官方 Credits 卡 /
+   * 判定在 `client.js:979`），所以这里整体换掉卡集 —— 官方钱卡 / 官方控制台卡（多窗口计量条）/
    * 零调用实测卡，分别对应「按钱计费的也能识别」「用过的模型会显示额度」
    * 「没用过的模型不显示额度」。吞吐同时清零：拍的是静态额度状态，
    * 背景里不该飘着一串编造的高吞吐。
@@ -292,7 +268,7 @@ export function makeSnapshot(options = {}) {
   const triptych = variant === 'triptych'
   if (triptych) {
     cards.length = 0
-    cards.push(deepseekMoneyCard(lang, now), creditsPlanCard(lang, now))
+    cards.push(deepseekMoneyCard(lang, now), consoleCard(lang, now))
     // 第三张（零调用实测卡）只进中文套：`emptyReason` 是 `lib/index.js:376` 写死的中文，
     // 宿主在英文界面下同样只会吐这一句。给英文套编一句英文文案，等于拍一张
     // 宿主永远发不出的图 —— 宁可少一张。i18n 缺口记在 ROADMAP。

@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **README 截图夹具对齐宿主真值（028）**：重拍①徽标 GIF 与②③④⑤⑥⑦（zh）/①②③④⑤⑥（en）。
+  修三处夹具漂移：控制台卡标签由「千问 Token Plan」/ "Qwen Token Plan" 改为宿主 preset 真值
+  「Token Plan 余量」/ "Token Plan quota"（lib/index.js:1383-1384）；三连图⑥由合成卡
+  `creditsPlanCard`（id `token-plan-credits`，宿主白名单永不发出）换成与②同源的控制台卡（带两条窗口计量条），
+  并删除该合成卡；DeepSeek 钱卡 bindProviders 由 `['deepseek-official']` 补成 `['deepseek', 'deepseek-official']`
+  （宿主 :1336），修好默认路由 `deepseek` 下⑤scoped 过滤为空退回全量、拍成「所有卡都在」的假图。
+  另给三连图浮框 x 加夹取，防徽标右对齐时面板右缘裁掉重置日期。宿主 lib/ 与测试零改动、测试数不变；
+  零新路由 / 配置键 / 出站主机 / 依赖。方案见 `specs/028-shot-fixture-faithfulness/`。
+
 ## [0.6.1] - 2026-11-15
 
 ### Added

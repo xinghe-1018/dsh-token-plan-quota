@@ -1851,6 +1851,11 @@ function recursiveKeys(value, out = []) {
   apply(ctx, row)
   const route = registered.find(item => item.path === '/token-plan-quota')
   ok('usage 路由随 prefix 路由一起注册', route !== undefined)
+  // 夹具全部钉在 USAGE_NOW（2026-11-12），而路由按真实 Date.now() 聚合：不钉住时钟的话，
+  // 一旦真实日期滑出 days=7 窗口，夹具数据就落在区间外，下面「字段白名单 / totals」两条
+  // 会在没有任何代码改动的情况下变红（2026-11-27 实测 15 天后命中）。与本节其它路由组一致地打桩。
+  const realDateNowRoute = Date.now
+  Date.now = () => USAGE_NOW
   await runUsageSync(ctx, effectiveConfig(row, ctx))
   const got = await callUsageRoute(route, '/token-plan-quota/usage?days=7')
   check('usage 路由：200', got.status, 200)
@@ -1865,6 +1870,7 @@ function recursiveKeys(value, out = []) {
   ok('usage 路由：响应没有消息文本 / 表头字段', !recursiveKeys(got.json).some(key => /^(text|messages?|headers?|cookies?|body|content|secret)$/i.test(key)))
   ok('usage 路由：响应没有落盘路径', !got.raw.includes('usage-index-route'))
   check('usage 路由：缓存头 no-store', got.headers['cache-control'], 'no-store')
+  Date.now = realDateNowRoute
 
   const post = await callUsageRoute(route, '/token-plan-quota/usage', 'POST')
   check('usage 路由：POST → 405', post.status, 405)
